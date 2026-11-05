@@ -9,6 +9,10 @@
  *
  * JSON encodings (spec: Queries): u64 and u256 are 0x quantities, i32 a number, bool bare, dec and
  * str strings, key, addr and bytes 0x hex.
+ *
+ * Rabdi tags a `key` column "bytes32" in arkiv_query replies, although the SDK writes it as a key
+ * (typeId 10) and calls bytes32 reserved; the SDK's own decoder reads "bytes32" as a key
+ * (schema/codec.ts asTypeTag), and so does this one. Without that, every listing would be dropped.
  */
 import { SCHEMA_ATTR } from "./queries.js";
 
@@ -38,6 +42,12 @@ export interface DecodedRow {
 }
 
 const HEX_RE = /^0x[0-9a-fA-F]*$/;
+
+/** The type tag as the node spelled it, narrowed as the SDK narrows it: "bytes32" is a key. */
+export function typeTag(tag: unknown): string | undefined {
+  if (typeof tag !== "string") return undefined;
+  return tag === "bytes32" ? "key" : tag;
+}
 
 function decodeValue(type: string, value: unknown): Value | undefined {
   switch (type) {
@@ -90,7 +100,7 @@ export function decodeRow(
     }
     const col = spec[a.name];
     if (!col) continue; // an attribute the schema does not know: ignored, as the SDK does
-    if (a.type !== col.type) return { dropped: `${a.name} is a ${String(a.type)}, not a ${col.type}` };
+    if (typeTag(a.type) !== col.type) return { dropped: `${a.name} is a ${String(a.type)}, not a ${col.type}` };
     const v = decodeValue(col.type, a.value);
     if (v === undefined) return { dropped: `${a.name} is malformed` };
     values[a.name] = v;

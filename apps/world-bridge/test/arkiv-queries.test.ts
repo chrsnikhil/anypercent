@@ -170,6 +170,53 @@ describe("raw rows: decoded and validated like every reader must", () => {
     assert.ok("row" in l && l.row.values.season === 1 && l.row.values.price === "0.1" && l.row.values.run === K);
   });
 
+  // A listing exactly as Rabdi answered arkiv_query for a row the SDK wrote with run: key(...).
+  const LIVE_LISTING = {
+    key: "0x6ed1a7e2d54a55003ea7b93ec8ee95ddec6a07ce07845d1da9b9783e68df1f77",
+    creator: C_LOWER,
+    expiresAt: "0x41ad0",
+    attributes: [
+      { name: "arkiv.schema", type: "str", value: "anypercent.listing" },
+      { name: "book", type: "str", value: "ANY-SMK" },
+      { name: "frames", type: "u64", value: "0x181a" },
+      { name: "game", type: "str", value: "MDGP" },
+      { name: "human", type: "bool", value: true },
+      { name: "log_h", type: "str", value: H },
+      { name: "price", type: "dec", value: "0.1" },
+      { name: "run", type: "bytes32", value: "0x1A7D31FD898939ADB76280FDAFF8CC5F830C82EF6FD0A00105D4B0D45834CF1D" },
+      { name: "season", type: "i32", value: 1 },
+      { name: "seller", type: "str", value: "5a5a5a5a5a5a5a5a" },
+    ],
+  };
+
+  it("a key column comes back tagged bytes32 (as the node answers): read as a key, as the SDK does", () => {
+    const r = decodeRow(LIVE_LISTING, LISTING_TYPES, Q.LISTING_ATTRS, "anypercent.listing", C);
+    assert.ok("row" in r, "dropped" in r ? r.dropped : "");
+    assert.equal(r.row.values.run, "0x1a7d31fd898939adb76280fdaff8cc5f830c82ef6fd0a00105d4b0d45834cf1d");
+    const tagged = { ...LIVE_LISTING, attributes: LIVE_LISTING.attributes.map((a) => (a.name === "run" ? { ...a, type: "key" } : a)) };
+    assert.ok("row" in decodeRow(tagged, LISTING_TYPES, Q.LISTING_ATTRS, "anypercent.listing", C), "and a key tag still reads");
+    const short = { ...LIVE_LISTING, attributes: LIVE_LISTING.attributes.map((a) => (a.name === "run" ? { ...a, value: "0x12" } : a)) };
+    assert.ok("dropped" in decodeRow(short, LISTING_TYPES, Q.LISTING_ATTRS, "anypercent.listing", C), "but never a short value");
+    const str = { ...LIVE_LISTING, attributes: LIVE_LISTING.attributes.map((a) => (a.name === "run" ? { ...a, type: "str" } : a)) };
+    assert.ok("dropped" in decodeRow(str, LISTING_TYPES, Q.LISTING_ATTRS, "anypercent.listing", C), "nor another type");
+  });
+
+  it("the web board reads that listing too", async () => {
+    const { runInNewContext } = await import("node:vm");
+    const html = readFileSync(join(appDir, "public", "board.html"), "utf8");
+    const js = html.split("<script>")[1].split("</script>")[0].split("// ---- State")[0];
+    const page = runInNewContext(`${js}\n;({ decodeAll, LISTING_TYPES, LISTING_REQUIRED, CHECKER })`, { BigInt, Number, document: {}, location: {} }) as {
+      decodeAll: (d: unknown[], t: unknown, r: unknown, s: string, pin: string) => { rows: Array<Record<string, unknown>>; dropped: number };
+      LISTING_TYPES: unknown;
+      LISTING_REQUIRED: unknown;
+      CHECKER: string;
+    };
+    const live = { ...LIVE_LISTING, creator: page.CHECKER.toLowerCase() };
+    const out = page.decodeAll([live], page.LISTING_TYPES, page.LISTING_REQUIRED, "anypercent.listing", page.CHECKER);
+    assert.equal(out.dropped, 0);
+    assert.equal(out.rows[0].run, "0x1a7d31fd898939adb76280fdaff8cc5f830c82ef6fd0a00105d4b0d45834cf1d");
+  });
+
   it("drops and counts: a foreign creator, another schema, a missing or mistyped column", () => {
     const rows = [
       good,
@@ -200,5 +247,37 @@ describe("raw rows: decoded and validated like every reader must", () => {
     const one = { ...withBoth, attributes: withBoth.attributes.filter((a) => a.name !== "log") };
     const r = decodeRow(one, RUN_TYPES, ask, "anypercent.run", C);
     assert.ok("row" in r && r.row.values.log_enc instanceof Uint8Array);
+  });
+});
+
+describe("the service's real port reads live-shaped rows", () => {
+  it("SdkArkiv.liveListingFor finds a listing whose run comes back tagged bytes32 (the dedupe depends on it)", async () => {
+    const { SdkArkiv } = await import("../src/arkiv/client.js");
+    const runKey = `0x${"1a7d".repeat(16)}`;
+    const sent: string[] = [];
+    class Stub extends SdkArkiv {
+      override async query(query: string) {
+        sent.push(query);
+        const attributes = [
+          { name: "arkiv.schema", type: "str", value: "anypercent.listing" },
+          { name: "run", type: "bytes32", value: runKey },
+          { name: "game", type: "str", value: "MDGP" },
+          { name: "season", type: "i32", value: 1 },
+          { name: "frames", type: "u64", value: "0x181a" },
+          { name: "log_h", type: "str", value: H },
+          { name: "price", type: "dec", value: "0.1" },
+          { name: "seller", type: "str", value: "5a5a5a5a5a5a5a5a" },
+          { name: "book", type: "str", value: "ANY-6PS" },
+          { name: "human", type: "bool", value: true },
+        ];
+        return { data: [{ key: K, creator: C_LOWER, expiresAt: "0x10", attributes }], blockNumber: 1n };
+      }
+    }
+    const port = new Stub({ rpcUrl: "http://127.0.0.1:9", accessKey: "unused-in-tests", checkerAddress: C });
+    const l = await port.liveListingFor(runKey);
+    assert.equal(sent[0], Q.qListingForRun(runKey, C));
+    assert.equal(l?.key, K);
+    assert.equal(l?.run, runKey);
+    assert.equal(l?.price, "0.1");
   });
 });

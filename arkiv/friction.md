@@ -127,10 +127,52 @@ Reproduce: `apps/world-bridge/src/arkiv/client.ts`, `writeRunAndListing`.
 routes (`/entity/<key>`, `/tx/<hash>`, `/address/<address>`, `/block/<n>`) by reading its JavaScript bundle. A short
 list in the docs would let projects link rows to it with confidence.
 
-## 12. Cost per operation and the faucet
+## 12. A `key` column comes back from `arkiv_query` tagged `bytes32`
 
-Owner: fill in from `npm run arkiv:smoke`, which prints gas and tGLM per transaction (run+listing batch, a single run,
-an extension, deletes) and the per-query latency, plus the faucet's drip per request.
+We write a listing's `run` column as a `key` (`key().indexed()` in the schema, `key(<run key>)` as the value; the SDK
+sends typeId 10). The SDK's type table calls `bytes32` (typeId 6) reserved and says it "reads back as `key`". So we
+expected `arkiv_query` to tag the column `key`. It tags it `bytes32`:
+
+```json
+{ "name": "run", "type": "bytes32", "value": "0x1a7d31fd898939adb76280fdaff8cc5f830c82ef6fd0a00105d4b0d45834cf1d" }
+```
+
+The value is right: it is the run's real key, predicted with `predictEntityKeys` and minted as predicted. The SDK
+hides the tag (its decoder narrows `"bytes32"` to `key`, `schema/codec.ts` `asTypeTag`), so nothing goes wrong through
+the SDK. Every raw reader that checks the type against the schema, as ours must (item 8), drops the row as "a
+`bytes32`, not a `key`". For us that was every listing: the live smoke's "the listing names the run's predicted key"
+check failed until all three of our readers (TypeScript, Python, the web board's JavaScript) read `bytes32` as `key`.
+Filtering works either way: `run = key(0x...)` finds the row.
+
+Reproduce: `npm run arkiv:smoke -- --raw` writes a smoke listing and prints a raw page; or, once a listing is on our board:
+
+```bash
+q <<'EOF2'
+{"jsonrpc":"2.0","id":1,"method":"arkiv_query","params":["arkiv.schema = str('anypercent.listing') AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63)",{"select":{"key":true,"attributes":{"run":true}},"limit":"0x1"}]}
+EOF2
+# ... "attributes":[{"name":"run","type":"bytes32","value":"0x..."}]
+```
+
+Ask: tag a `key` column `key` in `arkiv_query` replies (or document that `bytes32` means `key` on the wire).
+
+## 13. Cost per operation and latency (measured)
+
+From `npm run arkiv:smoke` on Rabdi through the public endpoint (no access key). The owner funded each wallet with
+10 tGLM from the faucet; one full smoke (two runs, a listing, an extension, a look-alike, deletes) cost about 0.0012
+tGLM in total.
+
+| Operation | Gas | tGLM | Time to receipt |
+|---|---|---|---|
+| Run + listing, one batch (predicted keys) | 392,442 to 395,230 | 0.0003 | 4.6 to 4.7 s |
+| One run (open tier, 120-byte plain log) | 185,348 | 0.0001 | 3.9 s |
+| Extend a run (the stranger) | 42,961 | under 0.0001 | 4.3 s |
+| A look-alike run (the stranger) | 194,622 | 0.0001 | |
+| Delete three rows, one batch | 411,146 | 0.0004 | |
+| Delete one row | 154,870 | 0.0001 | |
+
+Every query (Q1-Q9, a `dec` and a `key` filter, `select.count`) answered in 0.27 to 0.42 s; `eth_chainId` in about
+0.4 s. A patch on a read-only row is refused at gas estimation, so it costs nothing. With 10 tGLM the checker can write
+about 30,000 run+listing batches, so cost does not limit a hackathon board.
 
 ## What worked well
 

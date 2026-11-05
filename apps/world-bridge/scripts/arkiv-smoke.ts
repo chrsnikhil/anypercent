@@ -11,7 +11,7 @@
  *   6. the stranger's look-alike row is absent from the pinned query and present without the pin;
  *   7. the checker deletes the smoke rows (and the stranger its look-alike).
  * It prints gas, tGLM spent and per-query latency for friction.md. --raw also prints one raw Q1
- * page (the launcher's decoder fixture). Never prints a key: addresses, entity keys and tx hashes.
+ * page and one raw Q2 page (the launcher's decoder fixtures). Never prints a key: addresses, entity keys and tx hashes.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { ExpirationTime } from "@arkiv-network/sdk";
@@ -161,6 +161,10 @@ async function main(): Promise<void> {
       console.log("--- raw Q1 page (arkiv_query result; anypercent.smoke.run rows) ---");
       console.log(JSON.stringify({ data: rawPage.data, blockNumber: `0x${rawPage.blockNumber.toString(16)}` }, null, 1));
       console.log("--- end raw ---");
+      const rawListings = await q("Q2 raw", Q.q2Listings("MDGP", 1, C, SMOKE), Q.LISTING_ATTRS);
+      console.log("--- raw Q2 page (anypercent.smoke.listing rows; note run's type tag is bytes32) ---");
+      console.log(JSON.stringify({ data: rawListings.data, blockNumber: `0x${rawListings.blockNumber.toString(16)}` }, null, 1));
+      console.log("--- end raw ---");
     }
 
     // 4. Patches are refused.
@@ -176,10 +180,11 @@ async function main(): Promise<void> {
 
     // 5. The stranger extends the run (permissionless) but not the listing.
     console.log("5. extension");
-    const before = (await pub.getEntity(w.run as Hex)) as unknown as { expiresAt?: bigint };
+    const beforeRow = await q("Q6 run (expiry)", Q.q6Run(w.run, C, SMOKE), [], 1);
+    const before = { expiresAt: (beforeRow.data[0] as { expiresAt?: string } | undefined)?.expiresAt };
     const [ext, msExt] = await timed(() => stranger.wallet!.extendEntity({ entityKey: w.run as Hex, expiration: ExpirationTime.fromHours(2) }));
     latency.push(["stranger extend (to receipt)", msExt]);
-    ok("the stranger extends the checker's run", true, `$expiresAt ${String(before?.expiresAt ?? "?")} -> ${ext.expiresAt}`);
+    ok("the stranger extends the checker's run", true, `$expiresAt ${before.expiresAt ? BigInt(before.expiresAt) : "?"} -> ${ext.expiresAt}`);
     await fee("stranger extend", ext.txHash);
     try {
       await stranger.wallet!.extendEntity({ entityKey: w.listing as Hex, expiration: ExpirationTime.fromHours(2) });

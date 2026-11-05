@@ -81,7 +81,9 @@ wallet that created the row. Every reader (the console's board, its listing chec
 the web board's "show rows from any wallet" toggle, which strikes those rows out.
 
 Every raw reader also validates each row itself and drops (and counts) a row that lacks a required column, carries one
-with the wrong type, has another `arkiv.schema`, or another creator.
+with the wrong type, has another `arkiv.schema`, or another creator. One wire detail: `arkiv_query` tags a `key`
+column (the listing's `run`) `"bytes32"`, so readers take `bytes32` as `key`, as the SDK's own decoder does (see
+[friction.md](friction.md), item 12).
 
 ## The open tier
 

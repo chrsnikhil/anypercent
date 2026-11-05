@@ -190,6 +190,8 @@ async function query(q, attrs, limit = 100) {
 }
 
 // ---- Validation: drop (and count) what doesn't fit, as every raw reader must. --------------
+// Rabdi tags a key column "bytes32" in arkiv_query replies; the SDK reads that as a key, and so do we.
+const tagOf = (t) => (t === "bytes32" ? "key" : t);
 function decode(raw, types, required, schema, pin) {
   if (!raw || typeof raw.key !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(raw.key)) return null;
   const creator = typeof raw.creator === "string" ? raw.creator.toLowerCase() : null;
@@ -201,7 +203,7 @@ function decode(raw, types, required, schema, pin) {
     if (a.name === "arkiv.schema") { tag = a.type === "str" ? a.value : null; continue; }
     const t = types[a.name];
     if (!t) continue;
-    if (a.type !== t) return null;
+    if (tagOf(a.type) !== t) return null;
     let x;
     if (t === "str" || t === "dec") x = typeof a.value === "string" ? a.value : undefined;
     else if (t === "i32") x = Number.isInteger(a.value) ? a.value : undefined;
