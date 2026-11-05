@@ -17,6 +17,7 @@ from .text import ellipsize
 CARD = pygame.Rect(196, 58, 580, 244)     # the mockup's card, 8 px shorter so PB's name tag stays clear of it
 STRIP_H = 34
 PILL_Y, PILL_H, PILL_SIZE = 8, 26, 21
+TAG_SIZE = 16                             # a still-mocked sponsor's MOCK tag, inside its pill
 HINTS_BOTTOM = theme.H - 1                # in the strip below PB's box
 KIND = {"ok": art.GREEN, "no": art.RED, "warn": art.AMBER}
 NOW_LIGHT = (255, 207, 148)               # the current step's ground at the top of its pulse
@@ -47,8 +48,7 @@ def strip_segments(card, n):
 
 def has_outcomes(flow):
     """Square opens an outcome list here (mock only)."""
-    st = flow.state
-    return flow.sponsors.mock and bool(st.mock_outcomes or (st.call and flow.sponsors.outcomes(st.call)))
+    return bool(flow.mock_rows())
 
 
 class HandlerView:
@@ -110,9 +110,10 @@ class HandlerView:
         elif card["t"] == "load":                   # the bar fills over the call's usual time, then to its deadline
             spec.update(call=st.call, deadline_ms=st.deadline_ms)
         elif card["t"] == "qr":                     # the countdown runs in real seconds from the state's start
-            spec["total_ms"] = st.deadline_ms or 0
+            lives = ((flow.ctx.get("expires_s") or 0) * 1000, st.deadline_ms or 0)
+            spec["total_ms"] = min((ms for ms in lives if ms), default=0)   # the request's own life, if shorter
             spec["left_ms"] = max(0, spec["total_ms"] - flow.ms_in_state)
-            spec["mock"] = flow.sponsors.mock       # a fake code: it says so
+            spec["mock"] = flow.sponsors.mocked("world")   # a fake code: it says so
         elif card["t"] == "hub":                    # the flow knows which rows this game's hub has
             spec.update(rows=tuple(flow.fill(row) for row in flow.hub_rows), selected=flow.hub_index)
         elif card["t"] in ("book", "listings"):
@@ -122,19 +123,30 @@ class HandlerView:
 
     def _pills(self, flow, t):
         """The three sponsors' status pills after the title (a busy dot pulses, a down one blinks), then the MOCK
-        pill (Square) in mock mode."""
-        g = self.gfx
+        pill (Square) in mock mode. With some sponsors real, each still-mocked one carries its own MOCK tag instead
+        (the pill is Square), so a real sponsor never reads as mocked."""
+        g, sponsors = self.gfx, flow.sponsors
         x = chrome.BACK_ARROW.right + 12 + g.measure("PB", theme.TAB_SIZE, "bold")[0] + 18
         states = pill_states(flow)
+        mocked = [key for key, _ in SERVICES if sponsors.mocked(key)]
+        tagged = mocked if len(mocked) < len(SERVICES) else []
+        tag_w = g.measure("MOCK", TAG_SIZE, "pixel")[0] + 12
+        hits = []
         for key, _ in SERVICES:
-            name = getattr(flow.sponsors.names, key)
-            pill = pygame.Rect(x, PILL_Y, 28 + g.measure(name, PILL_SIZE, "pixel")[0] + 12, PILL_H)
+            name = getattr(sponsors.names, key)
+            name_w = g.measure(name, PILL_SIZE, "pixel")[0]
+            pill = pygame.Rect(x, PILL_Y, 28 + name_w + 12 + (tag_w + 6 if key in tagged else 0), PILL_H)
             g.round_rect(pill, art.NO_BG if states[key] == "off" else theme.PANEL, PILL_H // 2)
             art.dot(g, pill.x + 12, pill.centery - 4, states[key], t)
             g.text(name, PILL_SIZE, pill.x + 28, pill.centery, weight="pixel", anchor="midleft")
+            if key in tagged:
+                tag = pygame.Rect(pill.x + 28 + name_w + 6, pill.y + 4, tag_w, PILL_H - 8)
+                g.round_rect(tag, art.WARN_BG, tag.h // 2)
+                g.text("MOCK", TAG_SIZE, tag.centerx, tag.centery, weight="pixel", color=art.AMBER, anchor="center")
+                hits.append(Hit(pill.inflate(4, 18), ("handler", "square"), pill, PILL_H // 2))
             x = pill.right + 10
-        if not flow.sponsors.mock:
-            return []
+        if len(mocked) < len(SERVICES):
+            return hits
         pill = pygame.Rect(x + 4, PILL_Y, g.measure("MOCK", PILL_SIZE, "pixel")[0] + 24, PILL_H)
         g.round_rect(pill, art.WARN_BG, PILL_H // 2)
         g.text("MOCK", PILL_SIZE, pill.centerx, pill.centery, weight="pixel", color=art.AMBER, anchor="center")

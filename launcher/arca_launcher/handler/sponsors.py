@@ -60,8 +60,12 @@ class Call(Protocol):
 
 
 class Sponsors(Protocol):
-    mock: bool
+    mock: bool              # any service still mocked: Square's lists and "Start over (mock)" stay
     names: SponsorNames
+
+    def mocked(self, service: str) -> bool:
+        """"world" | "board" | "third": is that service still mocked? Its pill and QR say so."""
+        ...
 
     def status(self) -> dict[str, str]:
         """"world" | "board" | "third" -> "ok" | "busy" | "off"."""
@@ -74,6 +78,12 @@ class Sponsors(Protocol):
 
     def cross(self, call: Call) -> None:
         """The player's Cross on a phone step. The mock resolves it; real adapters ignore it."""
+        ...
+
+    def cancel(self, call: Call) -> None:
+        """The flow left a phone step (Circle, or its code ran out). A real adapter cancels the
+        request where its service can and ignores any later answer: Circle on the console always
+        wins. A call that already answered keeps its answer."""
         ...
 
     def outcomes(self, step: str) -> list[Outcome]:

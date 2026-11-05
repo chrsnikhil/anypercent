@@ -54,12 +54,12 @@ _NAME_FIELDS = frozenset(f.name for f in dataclasses.fields(SponsorNames))
 class Flow:
     """One handler session. `game` is the arcade game id (purchases, listings and targets are
     keyed by it); `ctx` is the public dict of placeholder values: the app fills the run and
-    board ones, the engine adds code, jti, book, price, budget_left, receipt, listing_days and
-    ghost_kept.
+    board ones, the engine adds code, qr, expires_s, jti, book, price, budget_left, receipt,
+    listing_days and ghost_kept (and other_book, when World names the book a duplicate owns).
 
     Read-only for the view and the app: state, line, ms_in_state, in_flight, busy, arcade,
-    outcomes_open, outcomes ((label, state) rows), outcome_index, hub_index, hub_rows and
-    hub_count."""
+    outcomes_open, outcomes ((label, state) rows), outcome_index, hub_index, hub_rows,
+    hub_count and mock_rows()."""
 
     def __init__(self, sponsors, ledger, ledger_path, game, ctx, today, rng=None):
         self.sponsors = sponsors
@@ -185,6 +185,7 @@ class Flow:
         if self.outcomes_open:
             return None
         if self._call is not None:
+            self._show_request()  # a real adapter's code and link arrive a moment after begin()
             result = self._call.poll()
             if result is not None:
                 return self._land(result)
@@ -233,6 +234,8 @@ class Flow:
     def _enter(self, name, data=None):
         name = self._route(name)
         previous = self.state.name
+        if self.state.phone and self._call is not None:
+            self.sponsors.cancel(self._call)  # leaving a phone step: Circle wins over a late answer
         listens = (STATES[name].keep_call and self._call is not None
                    and self.state.call in _LATE_ANSWERS)
         self._kept = (self.state.call, self._call) if listens else None
@@ -243,21 +246,31 @@ class Flow:
         command = self._arrive(name, previous, data or {})
         if self.state.call is not None:
             self._call = self.sponsors.begin(self.state.call, self._payload())
-            info = self._call.info or {}
-            if info.get("code") or info.get("qr"):        # a new phone request: never the last one's code or link
-                self.ctx["code"] = info.get("code") or ""
-                self.ctx["qr"] = info.get("qr") or ""     # a real adapter's link for its QR; "" draws the code
+            self._show_request()
         self._sync()
         return command
+
+    def _show_request(self):
+        """A call whose info names a code or link is a new phone request: never the last one's
+        code or link, even while a real adapter's are still on their way ("")."""
+        info = self._call.info or {}
+        if "code" in info or "qr" in info:
+            self.ctx["code"] = info.get("code") or ""
+            self.ctx["qr"] = info.get("qr") or ""          # a real adapter's link for its QR; "" draws the code
+            self.ctx["expires_s"] = info.get("expires_s") or 0   # the request's own lifetime; 0: the screen's
 
     def _arrive(self, name, previous, data):
         """The ledger effects and commands of entering a state."""
         led = self.ledger
         if name == "id_done":
-            if led.book is None:
+            if data.get("book"):              # a real record book: World's, one per person
+                led.book = data["book"]
+            elif led.book is None:
                 led.book = make_book(self.rng)
             led.credential = data.get("credential", led.credential)
             self._save()
+        elif name == "id_dup" and data.get("book"):
+            self.ctx["other_book"] = data["book"]   # the book that person already owns, not a made-up one
         elif name == "id_signed":
             led.book = self.ctx.get("other_book") or make_book(self.rng)
             self._save()
@@ -326,13 +339,19 @@ class Flow:
 
     # ---- the Square list ---------------------------------------------------------------------
 
-    def _open_list(self):
+    def mock_rows(self) -> list[Outcome]:
+        """What Square lists here: the call's mock outcomes, else the state's own rows (a phone's
+        late answer: only while World is mocked). None when nothing is mocked."""
         if not self.sponsors.mock:
-            return
+            return []
         if self.state.call is not None:
-            rows = list(self.sponsors.outcomes(self.state.call))
-        else:
-            rows = [Outcome(self.fill(label), name) for label, name in self.state.mock_outcomes]
+            return list(self.sponsors.outcomes(self.state.call))
+        if not self.sponsors.mocked("world"):
+            return []
+        return [Outcome(self.fill(label), name) for label, name in self.state.mock_outcomes]
+
+    def _open_list(self):
+        rows = self.mock_rows()
         if rows:
             self._rows = rows
             self.outcomes = [(o.label, o.failure) for o in rows]
@@ -371,4 +390,4 @@ class Flow:
     def _payload(self):
         """What a real adapter needs to know to run the step; the mock ignores it."""
         return {"game": self.game, "seller": self._seller, "price": GHOST_PRICE,
-                "book": self.ledger.book, "jti": self.ctx.get("jti")}
+                "book": self.ledger.book, "jti": self.ctx.get("jti"), "run_time": self.ctx.get("run_time")}

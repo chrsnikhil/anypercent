@@ -186,7 +186,9 @@ def qr_box(rect):
 
 def qr(g, spec, rect, t_ms, ctx):
     code, box = _v(ctx, "code"), qr_box(rect)
-    art.qr(g, _v(ctx, "qr") or (f"ANY% MOCK CODE {code}" if spec.get("mock") else code), box, t_ms)
+    text = _v(ctx, "qr") or (f"ANY% MOCK CODE {code}" if spec.get("mock") else code)
+    if text:                                                 # nothing yet: a real request's link is on its way
+        art.qr(g, text, box, t_ms)
     if spec.get("mock"):                                     # a fake code, labelled as one on its corner
         tag = pygame.Rect(0, 0, g.measure("MOCK", 18, "pixel")[0] + 16, 22)
         tag.bottomright = (box.right + 6, box.bottom + 6)

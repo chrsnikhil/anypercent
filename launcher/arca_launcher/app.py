@@ -47,6 +47,17 @@ HANDLER_IDLE_MS = 180000                           # idle on PB's screens this l
 log = logging.getLogger(__name__)
 
 
+def make_sponsors(cfg):
+    """PB's sponsors: World for real through its bridge when one is given (Arkiv and Hedera still mocked), else all
+    mocked."""
+    def clock_ms():
+        return int(time.monotonic() * 1000)
+    if cfg.world_bridge:
+        from .handler.world import WorldSponsors
+        return WorldSponsors(cfg.world_bridge, clock_ms)
+    return MockSponsors(clock_ms)
+
+
 def nearest(x):
     """Round half away from zero (Python's round() goes to even), so both directions feel the same."""
     return int(math.floor(abs(x) + 0.5)) * (1 if x >= 0 else -1)
@@ -84,6 +95,7 @@ class Config:
     handler: bool = False                          # PB the handler, Triangle (on in the launcher; off in tests)
     handler_warm: bool = False                     # read every arcade game's board in the background after start
     testlogs_dir: str = "/opt/anypercent/testlogs"  # each arcade game's shipped test log: the handler's target ghost
+    world_bridge: str | None = None                # the World bridge's URL: World for real (None: every sponsor mocked)
 
 
 class Display:
@@ -133,7 +145,7 @@ class App:
         self.nav.handler_enabled = cfg.handler     # arcade games get a PB button beside Play: the hub by touch
         self.nav.booth_url = self._booth_url()
         self.light = themes.apply(self.prefs.theme).light
-        self.sponsors = sponsors if sponsors is not None else MockSponsors(lambda: int(time.monotonic() * 1000))
+        self.sponsors = sponsors if sponsors is not None else make_sponsors(cfg)
         self.handler = HandlerGlue(self) if cfg.handler else None       # feeds nav.handler, the open flow
         self._find_saved_places()
         self._report_app_exit(games)
@@ -637,6 +649,9 @@ class App:
     def _close_handler(self):
         if self.handler is not None:
             self.handler.close()
+        close = getattr(getattr(self, "sponsors", None), "close", None)   # the World bridge's worker thread
+        if close is not None:
+            close()
 
     def _close_display(self):
         display, self.display = self.display, None

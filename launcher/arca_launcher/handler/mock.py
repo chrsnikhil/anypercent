@@ -133,6 +133,9 @@ class MockSponsors:
         self._down = {"world": False, "board": False, "third": False}
         self._active = {"world": None, "board": None, "third": None}
 
+    def mocked(self, service: str) -> bool:
+        return self.mock  # all three (a test's stand-in for a real adapter sets mock False: none)
+
     def status(self) -> dict[str, str]:
         """A service is "busy" only while a timed call of its own runs. A phone call can wait for
         minutes, or be kept after the player backed out, so it never counts: the state table's
@@ -172,6 +175,10 @@ class MockSponsors:
             call._result = Result(ok=True, data={"jti": _hex8(self._rng)})
         else:
             call._result = Result(ok=True, data={})
+
+    def cancel(self, call) -> None:
+        """Nothing to tell: no phone ever saw the mock's code. A kept call stays open, so its
+        Square outcome can still land late."""
 
     def outcomes(self, step: str) -> list[Outcome]:
         return [Outcome(self.names.fill(label), failure, late)

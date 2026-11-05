@@ -5,6 +5,9 @@
 # and rebuilt when anything it is made from changes. Each arcade game's shipped test log (the handler's board and target
 # ghost) comes from $SANDBOX/devicecheck. Keys: arrows, X = Cross, Z = Circle, C = Square, D = Triangle (PB the
 # handler), A/S = L1/R1, Enter = Start, Backspace = Select.
+# World for real: set ARCA_WORLD_BRIDGE to the World bridge's URL (apps/world-bridge), e.g.
+#   wsl -d Ubuntu-24.04 -u root -- env ARCA_WORLD_BRIDGE=http://127.0.0.1:8787 bash .../launcher/dev/laptop.sh
+# Unset, every sponsor stays mocked.
 set -euo pipefail
 source "$(dirname "$0")/../../sandbox/00_env.sh"
 HERE="$PROJECT/launcher"
@@ -17,5 +20,10 @@ if [ ! -f "$LIB/library.json" ] || [ -n "$(find "$PROJECT/docs/games/games.json"
   "$PY" "$HERE/tools/build_library.py" --games-json "$PROJECT/docs/games/games.json" --lineup "$PROJECT/docs/games/lineup.txt" \
     --games "$GAMES" --out "$LIB"
 fi
+WORLD=()
+if [ -n "${ARCA_WORLD_BRIDGE:-}" ]; then
+  WORLD=(--world-bridge "$ARCA_WORLD_BRIDGE")
+fi
 cd "$HERE"
-exec "$PY" -m arca_launcher --library "$LIB" --testlogs "$SANDBOX/devicecheck" --state "$SANDBOX/laptop-state.json" --scale 2 "$@"
+exec "$PY" -m arca_launcher --library "$LIB" --testlogs "$SANDBOX/devicecheck" --state "$SANDBOX/laptop-state.json" --scale 2 \
+  "${WORLD[@]}" "$@"

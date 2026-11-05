@@ -1,5 +1,5 @@
 """python -m arca_launcher [--library DIR] [--scale 1|2|3] [--emulator mgba|retroarch] [--fullscreen] [--fps]
-[--no-handler] [--testlogs DIR]"""
+[--no-handler] [--testlogs DIR] [--world-bridge URL]"""
 import argparse
 import os
 import sys
@@ -35,12 +35,17 @@ def build_config(argv=None):
     p.add_argument("--coach-voice-key", default=None, metavar="FILE",
                    help="a file holding an Anthropic API key, for PB's optional voice (default: coach-voice.key "
                         "beside the --state file; no file, no voice)")
+    p.add_argument("--world-bridge", default=os.environ.get("ARCA_WORLD_BRIDGE") or None, metavar="URL",
+                   help="the World bridge (apps/world-bridge), e.g. http://127.0.0.1:8787: PB's record book and "
+                        "listing approval go to World for real, Arkiv and Hedera stay mocked (default: "
+                        "$ARCA_WORLD_BRIDGE; neither: every sponsor mocked)")
     a = p.parse_args(argv)
     return Config(library_dir=a.library, state_path=a.state, emulator=a.emulator, retroarch_core=a.retroarch_core,
                   retroarch_cfg=a.retroarch_cfg, scale=a.scale, fullscreen=a.fullscreen, show_fps=a.fps,
                   joy_map=a.joy_map, splash=a.splash, runs_dir=a.runs, overlay=a.overlay,
                   haptics=a.haptics, coach=a.coach, handler=a.handler, handler_warm=a.handler, testlogs_dir=a.testlogs,
-                  coach_voice_key=a.coach_voice_key or os.path.join(os.path.dirname(a.state), "coach-voice.key"))
+                  coach_voice_key=a.coach_voice_key or os.path.join(os.path.dirname(a.state), "coach-voice.key"),
+                  world_bridge=a.world_bridge)
 
 
 def main(argv=None):

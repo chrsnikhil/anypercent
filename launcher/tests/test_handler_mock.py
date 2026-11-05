@@ -294,6 +294,7 @@ def test_handler_code_has_no_network_or_sponsor_imports():
     launcher_dir = Path(__file__).resolve().parent.parent
     root = launcher_dir / "arca_launcher"
     paths = sorted((root / "handler").rglob("*.py")) + sorted((root / "render").glob("handler*.py"))
+    paths = [p for p in paths if p.name != "world.py"]   # the World adapter: the test below
     assert paths, "expected at least handler/*.py to exist by this point in the plan"
     for path in paths:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -307,3 +308,17 @@ def test_handler_code_has_no_network_or_sponsor_imports():
             for name in names:
                 first = name.split(".")[0]
                 assert first not in BANNED_MODULES, f"{path} imports banned module {name}"
+
+
+def test_the_world_adapter_talks_http_with_the_standard_library_only():
+    """The one real adapter (handler/world.py) reaches its bridge with urllib on its own thread: the Pi's venv has
+    no package beyond pygame, and no sponsor SDK runs on the console."""
+    path = Path(__file__).resolve().parent.parent / "arca_launcher" / "handler" / "world.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    firsts = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            firsts.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            firsts.add(node.module.split(".")[0])
+    assert firsts <= {"json", "logging", "platform", "threading", "urllib", "arca_launcher"}, firsts
