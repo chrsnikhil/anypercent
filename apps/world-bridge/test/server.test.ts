@@ -10,7 +10,7 @@ import type { DeviceGrantClient, PollResult } from "../src/oidc.js";
 import { IdkitApprovals } from "../src/idkit-approvals.js";
 import { buildServer, makeHealth, type Health } from "../src/server.js";
 import { Store } from "../src/store.js";
-import { ACTION, awaiting, confirmed, FakeWorld, proof, waiting } from "./fake-world.js";
+import { ACTION, awaiting, confirmed, FakeWorld, proof, sessionProof, waiting } from "./fake-world.js";
 import { CLIENT_ID, idToken, ISS, makeKeys, ORB, SECRET, tempDir, type TestKeys } from "./helpers.js";
 
 let keys: TestKeys;
@@ -54,6 +54,12 @@ before(async () => {
           connectorURI: "https://staging.world.org/verify?t=x&i=y&k=key-material",
           pollOnce: async () => statuses[Math.min(i++, 2)] as never,
         };
+      },
+      async createSession() {
+        throw new Error("not used");
+      },
+      async proveSession() {
+        throw new Error("not used");
       },
       async verify() {
         return { status: 200, body: { success: true, environment: "staging", action: "anypercent-record-book" } };
@@ -218,8 +224,7 @@ describe("APPROVALS=idkit: the same /agentpass/* contract, run on IDKit", () => 
       else await new Promise((r) => setTimeout(r, 3));
     }
     owner.stopAll();
-    const world = new FakeWorld((signal) => [waiting, waiting, awaiting, awaiting,
-      confirmed(proof(signal, "0x0abc", {}, { identifier: "proof_of_human", issuer_schema_id: 1 }))]);
+    const world = new FakeWorld((signal) => [waiting, waiting, awaiting, awaiting, confirmed(sessionProof(signal))]);
     const approvals = new IdkitApprovals({ deps: world, store, secret: SECRET, action: ACTION, environment: "staging", pollMs: 15, log: (l) => logLines.push(l) });
     const srv = buildServer({ health: () => makeHealth(null, approvals, true), idkit: null, approvals });
     await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
@@ -227,7 +232,7 @@ describe("APPROVALS=idkit: the same /agentpass/* contract, run on IDKit", () => 
     const get = async (path: string) => (await fetch(`${url}${path}`)).json() as Promise<Record<string, any>>;
     assert.deepEqual(await get("/health"), { world: "ok", idkit: false, agentpass: true, approvals: "idkit" });
 
-    const s = (await (await fetch(`${url}/agentpass/start`, { method: "POST", body: JSON.stringify({ book, action: "list MDGP 1:42.83 ghost at 0.10 USDC" }) })).json()) as Record<string, any>;
+    const s = (await (await fetch(`${url}/agentpass/start`, { method: "POST", body: JSON.stringify({ book, action: "List Marine Drive GP 1:42.83 ghost for 0.10 USDC" }) })).json()) as Record<string, any>;
     assert.deepEqual(Object.keys(s).sort(), ["code", "expires_s", "id", "qr"]);
     assert.equal(s.expires_s, 300);
     const stages: string[] = [];
@@ -241,6 +246,8 @@ describe("APPROVALS=idkit: the same /agentpass/* contract, run on IDKit", () => 
     assert.deepEqual(stages, ["scan", "approve", "done"]);
     assert.equal(v.ok, true);
     assert.deepEqual(Object.keys(v.data), ["jti"]);
+    assert.equal(world.created[0].kind, "proveSession");
+    assert.ok(!JSON.stringify(s).includes("session_") && !JSON.stringify(v).includes("session_"), "no session id over HTTP");
 
     const c = await fetch(`${url}/agentpass/${s.id}/cancel`, { method: "POST" });
     assert.deepEqual([c.status, await c.json()], [200, { ok: true }]);

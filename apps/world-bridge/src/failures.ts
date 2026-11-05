@@ -106,7 +106,7 @@ export function portalFailure(status: number, body: PortalError | undefined): Id
 }
 
 /** Our own checks on a proof the portal accepted (environment, action, signal, credential). */
-export type ProofCheck = "environment" | "action" | "signal" | "credential" | "no_nullifier";
+export type ProofCheck = "environment" | "action" | "signal" | "session" | "credential" | "no_nullifier";
 
 export function proofCheckFailure(check: ProofCheck): IdFailure {
   // A proof for another environment, action or request, or without an accepted credential, is a
@@ -131,10 +131,9 @@ const APPROVAL_APP_ERRORS: Record<string, LsFailure> = {
   world_id_3_not_available: "ls_wrong",
   feature_unavailable: "ls_wrong",
   identity_attributes_not_matched: "ls_wrong",
-  // A repeat refused by World: the action is capped (it must allow unlimited verifications), so
-  // this is our setup, not the person.
-  max_verifications_reached: "ls_world_down",
-  nullifier_replayed: "ls_world_down",
+  // Approvals are World ID session proofs: a refused repeat is a replayed proof, used once already.
+  max_verifications_reached: "ls_reused",
+  nullifier_replayed: "ls_reused",
   // RP, clock and config errors, and World's plumbing.
   invalid_rp_signature: "ls_world_down",
   duplicate_nonce: "ls_world_down",
@@ -160,18 +159,18 @@ export function approvalAppFailure(code: string | undefined): LsFailure {
 }
 
 /**
- * The portal refused an approval proof. Unavailable, our setup, or a refused repeat (the action is
- * capped): ls_world_down. Any other refusal of the proof itself: ls_mismatch.
+ * The portal refused an approval proof. Unavailable or our setup: ls_world_down. A replayed session
+ * proof: ls_reused. Any other refusal of the proof itself: ls_mismatch.
  */
 export function approvalPortalFailure(status: number, body: PortalError | undefined): LsFailure {
   if (status === 404 || status >= 500 || status === 429) return "ls_world_down";
-  if (isReplay(body)) return "ls_world_down";
+  if (isReplay(body)) return "ls_reused";
   if (body?.code && PORTAL_CONFIG_CODES.has(body.code)) return "ls_world_down";
   return "ls_mismatch";
 }
 
-/** Our own checks on an approval proof. A proof for another request, action or environment, or a
- *  malformed one: ls_mismatch. No credential we accept: this World ID cannot approve -> ls_wrong. */
+/** Our own checks on an approval proof. A proof for another request, session, action or environment,
+ *  or a malformed one: ls_mismatch. No credential we accept: this World ID cannot approve -> ls_wrong. */
 export function approvalProofFailure(check: ProofCheck): LsFailure {
   return check === "credential" ? "ls_wrong" : "ls_mismatch";
 }

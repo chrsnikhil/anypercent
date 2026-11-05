@@ -25,7 +25,7 @@ const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`)
 const store = secretReady(cfg) ? new Store(cfg.dataDir, cfg.serverSecret) : null;
 const IDKIT_TTL_S = 300;
 
-// One request builder for sign-ups and IDKit approvals: same action, same proof-of-human preset.
+// One request builder for sign-ups and IDKit approvals (proof_of_human through .constraints(), sessions).
 const idkitDeps = store && idkitReady(cfg) ? realIdkitDeps(cfg, IDKIT_TTL_S) : null;
 
 const idkit =
@@ -36,6 +36,7 @@ const idkit =
         secret: cfg.serverSecret,
         action: cfg.world.action,
         environment: cfg.world.environment,
+        signupSession: cfg.world.signupSession,
         ttlS: IDKIT_TTL_S,
         log,
       })
@@ -112,7 +113,7 @@ server.on("error", (err: NodeJS.ErrnoException) => {
 server.listen(cfg.port, cfg.host, () => {
   log(
     `world-bridge on http://${cfg.host}:${cfg.port} ` +
-      `(idkit ${idkit ? `on, ${cfg.world.environment}` : "off"}, approvals ${approvals ? approvals.kind : "off"}` +
+      `(idkit ${idkit ? `on, ${cfg.world.environment}, ${cfg.world.action}, session ${cfg.world.signupSession}` : "off"}, approvals ${approvals ? approvals.kind : "off"}` +
       `${store ? "" : ", SERVER_SECRET missing"})`,
   );
 });

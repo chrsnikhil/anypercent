@@ -49,3 +49,16 @@ describe("APPROVALS: which provider runs the listing approvals", () => {
     assert.deepEqual(pick({ APPROVALS: "both", ...IDKIT, ...SECRET }), { kind: "idkit", available: true });
   });
 });
+
+describe("World settings", () => {
+  it("WORLD_ACTION defaults to the fresh action anypercent-book", () => {
+    assert.equal(loadConfig({}, ".").world.action, "anypercent-book");
+    assert.equal(loadConfig({ WORLD_ACTION: "other" }, ".").world.action, "other");
+  });
+
+  it("WORLD_SIGNUP_SESSION: combined unless set to separate", () => {
+    assert.equal(loadConfig({}, ".").world.signupSession, "combined");
+    assert.equal(loadConfig({ WORLD_SIGNUP_SESSION: "Separate" }, ".").world.signupSession, "separate");
+    assert.equal(loadConfig({ WORLD_SIGNUP_SESSION: "bogus" }, ".").world.signupSession, "combined");
+  });
+});

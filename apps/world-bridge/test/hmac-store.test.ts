@@ -128,3 +128,32 @@ describe("Store: book -> bound account (trust on first use) and jtis", () => {
     assert.equal(new Store(dir, SECRET).useJti("k", 3), false);
   });
 });
+
+describe("Store: a book's World ID session", () => {
+  it("is stored with the book at sign-up, found by book id, and persists", () => {
+    const dir = tempDir();
+    const n = nullifierKey(SECRET, "act", "nil_s");
+    const book = new Store(dir, SECRET).claimBook(n, "Orb", "r", 1, "session_abc123").record.book;
+    const reopened = new Store(dir, SECRET);
+    assert.equal(reopened.recordForBook(book)?.session_id, "session_abc123");
+    assert.equal(reopened.recordForBook("ANY-NOPE"), undefined);
+  });
+
+  it("setSession gives a book without one its session, and never replaces one", () => {
+    const store = new Store(tempDir(), SECRET);
+    const n = nullifierKey(SECRET, "act", "nil_t");
+    const book = store.claimBook(n, "Orb", "r", 1).record.book;
+    assert.equal(store.recordForBook(book)?.session_id, undefined);
+    assert.equal(store.setSession(n, "session_01"), true);
+    assert.equal(store.setSession(n, "session_02"), false);
+    assert.equal(store.recordForBook(book)?.session_id, "session_01");
+    assert.equal(store.setSession("unknown", "session_03"), false);
+  });
+
+  it("a returning human's claim never overwrites the stored session", () => {
+    const store = new Store(tempDir(), SECRET);
+    const n = nullifierKey(SECRET, "act", "nil_u");
+    store.claimBook(n, "Orb", "r", 1, "session_first");
+    assert.equal(store.claimBook(n, "Orb", "r", 2, "session_second").record.session_id, "session_first");
+  });
+});

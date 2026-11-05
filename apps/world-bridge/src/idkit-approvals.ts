@@ -1,16 +1,20 @@
 /**
  * Listing approvals on IDKit (APPROVALS=idkit), behind the same /agentpass/* contract as Agent Pass.
  *
- * Each approval is a fresh World ID proof by the record book's owner: the same RP-signed request
- * as the sign-up (same WORLD_ACTION, same proof-of-human preset, realIdkitDeps), bound to this
- * approval by its signal "anyl1|<book>|<sha256(action digest)[:16]>|<session id>". The same human
- * proving the same action gives the same nullifier, so the proof's nullifier must be the one that
- * owns the named book. For that the action must allow unlimited verifications in the portal.
+ * World ID 4.0 nullifiers are one-time-use per action, so a second proof on the record book's action
+ * is refused. Each approval is instead a proof of the book's World ID session (stored at sign-up,
+ * idkit.ts): IDKit.proveSession(book's session, { action_description: the listing }), which World
+ * App shows to the person, bound to this approval by its signal
+ * "anyl1|<book>|<sha256(action digest)[:16]>|<approval id>". Only the World ID that created the
+ * session can prove it.
+ *
+ * Checks: the signal hash, the result's session_id equal to the book's, and the portal's success
+ * (it names the same session_id). A book with no stored session answers ls_wrong at once.
  *
  * Stages are real, unlike the device grant: waiting_for_connection -> "scan",
  * awaiting_confirmation (and the portal check after it) -> "approve", then "done".
- * On success `data` is {jti}: a one-time approval id, sha256(session id | nullifier key)[:16],
- * consumed in the store so a replayed proof gives ls_reused. Neither the jti nor the nullifier is
+ * On success `data` is {jti}: a one-time approval id, sha256(approval id | request nonce)[:16],
+ * consumed in the store so a replayed proof gives ls_reused. Neither the jti nor the session id is
  * ever logged.
  *
  * Circle wins: after a cancel the session answers done / ls_denied, polling stops, and a proof
@@ -29,10 +33,9 @@ import {
   approvalAppFailure,
   approvalPortalFailure,
   approvalProofFailure,
-  isReplay,
   type LsFailure,
 } from "./failures.js";
-import { jtiKey, nullifierKey } from "./hmac.js";
+import { jtiKey } from "./hmac.js";
 import { displayCode, type BridgeRequest, type IdkitDeps } from "./idkit.js";
 import { checkProof } from "./proof.js";
 import type { Store } from "./store.js";
@@ -41,7 +44,7 @@ export interface IdkitApprovalOptions {
   deps: IdkitDeps;
   store: Store;
   secret: string;
-  /** WORLD_ACTION: the record book's own action, so the nullifier matches the book's. */
+  /** WORLD_ACTION, for the shared proof checks (a session proof itself names no action). */
   action: string;
   environment: WorldEnvironment;
   ttlS?: number;
@@ -49,7 +52,7 @@ export interface IdkitApprovalOptions {
   now?: () => number;
   networkGraceMs?: number;
   maxActive?: number;
-  /** Outcome lines: failure names, book, action digest. Never links, signals, nullifiers or jtis. */
+  /** Outcome lines: failure names, book, action digest. Never links, signals, session ids or jtis. */
   log?: (line: string) => void;
 }
 
@@ -58,7 +61,9 @@ interface Session {
   book: string;
   action: string;
   signal: string;
-  request: BridgeRequest;
+  /** The book's World ID session. Never logged, never returned. */
+  worldSession: string;
+  request: BridgeRequest | null;
   expiresAtMs: number;
   view: ApprovalView;
   cancelled: boolean;
@@ -68,13 +73,15 @@ interface Session {
   timer: NodeJS.Timeout | null;
 }
 
-/** The one-time approval id for a session's proof. */
-export function approvalJti(sessionId: string, nKey: string): string {
-  return createHash("sha256").update(`${sessionId}|${nKey}`).digest("hex").slice(0, 16);
+/** The one-time approval id: this approval's id and its RP request's nonce. */
+export function approvalJti(approvalId: string, nonce: string): string {
+  return createHash("sha256").update(`${approvalId}|${nonce}`).digest("hex").slice(0, 16);
 }
 
 /** Store key for a used approval id, kept apart from Agent Pass's (iss, jti) keys. */
 const JTI_SPACE = "idkit-approval";
+
+const NO_SESSION = " (this book has no World session: sign up again)";
 
 export class IdkitApprovals implements ApprovalProvider {
   readonly kind = "idkit" as const;
@@ -102,19 +109,14 @@ export class IdkitApprovals implements ApprovalProvider {
     const digest = createHash("sha256").update(action).digest("hex").slice(0, 16);
     // Starts with "anyl1", never "0x", so hashSignal always takes its UTF-8 branch.
     const signal = `anyl1|${book}|${digest}|${id}`;
-    let request: BridgeRequest;
-    try {
-      request = await this.opts.deps.createRequest(signal);
-    } catch {
-      throw new StartFailure("ls_world_down", 503, "could not create the IDKit request");
-    }
     const nowMs = this.now();
     const s: Session = {
       id,
       book,
       action,
       signal,
-      request,
+      worldSession: this.opts.store.recordForBook(book)?.session_id ?? "",
+      request: null,
       expiresAtMs: nowMs + this.ttlS * 1000,
       view: { stage: "scan", ok: null, failure: null, data: {} },
       cancelled: false,
@@ -122,10 +124,23 @@ export class IdkitApprovals implements ApprovalProvider {
       networkFailSinceMs: null,
       timer: null,
     };
+
+    if (!s.worldSession) {
+      // Nothing for World App to prove: a book from before sessions, or one this bridge never issued.
+      this.sessions.set(id, s);
+      this.finish(s, "ls_wrong", {}, NO_SESSION);
+      return { id, qr: "", code: displayCode(), expires_s: this.ttlS };
+    }
+
+    try {
+      s.request = await this.opts.deps.proveSession(s.worldSession, signal, action);
+    } catch {
+      throw new StartFailure("ls_world_down", 503, "could not create the IDKit request");
+    }
     this.sessions.set(id, s);
     this.schedule(s, this.pollMs);
     this.prune(nowMs);
-    return { id, qr: request.connectorURI, code: displayCode(), expires_s: this.ttlS };
+    return { id, qr: s.request.connectorURI, code: displayCode(), expires_s: this.ttlS };
   }
 
   view(id: string): ApprovalView | undefined {
@@ -164,7 +179,7 @@ export class IdkitApprovals implements ApprovalProvider {
   }
 
   private async tick(s: Session): Promise<void> {
-    if (s.view.stage === "done" || s.verifying) return;
+    if (s.view.stage === "done" || s.verifying || !s.request) return;
     // A few seconds of grace past the lifetime for an approval already on its way.
     if (this.now() >= s.expiresAtMs + 5000) return this.finish(s, "ls_expired");
 
@@ -186,8 +201,8 @@ export class IdkitApprovals implements ApprovalProvider {
         s.view = { ...s.view, stage: "approve" };
         return this.schedule(s, this.pollMs);
       case "failed":
-        // World App's own error code is no secret, and the only way to tell "the action is capped at one
-        // verification" (max_verifications_reached) from a real outage.
+        // World App's own error code is no secret, and the only way to tell a refusal (another person's
+        // World App cannot prove this book's session) from a real outage.
         return this.finish(s, approvalAppFailure(status.error), {}, ` (World App: ${String(status.error)})`);
       case "confirmed":
         s.view = { ...s.view, stage: "approve" };
@@ -200,31 +215,25 @@ export class IdkitApprovals implements ApprovalProvider {
 
   private async accept(s: Session, result: unknown): Promise<void> {
     const ctx = { deps: this.opts.deps, environment: this.opts.environment, action: this.opts.action };
-    const r = await checkProof(ctx, s.signal, result);
-    // Circle won while the portal was answering: discard the proof. From here to the store writes
+    const r = await checkProof(ctx, s.signal, result, { kind: "session", sessionId: s.worldSession });
+    // Circle won while the portal was answering: discard the proof. From here to the store write
     // everything is synchronous, so a cancel cannot slip in after this check.
     if (s.cancelled) return;
 
     if (!r.ok) {
       if (r.kind === "network") return this.finish(s, "ls_world_down");
-      if (r.kind === "check") return this.finish(s, approvalProofFailure(r.check));
-      const hint = isReplay(r.body)
-        ? " (World refused a repeat verification: the action must allow unlimited verifications)"
-        : "";
-      return this.finish(s, approvalPortalFailure(r.status, r.body), {}, hint);
+      if (r.kind === "check") {
+        const why = r.check === "session" ? " (the proof is for another World session)" : "";
+        return this.finish(s, approvalProofFailure(r.check), {}, why);
+      }
+      return this.finish(s, approvalPortalFailure(r.status, r.body), {}, " (the portal refused the session proof)");
     }
 
-    // Same human, same action, same nullifier: it must be the one that owns the named book.
-    const nKey = nullifierKey(this.opts.secret, this.opts.action, r.canonical);
-    const owned = this.opts.store.bookFor(nKey);
-    if (!owned) return this.finish(s, "ls_wrong", {}, " (this World ID has no record book)");
-    if (owned.book !== s.book) return this.finish(s, "ls_wrong", {}, " (this World ID owns another record book)");
-
-    const jti = approvalJti(s.id, nKey);
+    const jti = approvalJti(s.id, s.request?.nonce ?? "");
     if (!this.opts.store.useJti(jtiKey(JTI_SPACE, jti), Math.floor(this.now() / 1000))) {
       return this.finish(s, "ls_reused");
     }
-    return this.finish(s, null, { jti }, ` (${r.credential}, the book's owner, approval id used once)`);
+    return this.finish(s, null, { jti }, ` (${r.credential}, the book's World session, approval id used once)`);
   }
 
   /** Forget finished sessions an hour after their expiry so memory stays bounded. */

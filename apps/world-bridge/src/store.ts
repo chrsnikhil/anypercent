@@ -1,7 +1,9 @@
 /**
  * The bridge's only state on disk: data/state.json.
  *
- * - books:    nullifier HMAC -> the record book that World ID got (one per human);
+ * - books:    nullifier HMAC -> the record book that World ID got (one per human), with the World ID
+ *             session its owner proves for each listing approval (server-side only: never logged,
+ *             never returned);
  * - bindings: book -> the HMAC of the Agent Pass (iss, sub) bound to it on first approval;
  * - jtis:     ID-token jtis already consumed.
  *
@@ -18,6 +20,8 @@ export interface BookRecord {
   credential: string;
   runner_id: string;
   created_at: number;
+  /** World ID 4.0 session id ("session_<hex>") from the sign-up. Secret to this process. */
+  session_id?: string;
 }
 
 interface StateFile {
@@ -76,6 +80,7 @@ export class Store {
     credential: string,
     runner: string,
     now: number,
+    sessionId?: string,
   ): { created: boolean; record: BookRecord } {
     const existing = this.state.books[nKey];
     if (existing) return { created: false, record: existing };
@@ -87,9 +92,24 @@ export class Store {
       if (!taken.has(book)) break;
     }
     const record: BookRecord = { book, credential, runner_id: runner, created_at: now };
+    if (sessionId) record.session_id = sessionId;
     this.state.books[nKey] = record;
     this.write();
     return { created: true, record };
+  }
+
+  /** The record for a book id, if this bridge issued it. */
+  recordForBook(book: string): BookRecord | undefined {
+    return Object.values(this.state.books).find((r) => r.book === book);
+  }
+
+  /** Give a book its World ID session when it has none yet. False: no such book, or it already has one. */
+  setSession(nKey: string, sessionId: string): boolean {
+    const rec = this.state.books[nKey];
+    if (!rec || rec.session_id) return false;
+    rec.session_id = sessionId;
+    this.write();
+    return true;
   }
 
   /** Trust on first use: the first approval binds the book to that account; later ones must match. */

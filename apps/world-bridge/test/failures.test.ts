@@ -96,6 +96,7 @@ describe("Developer Portal /api/v4/verify errors", () => {
     assert.equal(proofCheckFailure("action"), "id_rejected");
     assert.equal(proofCheckFailure("signal"), "id_rejected");
     assert.equal(proofCheckFailure("no_nullifier"), "id_rejected");
+    assert.equal(proofCheckFailure("session"), "id_rejected");
     assert.equal(proofCheckFailure("credential"), "id_nocred");
   });
 });
@@ -161,8 +162,8 @@ describe("listing approvals on IDKit: World App / bridge errors -> ls_* names", 
     world_id_3_not_available: "ls_wrong",
     feature_unavailable: "ls_wrong",
     identity_attributes_not_matched: "ls_wrong",
-    max_verifications_reached: "ls_world_down",
-    nullifier_replayed: "ls_world_down",
+    max_verifications_reached: "ls_reused",
+    nullifier_replayed: "ls_reused",
     invalid_rp_signature: "ls_world_down",
     duplicate_nonce: "ls_world_down",
     unknown_rp: "ls_world_down",
@@ -195,13 +196,13 @@ describe("listing approvals on IDKit: World App / bridge errors -> ls_* names", 
     assert.equal(approvalAppFailure(undefined), "ls_world_down");
   });
 
-  it("the portal: down, our setup or a capped action -> ls_world_down; a refused proof -> ls_mismatch", () => {
+  it("the portal: down or our setup -> ls_world_down; a replayed session proof -> ls_reused; a refused proof -> ls_mismatch", () => {
     for (const s of [404, 429, 500, 503]) assert.equal(approvalPortalFailure(s, undefined), "ls_world_down");
     assert.equal(approvalPortalFailure(400, { code: "app_not_migrated" }), "ls_world_down");
-    assert.equal(approvalPortalFailure(400, { code: "max_verifications_reached" }), "ls_world_down");
+    assert.equal(approvalPortalFailure(400, { code: "max_verifications_reached" }), "ls_reused");
     assert.equal(
       approvalPortalFailure(400, { code: "all_verifications_failed", results: [{ code: "nullifier_replayed" }] }),
-      "ls_world_down",
+      "ls_reused",
     );
     assert.equal(
       approvalPortalFailure(400, { code: "all_verifications_failed", results: [{ code: "verification_error" }] }),
@@ -211,7 +212,7 @@ describe("listing approvals on IDKit: World App / bridge errors -> ls_* names", 
   });
 
   it("our proof checks: mismatches -> ls_mismatch, no accepted credential -> ls_wrong", () => {
-    for (const c of ["environment", "action", "signal", "no_nullifier"] as const) assert.equal(approvalProofFailure(c), "ls_mismatch");
+    for (const c of ["environment", "action", "signal", "session", "no_nullifier"] as const) assert.equal(approvalProofFailure(c), "ls_mismatch");
     assert.equal(approvalProofFailure("credential"), "ls_wrong");
   });
 });

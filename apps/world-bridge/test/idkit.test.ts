@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
+import { Nullifier } from "@worldcoin/idkit-core/nullifier";
+import { nullifierKey } from "../src/hmac.js";
 import { IdkitSessions, IdkitStartFailure } from "../src/idkit.js";
 import { Store } from "../src/store.js";
-import { ACTION, awaiting, confirmed, failed, FakeWorld, portalOk, proof, waiting } from "./fake-world.js";
+import { ACTION, awaiting, confirmed, failed, FakeWorld, portalOk, proof, SESSION_A, SESSION_B, sessionProof, waiting } from "./fake-world.js";
 import { SECRET, sleep, tempDir, waitFor } from "./helpers.js";
 
 let live: IdkitSessions[] = [];
@@ -311,5 +313,164 @@ describe("IDKit record book", () => {
     world.createFails = true;
     const { idkit } = make(world);
     await assert.rejects(idkit.start("pi"), (e: unknown) => e instanceof IdkitStartFailure && e.failure === "id_offline");
+  });
+});
+
+describe("the record book's World ID session", () => {
+  const noSession = { session_id: undefined };
+  const isSession = (signal: string) => signal.startsWith("anys1|");
+  /** The stored record of the human behind nullifier 0x0abc. */
+  const humanRecord = (store: Store) => store.bookFor(nullifierKey(SECRET, ACTION, Nullifier.fromHex("0x0abc").toCanonicalString()));
+
+  function logged(over: Record<string, unknown> = {}) {
+    const lines: string[] = [];
+    return { lines, over: { log: (l: string) => lines.push(l), ...over } };
+  }
+
+  it("the sign-up is ONE uniqueness request that also creates the session; the session is stored, never returned or logged", async () => {
+    const world = new FakeWorld((signal) => [confirmed(proof(signal, "0x0abc"))]);
+    const { lines, over } = logged();
+    const { idkit, store } = make(world, undefined, over);
+    const v = await finish(idkit, (await idkit.start("pi")).id);
+    assert.equal(v.ok, true);
+    assert.deepEqual(world.created.map((c) => c.kind), ["request"]);
+    assert.equal(store.recordForBook(String(v.data.book))?.session_id, SESSION_A);
+    assert.ok(!JSON.stringify(v).includes("session_"), "never in the answer");
+    assert.ok(!lines.join("\n").includes(SESSION_A), "never in the log");
+  });
+
+  it("combined mode, a result with no session: the book is made, and the log says approvals will fail", async () => {
+    const world = new FakeWorld((signal) => [confirmed(proof(signal, "0x0abc", noSession))]);
+    const { lines, over } = logged();
+    const { idkit, store } = make(world, undefined, over);
+    const v = await finish(idkit, (await idkit.start("pi")).id);
+    assert.equal(v.ok, true);
+    assert.equal(store.recordForBook(String(v.data.book))?.session_id, undefined);
+    assert.match(lines.join("\n"), /no World session in the sign-up proof/);
+    assert.match(lines.join("\n"), /WORLD_SIGNUP_SESSION=separate/);
+  });
+
+  it("the portal naming another session than the proof's: id_rejected, no book", async () => {
+    const world = new FakeWorld(
+      (signal) => [confirmed(proof(signal, "0x0abc"))],
+      () => ({ status: 200, body: { success: true, action: ACTION, session_id: SESSION_B, results: [] } }),
+    );
+    const { idkit } = make(world);
+    assert.equal((await finish(idkit, (await idkit.start("pi")).id)).failure, "id_rejected");
+  });
+
+  it("a malformed session id in the sign-up proof is not stored", async () => {
+    const world = new FakeWorld((signal) => [confirmed(proof(signal, "0x0abc", { session_id: "not-a-session" }))]);
+    const { idkit, store } = make(world);
+    const v = await finish(idkit, (await idkit.start("pi")).id);
+    assert.equal(v.ok, true);
+    assert.equal(store.recordForBook(String(v.data.book))?.session_id, undefined);
+  });
+
+  describe("fallback: WORLD_SIGNUP_SESSION=separate", () => {
+    const separate = { signupSession: "separate" };
+
+    it("a result with a session needs no second scan", async () => {
+      const world = new FakeWorld((signal) => [confirmed(proof(signal, "0x0abc"))]);
+      const { idkit } = make(world, undefined, separate);
+      assert.equal((await finish(idkit, (await idkit.start("pi")).id)).ok, true);
+      assert.deepEqual(world.created.map((c) => c.kind), ["request"]);
+    });
+
+    it("no session: a createSession scan follows; verify carries its QR; done once the session is stored", async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      const world = new FakeWorld((signal) =>
+        isSession(signal) ? [waiting, awaiting, confirmed(sessionProof(signal, SESSION_B))] : [confirmed(proof(signal, "0x0abc", noSession))],
+      );
+      const realCreate = world.createSession.bind(world);
+      world.createSession = async (signal) => {
+        await gate;
+        return realCreate(signal);
+      };
+      const { lines, over } = logged(separate);
+      const { idkit, store } = make(world, undefined, over);
+      const { id } = await idkit.start("pi");
+      await waitFor(() => world.verified.length === 1);
+      await sleep(5);
+      assert.equal(idkit.view(id)!.stage, "verify");
+      release();
+      await waitFor(() => typeof idkit.view(id)!.data.session_qr === "string" || idkit.view(id)!.stage === "done");
+      const mid = idkit.view(id)!;
+      assert.equal(mid.stage, "verify");
+      assert.equal(mid.data.session_qr, "https://staging.world.org/verify?t=fake-createSession");
+      assert.match(String(mid.data.session_code), /^[A-Z2-9]{3}-[A-Z2-9]{3}$/);
+      assert.ok(world.signals[1].startsWith(`anys1|${id}`));
+      const v = await finish(idkit, id);
+      assert.equal(v.ok, true);
+      assert.deepEqual(Object.keys(v.data).sort(), ["book", "credential", "runner_id"]);
+      assert.equal(store.recordForBook(String(v.data.book))?.session_id, SESSION_B);
+      assert.ok(!lines.join("\n").includes(SESSION_B));
+      assert.match(lines.join("\n"), /World session stored/);
+    });
+
+    it("the session scan refused on the phone: id_rejected; the book stays, without a session", async () => {
+      const world = new FakeWorld((signal) =>
+        isSession(signal) ? [awaiting, failed("user_rejected")] : [confirmed(proof(signal, "0x0abc", noSession))],
+      );
+      const { lines, over } = logged(separate);
+      const { idkit, store } = make(world, undefined, over);
+      const v = await finish(idkit, (await idkit.start("pi")).id);
+      assert.equal(v.failure, "id_rejected");
+      assert.match(lines.join("\n"), /World App: user_rejected/);
+      assert.match(lines.join("\n"), /the book has no session yet/);
+      assert.equal(world.verified.length, 1);
+      assert.ok(humanRecord(store), "the book was made");
+      assert.equal(humanRecord(store)?.session_id, undefined, "without a session");
+    });
+
+    it("a session proof for another request: id_rejected, no session stored", async () => {
+      const world = new FakeWorld((signal) =>
+        isSession(signal) ? [confirmed(sessionProof("anys1|someone-else"))] : [confirmed(proof(signal, "0x0abc", noSession))],
+      );
+      const { idkit, store } = make(world, undefined, separate);
+      const { id } = await idkit.start("pi");
+      const v = await finish(idkit, id);
+      assert.equal(v.failure, "id_rejected");
+      assert.equal(world.verified.length, 1, "the session proof never reached the portal");
+      assert.equal(humanRecord(store)?.session_id, undefined);
+    });
+
+    it("Circle during the session scan: id_rejected, nothing stored", async () => {
+      const world = new FakeWorld((signal) =>
+        isSession(signal) ? [awaiting, awaiting, awaiting, awaiting, confirmed(sessionProof(signal, SESSION_B))] : [confirmed(proof(signal, "0x0abc", noSession))],
+      );
+      const { idkit, store } = make(world, undefined, { ...separate, pollMs: 5 });
+      const { id } = await idkit.start("pi");
+      await waitFor(() => typeof idkit.view(id)!.data.session_qr === "string");
+      idkit.cancel(id);
+      await sleep(60);
+      assert.deepEqual(idkit.view(id), { stage: "done", ok: false, failure: "id_rejected", data: {} });
+      assert.equal(world.verified.length, 1);
+      assert.equal(humanRecord(store)?.session_id, undefined);
+    });
+
+    it("a repeat sign-up the portal refuses names the book, and gives a book without a session its session", async () => {
+      let calls = 0;
+      const world = new FakeWorld(
+        (signal) => (isSession(signal) ? [confirmed(sessionProof(signal, SESSION_B))] : [confirmed(proof(signal, "0x0abc", noSession))]),
+        (payload) => {
+          const p = payload as { action?: unknown };
+          if (p.action === undefined) return { status: 200, body: { success: true, session_id: SESSION_B, results: [] } };
+          return calls++ === 0
+            ? portalOk()
+            : { status: 400, body: { success: false, code: "all_verifications_failed", results: [{ code: "nullifier_replayed" }] } };
+        },
+      );
+      const { idkit, store } = make(world, undefined, { signupSession: "combined" });
+      const first = await finish(idkit, (await idkit.start("pi")).id);
+      assert.equal(humanRecord(store)?.session_id, undefined);
+      // The owner switches the fallback on and signs up again.
+      const again = make(world, store, separate);
+      const v = await finish(again.idkit, (await again.idkit.start("pi")).id);
+      assert.equal(v.failure, "id_dup");
+      assert.deepEqual(v.data, { book: first.data.book });
+      assert.equal(humanRecord(store)?.session_id, SESSION_B);
+    });
   });
 });

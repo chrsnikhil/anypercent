@@ -18,6 +18,8 @@ export interface Config {
     signingKey: string;
     action: string;
     environment: WorldEnvironment;
+    /** WORLD_SIGNUP_SESSION: "combined" (default, one scan) or "separate" (a second createSession scan). */
+    signupSession: "combined" | "separate";
     /** Developer Portal base, overridable only for tests. */
     portalBase: string;
   };
@@ -51,10 +53,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, baseDir = proce
       appId: str(env, "WORLD_APP_ID"),
       rpId: str(env, "WORLD_RP_ID"),
       signingKey: str(env, "WORLD_SIGNING_KEY"),
-      action: str(env, "WORLD_ACTION", "anypercent-record-book"),
+      action: str(env, "WORLD_ACTION", "anypercent-book"),
       environment: (ENVIRONMENTS as readonly string[]).includes(envName)
         ? (envName as WorldEnvironment)
         : ("invalid" as WorldEnvironment),
+      signupSession: str(env, "WORLD_SIGNUP_SESSION").toLowerCase() === "separate" ? "separate" : "combined",
       portalBase: "https://developer.world.org",
     },
     agentpass: {
