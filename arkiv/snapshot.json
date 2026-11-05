@@ -1,0 +1,50 @@
+{
+ "chain_id": 7794095,
+ "rpc": "https://rpc.rabdi.db-chain.testnet.arkiv.network",
+ "block": "262662",
+ "block_time_s": 1793911084,
+ "block_duration_s": 2,
+ "checker": "0x3d3260425Cb52F0c6716212274a883337aFa3f63",
+ "season": 1,
+ "schemas": {
+  "run": "anypercent.run",
+  "listing": "anypercent.listing"
+ },
+ "games": {
+  "SHIP": {
+   "block": "262662",
+   "q1": "arkiv.schema = str('anypercent.run') AND game = str('SHIP') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "q2": "arkiv.schema = str('anypercent.listing') AND game = str('SHIP') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "runs": [],
+   "listings": []
+  },
+  "MDGP": {
+   "block": "262663",
+   "q1": "arkiv.schema = str('anypercent.run') AND game = str('MDGP') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "q2": "arkiv.schema = str('anypercent.listing') AND game = str('MDGP') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "runs": [],
+   "listings": []
+  },
+  "RUSH": {
+   "block": "262663",
+   "q1": "arkiv.schema = str('anypercent.run') AND game = str('RUSH') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "q2": "arkiv.schema = str('anypercent.listing') AND game = str('RUSH') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "runs": [],
+   "listings": []
+  },
+  "SEGF": {
+   "block": "262663",
+   "q1": "arkiv.schema = str('anypercent.run') AND game = str('SEGF') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "q2": "arkiv.schema = str('anypercent.listing') AND game = str('SEGF') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "runs": [],
+   "listings": []
+  },
+  "ZIPG": {
+   "block": "262664",
+   "q1": "arkiv.schema = str('anypercent.run') AND game = str('ZIPG') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "q2": "arkiv.schema = str('anypercent.listing') AND game = str('ZIPG') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "runs": [],
+   "listings": []
+  }
+ }
+}

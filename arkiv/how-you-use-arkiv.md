@@ -1,0 +1,30 @@
+# How Any% uses Arkiv
+
+Each Arkiv feature we use, next to what a player, a judge or a stranger with `curl` sees because of it.
+
+| Arkiv feature | What it does for us | What people see |
+|---|---|---|
+| **`$creator` pin** | Every reader adds `$creator = addr(<checker>)`. Only our checker's wallet can create a row with that creator. | The board shows only times our checker replayed. A stranger's wallet writes a perfect copy of the top run, 10 seconds faster, under a real record book; the console ignores it, and the web board strikes it out: "not written by our checker: ignored" (`npm run arkiv:lookalike`). |
+| **ORDER BY with a range filter** | `frames < u64(<your time>) ... ORDER BY frames:u64 DESC`, limit 1. The node sorts across every match, so the first row is the answer. | "Who is just ahead of 1:44.83?" is one query: the console picks the ghost to race next, and the web board answers it in a box. |
+| **ORDER BY on the board** | `ORDER BY frames:u64 ASC` on the run rows. | The board is fastest first, read in one call, on the console, the web board and the profile alike. |
+| **`readonly`** | Run and listing rows are created read-only: no patch, from anyone, ever. | No time on the board can be edited, not even by our checker. The smoke and `npm run arkiv:extend` show a patch refused. |
+| **`permissionlessExtension`** (runs) | Anyone can extend a run row's expiry; nobody else can change it. | Anyone can keep a run alive past the season: a fan, a racer, a stranger. `npm run arkiv:extend` has a wallet that owns nothing extend a run by a day. |
+| **Expiry: 7 days, not extendable** (listings) | Listings are created with `fromDays(7)` and without permissionless extension. | "Ends in 7 days" on the console is the row's own lifetime; when it ends, the ghost is no longer for sale anywhere, with no job of ours running. The profile lists listings soonest to end first (`ORDER BY $expiresAt:u64 ASC`). |
+| **Expiry on runs** | `atDate(season end + 30 days)`. | "On the board until about <date>", read from `$expiresAt` and the chain's block timing. |
+| **`bool` column: `human`** | Indexed, so `human = true` is a filter. | The HUMAN badge ("record book opened with World ID (Orb)") on the console and the web board, and the web board's "HUMAN only" toggle. |
+| **Encrypted `bytes`: `log_enc`** | A listed run's log is on Arkiv only as AES-256-GCM ciphertext; the key is derived on our service and released against a payment receipt. | A listed ghost is not a free file: the row is public, its ghost is not, until it is bought (payments are mocked in this build). The buyer's console checks the log's SHA-256 against the row's `log_h`. |
+| **Plain `bytes`: `log`** (open tier) | Open-tier rows carry the plain log. | Anyone can fetch an open-tier run's log from Arkiv and replay it with `arcade_replay` themselves. |
+| **`key` column + predicted keys** | A listing's `run` is a `key`. `predictEntityKeys` gives the run's key before the batch, so the run and its listing are one transaction. | A listed run and its listing appear together, in the same block, or not at all. |
+| **Named schemas** | `anypercent.run` and `anypercent.listing` tag every row with `arkiv.schema`. | Other teams' rows on the same chain never reach our board, even before the creator pin. |
+| **`select.count`** | One call counts the matches. | The smoke checks the board's size in one request. |
+| **Raw JSON-RPC, no key** | `arkiv_query` answers anonymous requests with CORS `*`. | The web board runs in any browser with no backend of ours; the README's query runs from any terminal; the console reads the board with no key on it. |
+
+## The flow
+
+1. A runner finishes a run on the console and lists its ghost.
+2. World App shows "List MARINE DRIVE GP 1:42.83 ghost for 0.10 USDC on the public board" and the runner approves it.
+3. Our service replays the log with the game's own tool. Only if the time matches does it write the run row and its
+   listing row, in one transaction, from the checker's wallet.
+4. The console's board, the web board and the profile read those rows straight from Arkiv, pinned to the checker.
+5. Another player picks the listed ghost just ahead (Q3), checks the listing and its run directly on Arkiv, pays
+   (mocked), gets the decrypted log, checks its SHA-256 against the row, replays it, and races it.

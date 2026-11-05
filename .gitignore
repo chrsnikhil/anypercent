@@ -12,6 +12,11 @@
 !/apps/
 /apps/*
 !/apps/world-bridge/
+# The Arkiv track's files: its notes and the board snapshot only (never keys or .env values).
+!/arkiv/
+/arkiv/*
+!/arkiv/*.md
+!/arkiv/snapshot.json
 
 # 2. In the games and the arcade kit: source code and build files only (no art, sound, ROMs or generated frames).
 /arcade/**
