@@ -217,7 +217,9 @@ def _square_cases():
 
 def test_every_failure_state_is_reachable_with_square(tmp_path):
     cases = _square_cases()
-    assert len(cases) == 18  # 17 sponsor outcomes over six steps, plus ls_cancel's own
+    # 17 sponsor outcomes over six steps (approve's five twice: ls_approve, and ls_confirm for a
+    # World ID approval), plus ls_cancel's own
+    assert len(cases) == 23
     for n, (name, i, target) in enumerate(cases):
         rig = Rig(tmp_path / str(n))
         rig.flow.start(name)

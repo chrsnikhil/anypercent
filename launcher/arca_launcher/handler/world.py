@@ -1,4 +1,5 @@
-"""The World adapter: PB's record book (IDKit) and listing approval (Agent Pass) for real, through the World bridge
+"""The World adapter: PB's record book (IDKit) and listing approval (Agent Pass, or IDKit when the bridge's /health
+says "approvals": "idkit"; both behind /agentpass/*) for real, through the World bridge
 (apps/world-bridge; its HTTP contract is in apps/world-bridge/README.md). Every other
 step is still the mock's: Arkiv and Hedera stay mocked.
 
@@ -144,6 +145,7 @@ class WorldSponsors:
         self._cancels = []         # dropped Agent Pass requests the bridge still has to hear about
         self._health = None        # "ok" | "off" from /health; None until it first answers
         self._health_due = None    # when /health is next asked (None: at once)
+        self.approvals = "agentpass"   # /health's "approvals"; an older bridge (or none yet) says nothing: Agent Pass
         self._wanted_ms = clock_ms()
         self._verify = None        # the latest idkit_verify call: World shows busy while it runs
         self._wake = threading.Event()
@@ -244,6 +246,9 @@ class WorldSponsors:
             with self._lock:
                 self._health = "ok" if isinstance(reply, dict) and reply.get("world") == "ok" else "off"
                 self._health_due = self._clock_ms() + HEALTH_MS
+                if isinstance(reply, dict):        # no answer: the last word on approvals stands
+                    said = reply.get("approvals")
+                    self.approvals = said if said in ("idkit", "agentpass") else "agentpass"
 
     def _run(self):
         while not self._stop.is_set():

@@ -105,8 +105,10 @@ class HandlerView:
             rows.append(flow.fill(row))
         spec["rows"] = tuple(rows)
         if card["t"] == "status":
-            states = pill_states(flow)
-            spec["services"] = tuple((getattr(flow.sponsors.names, key), states[key], does) for key, does in SERVICES)
+            states, idkit = pill_states(flow), flow.sponsors.approvals == "idkit"
+            spec["services"] = tuple((getattr(flow.sponsors.names, key), states[key],
+                                      "IDKit" if key == "world" and idkit else does)   # listing OKs on IDKit too
+                                     for key, does in SERVICES)
         elif card["t"] == "load":                   # the bar fills over the call's usual time, then to its deadline
             spec.update(call=st.call, deadline_ms=st.deadline_ms)
         elif card["t"] == "qr":                     # the countdown runs in real seconds from the state's start

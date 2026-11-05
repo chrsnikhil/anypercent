@@ -62,6 +62,7 @@ class Call(Protocol):
 class Sponsors(Protocol):
     mock: bool              # any service still mocked: Square's lists and "Start over (mock)" stay
     names: SponsorNames
+    approvals: str          # how World asks for a listing OK: "agentpass" (a device code) or "idkit"
 
     def mocked(self, service: str) -> bool:
         """"world" | "board" | "third": is that service still mocked? Its pill and QR say so."""

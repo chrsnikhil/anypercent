@@ -466,6 +466,25 @@ def test_world_is_busy_while_its_check_runs():
     assert sponsors.status()["world"] == "ok"
 
 
+def test_health_says_which_provider_runs_listing_approvals():
+    sponsors, clock, bridge = make()
+    assert sponsors.approvals == "agentpass"                            # not heard from yet
+    assert MockSponsors(clock).approvals == "agentpass"
+    for said, approvals in (("idkit", "idkit"), ("agentpass", "agentpass"), (None, "agentpass"),
+                            ("idkit", "idkit"), ("sms", "agentpass")):
+        bridge.health["approvals"] = said
+        step(sponsors, clock, world.HEALTH_MS)
+        assert sponsors.approvals == approvals, said
+    del bridge.health["approvals"]                                      # an older bridge: Agent Pass
+    step(sponsors, clock, world.HEALTH_MS)
+    assert sponsors.approvals == "agentpass"
+    bridge.health["approvals"] = "idkit"
+    step(sponsors, clock, world.HEALTH_MS)
+    bridge.down = True                                                  # no answer: the last word stands
+    step(sponsors, clock, world.HEALTH_MS)
+    assert sponsors.approvals == "idkit" and sponsors.status()["world"] == "off"
+
+
 # ---- the mocked rest, and the honest MOCK pill ------------------------------------------------------------------
 
 def test_world_is_real_the_rest_still_mocked():
@@ -668,13 +687,99 @@ def test_a_listing_approved_on_world_lists_through_the_mocked_rest(tmp_path):
     assert rig.state == "ls_scan" and rig.flow.ctx["qr"] == "https://world.example/agentpass-1"
     assert rig.bridge.posts() == [("/agentpass/start", {"book": "ANY-7QZ",
                                                         "action": "list MDGP 1:42.83 ghost at 0.10 USDC"})]
-    rig.bridge.move("done", ok=True, data={"jti": "5e1f0c2a"})
+    assert "World App > Agent Pass" in _copy(rig.flow)                  # an older bridge: Agent Pass
+    rig.bridge.move("done", ok=True, data={"jti": "5e1f0c2a"})          # a device grant: scan straight to done
     rig.wait(500)
-    assert rig.state == "ls_record" and rig.flow.ctx["jti"] == "5e1f0c2a"
+    assert rig.state == "ls_record" and rig.flow._payload()["jti"] == "5e1f0c2a"
+    assert not any("5e1f0c2a" in text for text in _copy(rig.flow))      # the approval's id: never on screen
     rig.wait(2000)                                                      # Hedera's record: mocked
     assert rig.state == "ls_arkiv"
     rig.wait(1400)                                                      # Arkiv's listing: mocked
     assert rig.state == "ls_done" and len(load(rig.path).listings) == 1
+
+
+def _copy(flow):
+    """Everything the screen says right now, filled: PB's line and the card's words."""
+    return [flow.line] + [flow.fill(text) for text in copy_texts(flow.state)]
+
+
+def test_a_listing_approved_with_world_id_is_a_real_two_step(tmp_path):
+    rig = WorldRig(tmp_path, book="ANY-7QZ")
+    rig.bridge.health["approvals"] = "idkit"
+    rig.wait(100)
+    rig.flow.start("list")
+    rig.flow.press("cross")
+    rig.wait(100)
+    assert rig.state == "ls_scan" and rig.flow.ctx["qr"] == "https://world.example/agentpass-1"
+    assert "World App > World ID" in _copy(rig.flow)
+    rig.wait(3000)
+    assert rig.state == "ls_scan"                                       # nobody scanned yet
+    rig.bridge.move("approve")                                          # scanned: World App asks for the OK
+    rig.wait(500)
+    assert rig.state == "ls_confirm"
+    rig.wait(5000)
+    assert rig.state == "ls_confirm"                                    # stays up while the phone decides
+    shown = " ".join(_copy(rig.flow))
+    assert "Confirm" in shown and "World App" in shown
+    assert "code on your phone" not in shown.lower()                    # World App never shows the console's code
+    rig.bridge.move("done", ok=True, data={"jti": "77aa0c2a"})
+    rig.wait(500)
+    assert rig.state == "ls_record" and rig.flow._payload()["jti"] == "77aa0c2a"
+    assert not any("77aa0c2a" in text for text in _copy(rig.flow))
+
+
+def test_circle_on_the_world_id_approval_cancels_it(tmp_path):
+    rig = WorldRig(tmp_path, book="ANY-7QZ")
+    rig.bridge.health["approvals"] = "idkit"
+    rig.flow.start("list")
+    rig.flow.press("cross")
+    rig.wait(500)
+    rig.bridge.move("approve")
+    rig.wait(500)
+    rig.flow.press("circle")
+    assert rig.state == "ls_cancel"
+    rig.wait(100)
+    assert ("/agentpass/agentpass-1/cancel", {}) in rig.bridge.posts()
+    rig.bridge.move("done", ok=True, data={"jti": "late"})
+    rig.wait(1000)
+    assert rig.state == "ls_cancel" and rig.flow.ledger.listings == []
+
+
+@pytest.mark.parametrize("failure", LISTING_FAILURES)
+def test_a_world_id_approval_failure_lands_on_its_screen(tmp_path, failure):
+    rig = WorldRig(tmp_path, book="ANY-7QZ")
+    rig.bridge.health["approvals"] = "idkit"
+    rig.flow.start("list")
+    rig.flow.press("cross")
+    rig.wait(500)
+    rig.bridge.move("approve")
+    rig.wait(500)
+    assert rig.state == "ls_confirm"
+    rig.bridge.move("done", ok=False, failure=failure)
+    rig.wait(500)
+    assert rig.state == failure
+
+
+def test_no_agent_pass_wording_when_world_id_runs_approvals(tmp_path):
+    from arca_launcher.render.handler_view import HandlerView
+    rig = WorldRig(tmp_path, book="ANY-7QZ")
+    rig.bridge.health["approvals"] = "idkit"
+    rig.wait(100)
+    for name in ("s_boot", "ls_offer", "ls_scan", "ls_confirm", "ls_record", "ls_cancel", "ls_denied", "ls_expired",
+                 "ls_wrong", "ls_mismatch", "ls_reused", "ls_world_down", "ls_late"):
+        rig.flow.start(name)
+        assert not any("Agent Pass" in text for text in _copy(rig.flow)), name
+    rig.flow.start("s_boot")
+    services = {name: does for name, _, does in HandlerView._spec(None, rig.flow)["services"]}
+    assert services["World"] == "IDKit"
+    mock = Flow(MockSponsors(lambda: 0), Ledger(book="ANY-7QZ"), rig.path, "MDGP", dict(CTX), today=lambda: "x")
+    mock.start("s_boot")
+    services = {name: does for name, _, does in HandlerView._spec(None, mock)["services"]}
+    assert services["World"] == "IDKit, Agent Pass"                     # the mock's copy, as before
+    mock.start("ls_scan")
+    assert "World App > Agent Pass" in _copy(mock)
+    mock.start("ls_approve")
+    assert mock.state.name == "ls_approve"                              # the mock's code check, as before
 
 
 @pytest.mark.parametrize("failure", LISTING_FAILURES)

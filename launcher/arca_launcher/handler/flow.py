@@ -54,9 +54,9 @@ _NAME_FIELDS = frozenset(f.name for f in dataclasses.fields(SponsorNames))
 class Flow:
     """One handler session. `game` is the arcade game id (purchases, listings and targets are
     keyed by it); `ctx` is the public dict of placeholder values: the app fills the run and
-    board ones, the engine adds code, qr, expires_s, jti, book, credential, price, budget_left,
-    receipt, listing_days, approve_how and ghost_kept (and other_book, when World names the book
-    a duplicate owns).
+    board ones, the engine adds code, qr, expires_s, jti (the mock's only: a real approval's id
+    is never shown), book, credential, price, budget_left, receipt, listing_days, approve_how,
+    approve_via and ghost_kept (and other_book, when World names the book a duplicate owns).
 
     Read-only for the view and the app: state, line, ms_in_state, in_flight, busy, arcade,
     outcomes_open, outcomes ((label, state) rows), outcome_index, hub_index, hub_rows,
@@ -81,6 +81,7 @@ class Flow:
         self._kept = None      # (step, call) a keep_call state still listens to
         self._seller = None    # whose ghost is being bought or raced; None: your own best
         self._after_book = None  # where the record-book flow returns (_BOOK_RETURNS); None: hub
+        self._jti = None       # the listing approval's one-time id, for the record step
         self._sync()
 
     # ---- what the view reads ---------------------------------------------------------------
@@ -223,6 +224,8 @@ class Flow:
         if name in _BOOK_RETURNS and self.ledger.book is None:
             self._after_book = _BOOK_RETURNS[name]
             return "need_book"
+        if name == "ls_approve" and self.sponsors.approvals == "idkit":
+            return "ls_confirm"  # World ID's phone shows no code to check: tap Confirm
         if name == "buy_check":
             # The seller is fixed here for the whole purchase and the race after it.
             self._seller = self.ctx.get("target") or None
@@ -307,7 +310,9 @@ class Flow:
         if nxt == "id_dup" and not data.get("book") and not self.sponsors.mocked("world"):
             nxt = "id_dup_unnamed"          # World App refused before any book could be named
         if result.ok and step == "approve":
-            self.ctx["jti"] = data.get("jti", "")
+            self._jti = data.get("jti", "")
+            # On screen only the mock's made-up id: a real approval's id is never shown.
+            self.ctx["jti"] = self._jti if self.sponsors.mocked("world") else ""
         if result.ok and step == "pay":
             charged = self._charge(data.get("receipt", ""))
             if not charged and not owns(self.ledger, self.game, self._seller):
@@ -392,8 +397,11 @@ class Flow:
         self.ctx["credential"] = self.ledger.credential or "World ID"   # what World checked: Orb, Selfie Check
         # A real phone answers on the phone; only the mock's Cross stands in for it.
         self.ctx["approve_how"] = "Cross to go" if self.sponsors.mocked("world") else "Approve on your phone"
+        # Where World App asks for a listing OK: World ID when the bridge runs approvals on IDKit.
+        self.ctx["approve_via"] = ("World App > World ID" if self.sponsors.approvals == "idkit"
+                                   else "World App > Agent Pass")
 
     def _payload(self):
         """What a real adapter needs to know to run the step; the mock ignores it."""
         return {"game": self.game, "seller": self._seller, "price": GHOST_PRICE,
-                "book": self.ledger.book, "jti": self.ctx.get("jti"), "run_time": self.ctx.get("run_time")}
+                "book": self.ledger.book, "jti": self._jti, "run_time": self.ctx.get("run_time")}

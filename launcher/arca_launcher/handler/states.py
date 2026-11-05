@@ -15,8 +15,10 @@ the JS object `S`) with controller-ruled amendments layered on top:
   best), a fresh-visitor board, the three down-sponsor timeouts Ruling 8 split out of
   `buy_down`/`ls_record_fail` so a failure's name always matches which step timed out, and
   `buy_late`, so a payment that landed late never leaves "nothing was paid" on screen;
-- one more came with real World: `id_dup_unnamed`, the flow's `id_dup` when World App refused a
-  second sign-up before the bridge could name the book (nothing to sign in to).
+- two more came with real World: `id_dup_unnamed`, the flow's `id_dup` when World App refused a
+  second sign-up before the bridge could name the book (nothing to sign in to), and `ls_confirm`,
+  the flow's `ls_approve` when the listing OK runs on World ID (IDKit), whose phone shows no code
+  to check: tap Confirm, as for the record book.
 
 This module is pure data (plus `copy_texts`/`PLACEHOLDERS`, small helpers over that data): no
 pygame, no sponsor calls, no clock. Task 6 (`flow.py`) walks `on`; Task 9 draws `card` by its
@@ -301,7 +303,7 @@ STATES: dict[str, State] = {
     "ls_scan": State(
         name="ls_scan", mood="serious",
         card={"t": "qr", "h": "Approve on your phone",
-              "rows": ("World App > Agent Pass", "*List ghost: {game} {run_time}*",
+              "rows": ("{approve_via}", "*List ghost: {game} {run_time}*",
                         "{price} USDC to *{wallet}*")},
         say="Scan this with World App. It asks to list your *{run_time}* ghost for *{price} USDC*. "
             "{approve_how}, Circle to back out.",
@@ -315,6 +317,15 @@ STATES: dict[str, State] = {
         say="Check the code on your phone says *{code}*, then tap Approve. If it says anything "
             "else, press Circle.",
         steps=_LS, at=1, call="approve", phone=True, deadline_ms=1200000,
+        on={"ok": "ls_record", "timeout": "ls_expired", "circle": "ls_cancel"},
+    ),
+    "ls_confirm": State(
+        name="ls_confirm", mood="thinking",
+        card={"t": "wait", "h": "Waiting for your phone",
+              "rows": ("Open World App", "Tap *Confirm*", "*List ghost: {game} {run_time}*")},
+        say="Got the scan. Now tap *Confirm* in World App to list your *{run_time}* ghost. "
+            "Changed your mind? Press Circle.",
+        steps=_LS, at=1, call="approve", phone=True, deadline_ms=300000,
         on={"ok": "ls_record", "timeout": "ls_expired", "circle": "ls_cancel"},
     ),
     "ls_record": State(

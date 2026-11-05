@@ -125,6 +125,7 @@ class MockSponsors:
     caller advances by hand drives the whole thing deterministically."""
 
     mock = True
+    approvals = "agentpass"  # the mock's listing OK reads as Agent Pass's device code
 
     def __init__(self, clock_ms, names=SponsorNames(), seed=0):
         self._clock_ms = clock_ms
