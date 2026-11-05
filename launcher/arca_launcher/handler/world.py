@@ -29,6 +29,7 @@ UNREACHABLE_MS = 5000         # a live request's bridge silent this long: World 
 EXPIRY_GRACE_MS = 3000        # this long past a request's own expires_s with no end from the bridge: it ran out
 START_TIMEOUT_S = 5.0         # a start may wait on World's own servers
 ASK_TIMEOUT_S = 2.0
+ACTION_MAX = 160              # the bridge's limit on a listing's digest (World App shows it)
 TICK_S, IDLE_TICK_S = 0.1, 1.0
 
 _KIND = {"idkit_scan": "idkit", "idkit_confirm": "idkit", "idkit_verify": "idkit",
@@ -341,10 +342,33 @@ class WorldSponsors:
     def _start_body(self, step, payload):
         if step == "idkit_scan":
             return {"console": self._console}
-        action = " ".join(str(x) for x in ("list", payload.get("game"), payload.get("run_time"), "ghost") if x)
-        if isinstance(payload.get("price"), int):
-            action += " at %.2f USDC" % (payload["price"] / 100)
-        return {"book": payload.get("book") or "", "action": action}
+        return {"book": payload.get("book") or "", "action": _digest(payload)}
+
+
+def _digest(payload):
+    """What World App shows the person approving a listing: "List Marine Drive GP 1:42.83 ghost for 0.10 USDC". The
+    game's title (its arcade id only when there is none), no control characters, and within the bridge's
+    ACTION_MAX (counted in UTF-16 units, as the bridge's JavaScript does): a long title gives way, never the price."""
+    tail = " ".join(x for x in (_printable(payload.get("run_time")), "ghost") if x)
+    if isinstance(payload.get("price"), int):
+        tail += " for %.2f USDC" % (payload["price"] / 100)
+    title = _printable(payload.get("title")) or _printable(payload.get("game"))
+    room = ACTION_MAX - _units(f"List  {tail}")
+    if _units(title) > room:
+        while title and _units(title) > room - 3:
+            title = title[:-1]
+        title = title.rstrip() + "..."
+    return " ".join(x for x in ("List", title, tail) if x)
+
+
+def _printable(value):
+    """value as one line: control characters become spaces, runs of spaces one."""
+    text = "" if value is None else str(value)
+    return " ".join("".join(" " if ord(ch) < 32 or ord(ch) == 127 else ch for ch in text).split())
+
+
+def _units(text):
+    return len(text.encode("utf-16-le")) // 2
 
 
 def _quote(request_id):

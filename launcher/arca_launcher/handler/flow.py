@@ -402,6 +402,8 @@ class Flow:
                                    else "World App > Agent Pass")
 
     def _payload(self):
-        """What a real adapter needs to know to run the step; the mock ignores it."""
-        return {"game": self.game, "seller": self._seller, "price": GHOST_PRICE,
-                "book": self.ledger.book, "jti": self._jti, "run_time": self.ctx.get("run_time")}
+        """What a real adapter needs to know to run the step; the mock ignores it. `title` is the
+        game's name as people read it (World App shows it on a listing approval)."""
+        return {"game": self.game, "title": self.ctx.get("game"), "seller": self._seller,
+                "price": GHOST_PRICE, "book": self.ledger.book, "jti": self._jti,
+                "run_time": self.ctx.get("run_time")}

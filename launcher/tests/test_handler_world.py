@@ -24,8 +24,9 @@ from arca_launcher.handler.world import WorldSponsors
 IDKIT_FAILURES = ("id_rejected", "id_expired", "id_nocred", "id_dup", "id_offline")
 LISTING_FAILURES = ("ls_denied", "ls_expired", "ls_wrong", "ls_mismatch", "ls_reused", "ls_world_down")
 BOOK = {"book": "ANY-K2P", "credential": "Orb", "runner_id": "3f9a0c21"}
-LIST_PAYLOAD = {"game": "MDGP", "seller": None, "price": GHOST_PRICE, "book": "ANY-7QZ", "jti": None,
-                "run_time": "1:42.83"}
+LIST_PAYLOAD = {"game": "MDGP", "title": "Marine Drive GP", "seller": None, "price": GHOST_PRICE, "book": "ANY-7QZ",
+                "jti": None, "run_time": "1:42.83"}
+DIGEST = "List Marine Drive GP 1:42.83 ghost for 0.10 USDC"     # what World App shows the person approving
 # The stage each phone step is begun at (the stage the step before it moved past).
 AT = {"idkit_scan": "scan", "idkit_confirm": "confirm", "idkit_verify": "verify", "approve_scan": "scan",
       "approve": "approve"}
@@ -194,7 +195,7 @@ def test_listing_approval_sends_the_book_and_what_is_approved():
     scan = sponsors.begin("approve_scan", LIST_PAYLOAD)
     sponsors.work()
     assert bridge.posts() == [("/agentpass/start", {"book": "ANY-7QZ",
-                                                    "action": "list MDGP 1:42.83 ghost at 0.10 USDC"})]
+                                                    "action": DIGEST})]
     assert scan.info == {"code": "K7P-2QX", "qr": "https://world.example/agentpass-1", "expires_s": 900}
     for _ in range(5):                                      # the device grant only says "scan" until it ends
         step(sponsors, clock)
@@ -206,6 +207,25 @@ def test_listing_approval_sends_the_book_and_what_is_approved():
     assert approve.info == {}
     assert approve.poll() == Result(ok=True, data={"jti": "5e1f0c2a"})
     assert len(bridge.posts()) == 1
+
+
+def _digest(payload):
+    sponsors, clock, bridge = make()
+    sponsors.begin("approve_scan", payload)
+    sponsors.work()
+    return bridge.posts()[0][1]["action"]
+
+
+def test_the_digest_world_app_shows_is_readable_and_fits_the_bridge():
+    assert _digest(LIST_PAYLOAD) == DIGEST
+    assert _digest(dict(LIST_PAYLOAD, title=None)) == "List MDGP 1:42.83 ghost for 0.10 USDC"   # no title: its id
+    messy = _digest(dict(LIST_PAYLOAD, title="Marine\tDrive\nGP\x7f", run_time="1:42.83\r"))
+    assert messy == DIGEST                                              # no control characters reach World App
+    for title in ("Super " * 40, "\U0001F3CE" * 120, "x" * 500):        # a long title gives way, never the price
+        action = _digest(dict(LIST_PAYLOAD, title=title))
+        assert len(action.encode("utf-16-le")) // 2 <= 160               # the bridge counts JavaScript's way
+        assert action.startswith("List ") and action.endswith("... 1:42.83 ghost for 0.10 USDC"), action
+        assert not any(ord(ch) < 32 or ord(ch) == 127 for ch in action)
 
 
 def test_an_approve_stage_moves_the_scan_on_first():
@@ -686,7 +706,7 @@ def test_a_listing_approved_on_world_lists_through_the_mocked_rest(tmp_path):
     rig.wait(100)
     assert rig.state == "ls_scan" and rig.flow.ctx["qr"] == "https://world.example/agentpass-1"
     assert rig.bridge.posts() == [("/agentpass/start", {"book": "ANY-7QZ",
-                                                        "action": "list MDGP 1:42.83 ghost at 0.10 USDC"})]
+                                                        "action": DIGEST})]
     assert "World App > Agent Pass" in _copy(rig.flow)                  # an older bridge: Agent Pass
     rig.bridge.move("done", ok=True, data={"jti": "5e1f0c2a"})          # a device grant: scan straight to done
     rig.wait(500)
