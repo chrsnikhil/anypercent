@@ -2,7 +2,7 @@
   "name": "world-bridge",
   "version": "0.1.0",
   "private": true,
-  "description": "Any% World bridge: IDKit record book + Agent Pass listing approval for the PB handler.",
+  "description": "Any% World bridge: IDKit record book + listing approvals, and the Arkiv board (checked run rows, listings, the web board).",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -11,12 +11,20 @@
     "start": "tsx src/main.ts",
     "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "arkiv:keygen": "tsx scripts/arkiv-keygen.ts",
+    "arkiv:smoke": "tsx scripts/arkiv-smoke.ts",
+    "arkiv:open-run": "tsx scripts/arkiv-open-run.ts",
+    "arkiv:lookalike": "tsx scripts/arkiv-lookalike.ts",
+    "arkiv:extend": "tsx scripts/arkiv-extend.ts",
+    "arkiv:snapshot": "tsx scripts/arkiv-snapshot.ts"
   },
   "dependencies": {
+    "@arkiv-network/sdk": "1.0.1",
     "@worldcoin/idkit-core": "4.6.0",
     "jose": "6.2.15",
-    "oauth4webapi": "3.8.8"
+    "oauth4webapi": "3.8.8",
+    "viem": "2.57.16"
   },
   "devDependencies": {
     "@types/node": "22.19.1",

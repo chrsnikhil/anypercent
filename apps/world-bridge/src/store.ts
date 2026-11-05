@@ -5,12 +5,17 @@
  *             session its owner proves for each listing approval (server-side only: never logged,
  *             never returned);
  * - bindings: book -> the HMAC of the Agent Pass (iss, sub) bound to it on first approval;
- * - jtis:     ID-token jtis already consumed.
+ * - jtis:     ID-token jtis already consumed;
+ * - approvals: sha256(jti) -> each listing approval this bridge granted (book, sha256 of the text
+ *             World App showed, when) and, once spent, the one log it allows on Arkiv and what the
+ *             write answered. The jti itself is never stored or logged;
+ * - receipts: payment receipt -> the one run whose ghost it paid for.
  *
  * Every operation is synchronous read-modify-write inside one event-loop turn, so two requests can
  * never interleave inside a claim: the check and the write are one atomic step for this process.
  * Writes go to a temp file and are renamed over the old one.
  */
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { bookCandidate } from "./hmac.js";
@@ -24,11 +29,33 @@ export interface BookRecord {
   session_id?: string;
 }
 
+/** What one listing approval allows: exactly one run row plus one listing row, for this book. */
+export interface ApprovalRecord {
+  book: string;
+  /** sha256 (hex) of the action text World App showed. */
+  action_sha: string;
+  /** When it was granted, in Unix seconds. */
+  at: number;
+  /** Set when spent: the log (sha256 hex) this approval put on Arkiv. */
+  log_h?: string;
+  /** Set once the write landed: what /arkiv/publish answered. Keys and tx hashes are public. */
+  result?: { run: string; listing: string; tx: string | null };
+}
+
+export type SpendResult = "spent" | "same" | "other" | "unknown";
+
 interface StateFile {
   version: 1;
   books: Record<string, BookRecord>;
   bindings: Record<string, { sub_key: string; bound_at: number }>;
   jtis: Record<string, number>;
+  approvals: Record<string, ApprovalRecord>;
+  receipts: Record<string, string>;
+}
+
+/** The store key for an approval: sha256(jti), so the jti never lands on disk. */
+export function approvalKey(jti: string): string {
+  return createHash("sha256").update(jti).digest("hex");
 }
 
 export type BindResult = "bound" | "match" | "mismatch";
@@ -51,10 +78,12 @@ export class Store {
         books: parsed.books ?? {},
         bindings: parsed.bindings ?? {},
         jtis: parsed.jtis ?? {},
+        approvals: parsed.approvals ?? {},
+        receipts: parsed.receipts ?? {},
       };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return { version: 1, books: {}, bindings: {}, jtis: {} };
+        return { version: 1, books: {}, bindings: {}, jtis: {}, approvals: {}, receipts: {} };
       }
       throw new Error(`state file ${this.file} is unreadable; refusing to start over it`);
     }
@@ -134,6 +163,61 @@ export class Store {
   useJti(key: string, now: number): boolean {
     if (this.state.jtis[key] !== undefined) return false;
     this.state.jtis[key] = now;
+    this.write();
+    return true;
+  }
+
+  // ---- Arkiv: listing approvals and ghost receipts ------------------------------------------
+
+  /**
+   * Record a listing approval the bridge just granted. Called by both approval providers on
+   * success; an approval already recorded (and maybe spent) is never replaced.
+   */
+  recordApproval(jti: string, book: string, actionSha: string, nowS: number): void {
+    const k = approvalKey(jti);
+    if (this.state.approvals[k]) return;
+    this.state.approvals[k] = { book, action_sha: actionSha, at: nowS };
+    this.write();
+  }
+
+  approvalFor(jti: string): ApprovalRecord | undefined {
+    return this.state.approvals[approvalKey(jti)];
+  }
+
+  /**
+   * Bind an approval to the one log it puts on Arkiv. "spent": bound now; "same": already bound
+   * to this log (a retry); "other": already bound to another log; "unknown": no such approval.
+   */
+  spendApproval(jti: string, logH: string): SpendResult {
+    const rec = this.state.approvals[approvalKey(jti)];
+    if (!rec) return "unknown";
+    if (rec.log_h !== undefined) return rec.log_h === logH ? "same" : "other";
+    rec.log_h = logH;
+    this.write();
+    return "spent";
+  }
+
+  /** Remember what a spent approval's write answered, so a retry answers the same. */
+  setApprovalResult(jti: string, result: { run: string; listing: string; tx: string | null }): void {
+    const rec = this.state.approvals[approvalKey(jti)];
+    if (!rec) return;
+    rec.result = result;
+    this.write();
+  }
+
+  /** What an earlier write of this log answered, if this bridge made it. */
+  resultForLog(logH: string): { run: string; listing: string; tx: string | null } | undefined {
+    for (const rec of Object.values(this.state.approvals)) {
+      if (rec.log_h === logH && rec.result) return rec.result;
+    }
+    return undefined;
+  }
+
+  /** A receipt pays for one run only: true when it is new (now bound to this run) or already this run's. */
+  claimReceipt(receipt: string, run: string): boolean {
+    const bound = this.state.receipts[receipt];
+    if (bound !== undefined) return bound === run.toLowerCase();
+    this.state.receipts[receipt] = run.toLowerCase();
     this.write();
     return true;
   }

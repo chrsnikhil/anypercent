@@ -15,7 +15,8 @@
  * awaiting_confirmation (and the portal check after it) -> "approve", then "done".
  * On success `data` is {jti}: a one-time approval id, sha256(approval id | request nonce)[:16],
  * consumed in the store so a replayed proof gives ls_reused. Neither the jti nor the session id is
- * ever logged.
+ * ever logged. The approval is also recorded for Arkiv (store.recordApproval: the book and the
+ * sha256 of the text World App showed), so /arkiv/publish can hold the write to exactly it.
  *
  * Circle wins: after a cancel the session answers done / ls_denied, polling stops, and a proof
  * that still arrives (even one already at the portal) is discarded.
@@ -230,9 +231,11 @@ export class IdkitApprovals implements ApprovalProvider {
     }
 
     const jti = approvalJti(s.id, s.request?.nonce ?? "");
-    if (!this.opts.store.useJti(jtiKey(JTI_SPACE, jti), Math.floor(this.now() / 1000))) {
+    const nowS = Math.floor(this.now() / 1000);
+    if (!this.opts.store.useJti(jtiKey(JTI_SPACE, jti), nowS)) {
       return this.finish(s, "ls_reused");
     }
+    this.opts.store.recordApproval(jti, s.book, createHash("sha256").update(s.action).digest("hex"), nowS);
     return this.finish(s, null, { jti }, ` (${r.credential}, the book's World session, approval id used once)`);
   }
 

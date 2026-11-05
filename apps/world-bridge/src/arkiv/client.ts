@@ -1,0 +1,441 @@
+/**
+ * ArkivPort: everything the service asks of Arkiv, behind one interface so the publish pipeline is
+ * tested against a fake (test/fake-arkiv.ts) and runs live on the SDK.
+ *
+ * The real implementation (SdkArkiv) uses @arkiv-network/sdk 1.0.1 on Rabdi:
+ * - reads are the exact Q-strings of queries.ts over `arkiv_query`, each row validated like every
+ *   other raw reader (rows.ts), pinned to the checker;
+ * - writes go through the SDK's typed schemas (schema.ts), signed by the checker, on one serial
+ *   queue: one wallet, one entity nonce, so a batch's predicted keys hold;
+ * - the access key rides in the RPC URL's last path segment and never reaches a log line: every
+ *   error is reduced to a short reason with the key and anything key-shaped removed.
+ */
+import {
+  createPublicClient,
+  createWalletClient,
+  ExpirationTime,
+  type PublicArkivClient,
+  type WalletArkivClient,
+} from "@arkiv-network/sdk";
+import { rabdi } from "@arkiv-network/sdk/chains";
+import { bool, bytes, dec, i32, key as keyValue, str, u64 } from "@arkiv-network/sdk/schema";
+import { http, type Hex } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { queryParams, qListingForRun, q6Run, q7RunByLogHash, LISTING_ATTRS, RUN_ALL_ATTRS, selectOf, type RpcSelect } from "./queries.js";
+import { decodePage, type DecodedRow } from "./rows.js";
+import { LISTING_TYPES, Listing, REAL, Run, RUN_TYPES, SmokeListing, SmokeRun, type SchemaNames } from "./schema.js";
+
+export interface RunRow {
+  key: string;
+  creator: string | null;
+  expiresAt: bigint | null;
+  game: string;
+  title?: string;
+  season?: number;
+  rules?: bigint;
+  frames: bigint;
+  log_h: string;
+  runner: string;
+  book?: string;
+  label?: string;
+  human: boolean;
+  credential?: string;
+  tool?: string;
+  log?: Uint8Array;
+  log_enc?: Uint8Array;
+}
+
+export interface ListingRow {
+  key: string;
+  creator: string | null;
+  expiresAt: bigint | null;
+  run: string;
+  game: string;
+  season: number;
+  frames: bigint;
+  log_h: string;
+  price: string;
+  seller: string;
+  book: string;
+  human: boolean;
+}
+
+/** What a run row is written with (spec: Entities). Exactly one of log and log_enc. */
+export interface RunValues {
+  game: string;
+  title: string;
+  season: number;
+  rules: number;
+  frames: number;
+  log_h: string;
+  runner: string;
+  book?: string;
+  label?: string;
+  human: boolean;
+  credential?: string;
+  tool: string;
+  log?: Uint8Array;
+  log_enc?: Uint8Array;
+}
+
+/** What a listing row is written with; its `run` key is filled in by the writer. */
+export interface ListingValues {
+  game: string;
+  season: number;
+  frames: number;
+  log_h: string;
+  /** USDC, as a decimal string ("0.1"). */
+  price: string;
+  seller: string;
+  book: string;
+  human: boolean;
+}
+
+export type ExpirySpec =
+  | { kind: "atDate"; date: Date; atLeastDays: number }
+  | { kind: "days"; days: number }
+  | { kind: "hours"; hours: number }
+  | { kind: "atBlock"; block: bigint };
+
+export interface Flags {
+  readonly: boolean;
+  permissionlessExtension: boolean;
+}
+
+export interface CreateSpec<V> {
+  values: V;
+  flags: Flags;
+  expiry: ExpirySpec;
+}
+
+export interface Written {
+  run: string;
+  listing: string;
+  tx: string;
+}
+
+export interface ArkivPort {
+  /** eth_chainId. */
+  chainId(): Promise<number>;
+  /** An address's balance, in wei of tGLM. */
+  balance(address: string): Promise<bigint>;
+  /** Q7: the live run the checker wrote with this log, if any. */
+  runByLogHash(logH: string): Promise<RunRow | null>;
+  /** The live listing the checker wrote for this run, if any. */
+  liveListingFor(runKey: string): Promise<ListingRow | null>;
+  /** Q6 on runs: one live run the checker wrote, with its ghost bytes when `withLog`. */
+  getRun(runKey: string, withLog: boolean): Promise<RunRow | null>;
+  /** One batch: the run, then its listing (run = the run's predicted key). */
+  writeRunAndListing(run: CreateSpec<RunValues>, listing: CreateSpec<ListingValues>): Promise<Written>;
+  /** A listing for a run already on Arkiv. */
+  writeListing(runKey: string, listing: CreateSpec<ListingValues>): Promise<{ listing: string; tx: string }>;
+  /** A run alone (the open tier). */
+  writeRun(run: CreateSpec<RunValues>): Promise<{ run: string; tx: string }>;
+}
+
+/** A read or write that did not complete: Arkiv down, a revert, out of gas, a timeout. */
+export class ArkivError extends Error {}
+
+/** A short reason for a log line: no URLs, no access key, nothing key-shaped. */
+export function redact(text: string, secrets: readonly string[] = []): string {
+  let out = text;
+  for (const s of secrets) if (s) out = out.split(s).join("<redacted>");
+  // URLs carry the access key; a bare 64-hex run could be a secret. 0x-prefixed entity keys and tx
+  // hashes are public and stay (a private key is removed above, by value).
+  out = out.replace(/https?:\/\/\S+/g, "<url>").replace(/(?<!0x)\b[0-9a-fA-F]{64}\b/g, "<hex>");
+  return out.split("\n")[0].slice(0, 240);
+}
+
+export function runFromRow(r: DecodedRow): RunRow {
+  const v = r.values;
+  return {
+    key: r.key,
+    creator: r.creator,
+    expiresAt: r.expiresAt,
+    game: v.game as string,
+    title: v.title as string | undefined,
+    season: v.season as number | undefined,
+    rules: v.rules as bigint | undefined,
+    frames: v.frames as bigint,
+    log_h: v.log_h as string,
+    runner: v.runner as string,
+    book: v.book as string | undefined,
+    label: v.label as string | undefined,
+    human: v.human as boolean,
+    credential: v.credential as string | undefined,
+    tool: v.tool as string | undefined,
+    log: v.log as Uint8Array | undefined,
+    log_enc: v.log_enc as Uint8Array | undefined,
+  };
+}
+
+export function listingFromRow(r: DecodedRow): ListingRow {
+  const v = r.values;
+  return {
+    key: r.key,
+    creator: r.creator,
+    expiresAt: r.expiresAt,
+    run: v.run as string,
+    game: v.game as string,
+    season: v.season as number,
+    frames: v.frames as bigint,
+    log_h: v.log_h as string,
+    price: v.price as string,
+    seller: v.seller as string,
+    book: v.book as string,
+    human: v.human as boolean,
+  };
+}
+
+const TYPES = { run: RUN_TYPES, listing: LISTING_TYPES } as const;
+
+/** Plain values -> the SDK's typed values, by the schema's column types. */
+export function toSdkValues(kind: "run" | "listing", values: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [name, v] of Object.entries(values)) {
+    if (v === undefined) continue;
+    const col = TYPES[kind][name];
+    if (!col) throw new ArkivError(`unknown column ${name}`);
+    switch (col.type) {
+      case "str":
+        out[name] = str(v as string);
+        break;
+      case "i32":
+        out[name] = i32(v as number);
+        break;
+      case "u64":
+        out[name] = u64(BigInt(v as number | bigint));
+        break;
+      case "bool":
+        out[name] = bool(v as boolean);
+        break;
+      case "dec":
+        out[name] = dec(String(v));
+        break;
+      case "key":
+        out[name] = keyValue(v as Hex);
+        break;
+      case "bytes":
+        out[name] = bytes(v as Uint8Array);
+        break;
+      default:
+        throw new ArkivError(`unhandled type ${col.type}`);
+    }
+  }
+  return out;
+}
+
+export function toExpiration(e: ExpirySpec) {
+  switch (e.kind) {
+    case "atDate":
+      return ExpirationTime.atDate(e.date, { atLeast: ExpirationTime.fromDays(e.atLeastDays) });
+    case "days":
+      return ExpirationTime.fromDays(e.days);
+    case "hours":
+      return ExpirationTime.fromHours(e.hours);
+    case "atBlock":
+      return ExpirationTime.atBlock(e.block);
+  }
+}
+
+export interface SdkArkivOptions {
+  /** ARKIV_RPC with the access key already appended (config.arkivRpcUrl). Never logged. */
+  rpcUrl: string;
+  /** The access key alone, only so error text can be scrubbed of it. */
+  accessKey: string;
+  /** The checker's private key: reads pin its address, writes are signed by it. */
+  checkerKey?: string;
+  /** Pin reads to this creator instead (read-only use, e.g. the snapshot with no key). */
+  checkerAddress?: string;
+  names?: SchemaNames;
+  timeoutMs?: number;
+}
+
+export class SdkArkiv implements ArkivPort {
+  readonly checker: string | null;
+  private readonly pub: PublicArkivClient;
+  private readonly wallet: WalletArkivClient | null;
+  private readonly names: SchemaNames;
+  private readonly secrets: string[];
+  private queue: Promise<unknown> = Promise.resolve();
+
+  constructor(private readonly opts: SdkArkivOptions) {
+    this.names = opts.names ?? REAL;
+    const chain = rabdi({ accessKey: opts.accessKey });
+    const transport = http(opts.rpcUrl, { timeout: opts.timeoutMs ?? 10_000, retryCount: 1 });
+    this.pub = createPublicClient({ chain, transport, pollingInterval: 1000 }) as unknown as PublicArkivClient;
+    this.secrets = [opts.accessKey, encodeURIComponent(opts.accessKey), opts.checkerKey ?? ""].filter(Boolean);
+    if (opts.checkerKey) {
+      const account = privateKeyToAccount(opts.checkerKey as Hex);
+      this.checker = account.address;
+      this.wallet = createWalletClient({ chain, transport, account, pollingInterval: 1000 }) as unknown as WalletArkivClient;
+    } else {
+      this.checker = opts.checkerAddress ?? null;
+      this.wallet = null;
+    }
+  }
+
+  /** The public client, for scripts (block timing, receipts). */
+  get publicClient(): PublicArkivClient {
+    return this.pub;
+  }
+
+  private fail(err: unknown): ArkivError {
+    const e = err as { shortMessage?: string; message?: string; name?: string };
+    return new ArkivError(redact(e?.shortMessage ?? e?.message ?? String(err), this.secrets));
+  }
+
+  /** One raw arkiv_query call: the reply's data, block and count. */
+  async query(query: string, select: RpcSelect, limit = 100): Promise<{ data: unknown[]; blockNumber: bigint; count?: bigint }> {
+    try {
+      const res = (await this.pub.request({ method: "arkiv_query", params: queryParams(query, select, limit) } as never)) as {
+        data: unknown[];
+        blockNumber: string;
+        count?: string;
+      };
+      return {
+        data: Array.isArray(res?.data) ? res.data : [],
+        blockNumber: BigInt(res.blockNumber),
+        ...(res.count !== undefined ? { count: BigInt(res.count) } : {}),
+      };
+    } catch (err) {
+      throw this.fail(err);
+    }
+  }
+
+  async chainId(): Promise<number> {
+    try {
+      return await this.pub.getChainId();
+    } catch (err) {
+      throw this.fail(err);
+    }
+  }
+
+  async balance(address: string): Promise<bigint> {
+    try {
+      return await this.pub.getBalance({ address: address as Hex });
+    } catch (err) {
+      throw this.fail(err);
+    }
+  }
+
+  private pinned(): string {
+    if (!this.checker) throw new ArkivError("no checker configured");
+    return this.checker;
+  }
+
+  async runByLogHash(logH: string): Promise<RunRow | null> {
+    const asked = [...RUN_ALL_ATTRS];
+    const res = await this.query(q7RunByLogHash(logH, this.pinned(), this.names), selectOf(asked), 1);
+    const page = decodePage(res.data, RUN_TYPES, asked, this.names.run, this.pinned());
+    return page.rows[0] ? runFromRow(page.rows[0]) : null;
+  }
+
+  async liveListingFor(runKey: string): Promise<ListingRow | null> {
+    const asked = [...LISTING_ATTRS];
+    const res = await this.query(qListingForRun(runKey, this.pinned(), this.names), selectOf(asked), 1);
+    const page = decodePage(res.data, LISTING_TYPES, asked, this.names.listing, this.pinned());
+    return page.rows[0] ? listingFromRow(page.rows[0]) : null;
+  }
+
+  async getRun(runKey: string, withLog: boolean): Promise<RunRow | null> {
+    const asked = withLog ? [...RUN_ALL_ATTRS, "log", "log_enc"] : [...RUN_ALL_ATTRS];
+    const res = await this.query(q6Run(runKey, this.pinned(), this.names), selectOf(asked), 1);
+    const page = decodePage(res.data, RUN_TYPES, asked, this.names.run, this.pinned());
+    return page.rows[0] ? runFromRow(page.rows[0]) : null;
+  }
+
+  /** Writes run one at a time: one wallet, one entity nonce. */
+  private serial<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(fn, fn);
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private schemas() {
+    return this.names === REAL || this.names.run === REAL.run ? { run: Run, listing: Listing } : { run: SmokeRun, listing: SmokeListing };
+  }
+
+  private needWallet(): WalletArkivClient {
+    if (!this.wallet || !this.checker) throw new ArkivError("no checker key configured");
+    return this.wallet;
+  }
+
+  writeRunAndListing(run: CreateSpec<RunValues>, listing: CreateSpec<ListingValues>): Promise<Written> {
+    return this.serial(async () => {
+      const wallet = this.needWallet();
+      const s = this.schemas();
+      try {
+        const [r, l] = await this.pub.predictEntityKeys({ owner: this.checker as Hex, count: 2 });
+        const res = await wallet.executeBatch({
+          creates: [
+            {
+              schema: s.run,
+              values: toSdkValues("run", run.values as unknown as Record<string, unknown>) as never,
+              expiration: toExpiration(run.expiry),
+              flags: run.flags,
+              salt: r.salt,
+            },
+            {
+              schema: s.listing,
+              values: toSdkValues("listing", { ...listing.values, run: r.key }) as never,
+              expiration: toExpiration(listing.expiry),
+              flags: listing.flags,
+              salt: l.salt,
+            },
+          ],
+        } as never);
+        const [runKey, listingKey] = res.createdEntities.map((k) => k.toLowerCase());
+        if (runKey !== r.key.toLowerCase() || listingKey !== l.key.toLowerCase()) {
+          // Another writer used the checker's nonce in between: the listing names a key that moved.
+          throw new ArkivError("the predicted keys moved (another writer used the checker wallet)");
+        }
+        return { run: runKey, listing: listingKey, tx: res.txHash };
+      } catch (err) {
+        throw err instanceof ArkivError ? err : this.fail(err);
+      }
+    });
+  }
+
+  writeListing(runKey: string, listing: CreateSpec<ListingValues>): Promise<{ listing: string; tx: string }> {
+    return this.serial(async () => {
+      const wallet = this.needWallet();
+      try {
+        const res = await wallet.executeBatch({
+          creates: [
+            {
+              schema: this.schemas().listing,
+              values: toSdkValues("listing", { ...listing.values, run: runKey }) as never,
+              expiration: toExpiration(listing.expiry),
+              flags: listing.flags,
+            },
+          ],
+        } as never);
+        return { listing: res.createdEntities[0].toLowerCase(), tx: res.txHash };
+      } catch (err) {
+        throw this.fail(err);
+      }
+    });
+  }
+
+  writeRun(run: CreateSpec<RunValues>): Promise<{ run: string; tx: string }> {
+    return this.serial(async () => {
+      const wallet = this.needWallet();
+      try {
+        const res = await wallet.executeBatch({
+          creates: [
+            {
+              schema: this.schemas().run,
+              values: toSdkValues("run", run.values as unknown as Record<string, unknown>) as never,
+              expiration: toExpiration(run.expiry),
+              flags: run.flags,
+            },
+          ],
+        } as never);
+        return { run: res.createdEntities[0].toLowerCase(), tx: res.txHash };
+      } catch (err) {
+        throw this.fail(err);
+      }
+    });
+  }
+}

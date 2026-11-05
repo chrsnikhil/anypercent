@@ -13,7 +13,7 @@
  * is ever bound or authorised for it again. The bridge listens on for a short while only so a late
  * phone approval can be logged as ignored and its jti burned; the session's answer never changes.
  */
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { devicePollStep, tokenFailure, type LsFailure } from "./failures.js";
 import { jtiKey, subKey } from "./hmac.js";
 import { DOCUMENTED_ACR, validateIdToken } from "./idtoken.js";
@@ -250,6 +250,8 @@ export class AgentPass implements ApprovalProvider {
     }
     const bind = this.opts.store.bindOrCheck(s.book, sKey, nowS);
     if (bind === "mismatch") return this.finish(s, "ls_wrong", {}, " (account does not own the book)");
+    // What /arkiv/publish holds the one write this approval allows to (the jti itself is not stored).
+    this.opts.store.recordApproval(jti, s.book, createHash("sha256").update(s.action).digest("hex"), nowS);
     const how = bind === "bound" ? "bound to the book (first approval)" : "matches the book";
     return this.finish(s, null, { jti }, `${CHECKS}, account ${how}`);
   }

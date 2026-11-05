@@ -33,7 +33,48 @@ export interface Config {
   /** APPROVALS as written ("idkit", "agentpass", or anything else / empty: the default rule). */
   approvals: string;
   serverSecret: string;
+  arkiv: ArkivConfig;
 }
+
+/**
+ * The Arkiv module (src/arkiv/*). Missing or malformed values never stop the bridge: /health says
+ * arkiv_writes: false and /arkiv/publish answers 503. Keys and the ghost secret are never logged.
+ */
+export interface ArkivConfig {
+  /** ARKIV_RPC without the access key (the public endpoint's URL). */
+  rpc: string;
+  /** ARKIV_CHAIN_ID: checked against eth_chainId; writes stay off when they differ. NaN when malformed. */
+  chainId: number;
+  /** ARKIV_ACCESS_KEY: appended as the RPC URL's last path segment. Service only. */
+  accessKey: string;
+  /** ARKIV_CHECKER_KEY: 0x + 64 hex. Creates every row. */
+  checkerKey: string;
+  /** ARKIV_STRANGER_KEY: the look-alike and extension demos only. */
+  strangerKey: string;
+  /** ARKIV_GHOST_SECRET: 64 hex, the HKDF master for listed ghosts. */
+  ghostSecret: string;
+  /** ARKIV_SEASON (default 1). NaN when malformed. */
+  season: number;
+  /** ARKIV_SEASON_END as written: an ISO 8601 instant. */
+  seasonEnd: string;
+  /** ARKIV_GHOST_PRICE_C (default 10): must equal the launcher's ledger.GHOST_PRICE. NaN when malformed. */
+  priceC: number;
+  /** ARKIV_MOCK_PAYMENTS=1: /arkiv/ghost accepts the launcher mock's receipts. */
+  mockPayments: boolean;
+  /** CHECKER_REPLAY: the replay tool's path, with {game} for the arcade id. */
+  replay: string;
+  /** CHECKER_WSL: run the tool through `wsl.exe -d <distro> -e`. Empty: run it directly. */
+  wsl: string;
+}
+
+export const ARKIV_DEFAULT_RPC = "https://rpc.rabdi.db-chain.testnet.arkiv.network";
+export const ARKIV_DEFAULT_CHAIN_ID = 7794095;
+export const ARKIV_EXPLORER = "https://rabdi.explorer.arkiv.network";
+/** Runs stay on the board this long after the season ends. */
+export const RUN_GRACE_DAYS = 30;
+/** Season end + RUN_GRACE_DAYS must land within this many days of now (the chain's cap is ~182.5). */
+export const MAX_RUN_LIFETIME_DAYS = 180;
+const DAY_MS = 86_400_000;
 
 const ENVIRONMENTS: readonly WorldEnvironment[] = ["production", "staging", "sandbox"];
 
@@ -71,7 +112,86 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, baseDir = proce
     },
     approvals: str(env, "APPROVALS").toLowerCase(),
     serverSecret: str(env, "SERVER_SECRET"),
+    arkiv: loadArkiv(env),
   };
+}
+
+function intOrNaN(text: string): number {
+  return /^-?\d+$/.test(text) ? Number.parseInt(text, 10) : Number.NaN;
+}
+
+function loadArkiv(env: NodeJS.ProcessEnv): ArkivConfig {
+  return {
+    rpc: str(env, "ARKIV_RPC", ARKIV_DEFAULT_RPC).replace(/\/+$/, ""),
+    chainId: intOrNaN(str(env, "ARKIV_CHAIN_ID", String(ARKIV_DEFAULT_CHAIN_ID))),
+    accessKey: str(env, "ARKIV_ACCESS_KEY"),
+    checkerKey: str(env, "ARKIV_CHECKER_KEY"),
+    strangerKey: str(env, "ARKIV_STRANGER_KEY"),
+    ghostSecret: str(env, "ARKIV_GHOST_SECRET"),
+    season: intOrNaN(str(env, "ARKIV_SEASON", "1")),
+    seasonEnd: str(env, "ARKIV_SEASON_END"),
+    priceC: intOrNaN(str(env, "ARKIV_GHOST_PRICE_C", "10")),
+    mockPayments: str(env, "ARKIV_MOCK_PAYMENTS") === "1",
+    replay: str(env, "CHECKER_REPLAY"),
+    wsl: str(env, "CHECKER_WSL"),
+  };
+}
+
+/** The RPC URL the service itself uses: ARKIV_RPC with the access key as its last path segment. */
+export function arkivRpcUrl(a: ArkivConfig): string {
+  return a.accessKey === "" ? a.rpc : `${a.rpc}/${encodeURIComponent(a.accessKey)}`;
+}
+
+export const PRIVATE_KEY_RE = /^0x[0-9a-fA-F]{64}$/;
+export const GHOST_SECRET_RE = /^[0-9a-fA-F]{64}$/;
+
+/** The season's end as a Date, or null when ARKIV_SEASON_END is missing or not an ISO 8601 instant. */
+export function seasonEndDate(a: ArkivConfig): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(a.seasonEnd)) return null;
+  const d = new Date(a.seasonEnd);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** When run rows expire: the season's end plus RUN_GRACE_DAYS. Null without a season end. */
+export function runExpiry(a: ArkivConfig): Date | null {
+  const end = seasonEndDate(a);
+  return end ? new Date(end.getTime() + RUN_GRACE_DAYS * DAY_MS) : null;
+}
+
+/**
+ * What keeps Arkiv writes off, by .env name (never a value). Empty: the configuration is complete.
+ * Checked: SERVER_SECRET (books and runner ids), the RPC and chain id, the checker key and ghost
+ * secret are well-formed, the season, the season end (season end + 30 d after now and within
+ * ~180 d of it), the price and the replay tool.
+ */
+export function arkivProblems(c: Config, nowMs = Date.now()): string[] {
+  const a = c.arkiv;
+  const out: string[] = [];
+  if (!secretReady(c)) out.push("SERVER_SECRET");
+  let rpcOk = false;
+  try {
+    rpcOk = /^https?:$/.test(new URL(a.rpc).protocol);
+  } catch {
+    rpcOk = false;
+  }
+  if (!rpcOk) out.push("ARKIV_RPC");
+  if (!Number.isInteger(a.chainId) || a.chainId <= 0) out.push("ARKIV_CHAIN_ID");
+  if (!PRIVATE_KEY_RE.test(a.checkerKey)) out.push("ARKIV_CHECKER_KEY");
+  if (!GHOST_SECRET_RE.test(a.ghostSecret)) out.push("ARKIV_GHOST_SECRET");
+  if (!Number.isInteger(a.season) || a.season < 1 || a.season > 2_147_483_647) out.push("ARKIV_SEASON");
+  const expiry = runExpiry(a);
+  if (!expiry || expiry.getTime() <= nowMs || expiry.getTime() > nowMs + MAX_RUN_LIFETIME_DAYS * DAY_MS) {
+    out.push("ARKIV_SEASON_END");
+  }
+  if (!Number.isInteger(a.priceC) || a.priceC < 0 || a.priceC > 1_000_000) out.push("ARKIV_GHOST_PRICE_C");
+  if (!a.replay.includes("{game}")) out.push("CHECKER_REPLAY");
+  if (a.wsl !== "" && !/^[A-Za-z0-9._-]{1,64}$/.test(a.wsl)) out.push("CHECKER_WSL");
+  return out;
+}
+
+/** Arkiv writes can run, as far as configuration goes (see arkivProblems). */
+export function arkivReady(c: Config, nowMs = Date.now()): boolean {
+  return arkivProblems(c, nowMs).length === 0;
 }
 
 /** SERVER_SECRET keys every HMAC (runner ids, stored nullifiers, bound subs): at least 32 chars. */
