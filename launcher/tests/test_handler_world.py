@@ -1098,3 +1098,91 @@ def test_the_app_runs_world_through_a_bridge_and_stops_it_on_close(tmp_path):
     finally:
         app.close()
     assert _until(lambda: not app.sponsors._thread.is_alive(), timeout_s=3)
+
+
+# ---- HUMAN on the board: one World ID, one record book --------------------------------------------------------------
+
+def _you(flow):
+    return next(row for row in flow.ctx["board_rows"] if row.you)
+
+
+def test_a_real_record_book_makes_you_human_on_the_board(tmp_path):
+    from arca_launcher.handler.board import build
+    rig = WorldRig(tmp_path)
+    rig.flow.ctx["board_rows"] = build(6070, 6290, mock_humans=False).rows
+    rig.to("id_verifying")
+    assert not _you(rig.flow).human
+    rig.bridge.move("done", ok=True, data=BOOK)                         # ANY-K2P, an Orb
+    rig.wait(500)
+    assert rig.flow.ledger.world_verified and load(rig.path).world_verified
+    assert (_you(rig.flow).human, _you(rig.flow).credential) == (True, "Orb")
+    assert [row.name for row in rig.flow.ctx["board_rows"] if row.human] == ["YOU"]
+    rig.flow.start("start_over")                                        # a clean console: no proof left behind
+    rig.flow.press("cross")
+    assert not rig.flow.ledger.world_verified and not _you(rig.flow).human
+
+
+def test_signing_in_to_the_book_world_named_is_human_too(tmp_path):
+    from arca_launcher.handler.board import build
+    rig = WorldRig(tmp_path)
+    rig.flow.ctx["board_rows"] = build(6070, 6290, mock_humans=False).rows
+    rig.to("id_verifying")
+    rig.bridge.move("done", ok=False, failure="id_dup", data={"book": "ANY-2KD"})
+    rig.wait(500)
+    rig.flow.press("cross")
+    assert rig.state == "id_signed" and rig.flow.ledger.world_verified
+    assert (_you(rig.flow).human, _you(rig.flow).credential) == (True, "World ID")   # which credential: not said
+
+
+def test_no_world_proof_no_human(tmp_path):
+    """A book on the console with no World proof recorded (made before the bridge, or by the mock) stays plain, and
+    the mock adapter never makes YOU human, however its sign-up goes."""
+    from arca_launcher.handler.board import build
+    from test_handler_flow import Rig
+    rig = WorldRig(tmp_path / "old", book="ANY-7QZ")
+    rig.flow.ctx["board_rows"] = build(6070, 6290, mock_humans=False).rows
+    rig.flow.start("board")
+    assert not _you(rig.flow).human
+    rig = Rig(tmp_path / "mock", book=None, board_rows=build(6070, 6290).rows)
+    rig.flow.start("book")
+    for _ in range(3):
+        rig.flow.press("cross")
+        rig.wait(16)
+    rig.wait(1700)
+    assert rig.state == "id_done" and rig.flow.ledger.book and not rig.flow.ledger.world_verified
+    assert not _you(rig.flow).human
+    assert [row.name for row in rig.flow.ctx["board_rows"] if row.human] == ["KIRAN", "MEERA", "RIA", "ARJUN",
+                                                                             "ZOYA", "DEV"]   # the mock's, labelled
+
+
+def test_the_hub_board_marks_mock_runners_only_while_world_is_mocked(tmp_path):
+    from test_handler_app import A, make
+    app = make(tmp_path / "mock")
+    app.frame(16, [A.Y])
+    rows = app.nav.handler.ctx["board_rows"]
+    assert [row.name for row in rows if row.human] == ["KIRAN", "MEERA", "RIA", "ARJUN", "ZOYA", "DEV"]
+    app = make(tmp_path / "world")
+    app.sponsors = WorldSponsors("http://bridge.test", lambda: 0, transport=StubBridge(), background=False)
+    app.frame(16, [A.Y])
+    assert not any(row.human for row in app.nav.handler.ctx["board_rows"])   # ANY-7QZ: no World proof recorded
+
+
+def test_the_board_draws_a_human_badge_and_its_legend(screen, tmp_path, monkeypatch):
+    from arca_launcher.handler.board import BOT, build
+    from test_handler_view import make_flow, show
+    drawn = _drawn(screen, monkeypatch)
+    show(screen, make_flow(tmp_path / "mock", "board"))                 # mock: RIA, ARJUN, ZOYA, DEV on screen
+    texts = [s for s, _ in drawn]
+    assert BOT in texts and "= one World ID, one record book" in texts
+    assert texts.count("HUMAN") == 4 + 1                                # four rows, and the legend's own badge
+    drawn.clear()
+    rig = WorldRig(tmp_path / "world", book="ANY-6PS")
+    rig.flow.ledger.world_verified, rig.flow.ledger.credential = True, "Orb"
+    rig.flow.ctx["board_rows"] = build(6070, 6290, mock_humans=False).rows
+    rig.flow.start("board")
+    rig.flow.ms_in_state = 60000
+    show(screen, rig.flow)
+    texts = [s for s, _ in drawn]
+    assert texts.count("HUMAN") == 1 + 1                                # YOU, and the legend
+    you_x = next(x for s, x in drawn if s == "YOU")
+    assert [x for s, x in drawn if s == "HUMAN"][-1] > you_x            # beside the name (the legend comes first)

@@ -80,3 +80,14 @@ def test_banned_words():
     from arca_launcher.handler import BANNED_WORDS
     assert BANNED_WORDS == ("prove", "proof", "verified human", "earn", "win", "wins", "cash out",
                              "prize", "staked", "bounty", "human ghost")
+
+
+def test_a_world_verified_book_is_remembered(tmp_path):
+    """Only a record book the real World bridge verified makes YOU a HUMAN on the board."""
+    path = str(tmp_path / "handler.json")
+    assert Ledger().world_verified is False
+    ledger.save(path, Ledger(book="ANY-6PS", credential="Orb", world_verified=True))
+    assert ledger.load(path).world_verified is True
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"book": "ANY-6PS", "world_verified": "yes"}, f)   # anything but a real true: not verified
+    assert ledger.load(path).world_verified is False

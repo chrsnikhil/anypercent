@@ -18,6 +18,8 @@ from .text import ellipsize, plain, wrap_rich
 PAD, SIDE = 24, 236                       # text left edge: plain cards, cards with a picture on the left
 H_Y, ROWS_Y, WHAT_Y, BIG_ROWS_Y = 12, 56, 106, 114
 H_SIZE, ROW_SIZE, ROW_H, WHAT_SIZE, WHAT_H, LABEL_W = 34, 24, 29, 20, 23, 112
+BOARD_PITCH, HUMAN_SIZE = 28, 18          # the board's rows; its HUMAN badges and their legend
+HUMAN_LEGEND = "= one {world} ID, one record book"
 BIG_SIZE = 76
 LISTING_H = ROW_H + WHAT_H + 8            # a listing's two lines and the gap after them
 PICTURE = pygame.Rect(58, 44, 128, 128)   # the icon or ring, from the card's top left
@@ -223,6 +225,16 @@ def status(g, spec, rect, t_ms, ctx):
         y += ROW_H
 
 
+def human_badge(g, x, cy, t_ms):
+    """HUMAN beside a runner whose record book World verified: World's ready dot (as on its status pill) and the
+    word, on a green ground, its left at x and centred on cy. Returns its right edge."""
+    tag = pygame.Rect(x, cy - 10, 23 + g.measure("HUMAN", HUMAN_SIZE, "pixel")[0] + 8, 20)
+    g.round_rect(tag, OK_BG, 10)
+    art.dot(g, tag.x + 8, cy - 4, "ok", t_ms)
+    g.text("HUMAN", HUMAN_SIZE, tag.x + 23, cy, weight="pixel", color=GREEN, anchor="midleft")
+    return tag.right
+
+
 def board(g, spec, rect, t_ms, ctx):
     names = spec.get("names")
     note = f"verified runs, {names.board}" if names is not None else ""
@@ -237,12 +249,16 @@ def board(g, spec, rect, t_ms, ctx):
     if not rows:
         g.text("No times on the board yet", 25, x + 10, rect.y + 54, weight="pixel", color=SOFT)
         return
-    n = max(1, (rect.bottom - 8 - (rect.y + 54)) // 30)
+    legend_y = rect.bottom - 12                              # one line under the rows: what HUMAN means
+    right = human_badge(g, x + 10, legend_y, t_ms)
+    legend = names.fill(HUMAN_LEGEND) if names is not None else HUMAN_LEGEND.format(world="World")
+    g.text(legend, HUMAN_SIZE, right + 8, legend_y, weight="pixel", color=DIM, anchor="midleft")
+    n = max(1, (legend_y - 12 - (rect.y + 52)) // BOARD_PITCH)
     marks = [i for i, r in enumerate(rows) if r.you or r.target] or [0]
     start = max(0, min(len(rows) - n, min(marks) - 1))
     start = max(start, max(marks) - n + 1)
     for i, row in enumerate(rows[start:start + n]):
-        line = pygame.Rect(x, rect.y + 54 + i * 30, w, 30)
+        line = pygame.Rect(x, rect.y + 52 + i * BOARD_PITCH, w, BOARD_PITCH)
         with _fade_up(g, fx.stagger(t_ms, i)):               # the rows fade up one by one, then the target glows
             colour = SOFT
             if row.target:
@@ -255,8 +271,9 @@ def board(g, spec, rect, t_ms, ctx):
                 colour = WHITE
             g.text(str(row.rank), 25, line.x + 10, line.centery, weight="pixel", color=DIM, anchor="midleft")
             r = g.text(row.name, 25, line.x + 54, line.centery, weight="pixel", color=colour, anchor="midleft")
+            right = human_badge(g, r.right + 10, line.centery, t_ms) if row.human else r.right
             if row.listed:
-                tag = pygame.Rect(r.right + 10, line.centery - 9, g.measure("selling", 18, "pixel")[0] + 12, 18)
+                tag = pygame.Rect(right + 10, line.centery - 9, g.measure("selling", 18, "pixel")[0] + 12, 18)
                 g.round_rect(tag, TRACK, 9)
                 g.text("selling", 18, tag.centerx, tag.centery, weight="pixel", color=SOFT, anchor="center")
             when = fmt_time(row.frames) if row.frames is not None else "no time yet"

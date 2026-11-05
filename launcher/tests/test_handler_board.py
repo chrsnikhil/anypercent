@@ -2,7 +2,7 @@
 played by RIA) surrounded by mock runners who never sell. Field order on Row is pinned by a
 controller ruling that amends the brief's own "YOU directly below RIA" claim, which contradicts
 the brief's own offsets (ARJUN at log+170 sits between RIA and a YOU at log+214)."""
-from arca_launcher.handler.board import MOCK_NAMES, SELLER, Board, Row, build
+from arca_launcher.handler.board import BOT, MOCK_NAMES, SELLER, Board, Row, build, mark_you
 
 
 def test_target_is_the_log_runner_when_you_are_behind():
@@ -53,7 +53,7 @@ def test_no_log_means_no_board():
 def test_ranks_are_one_to_n():
     board = build(6076, 6290)
     assert [row.rank for row in board.rows] == list(range(1, len(board.rows) + 1))
-    assert len(board.rows) == len(MOCK_NAMES) + 1  # the six mock runners plus YOU
+    assert len(board.rows) == len(MOCK_NAMES) + 1  # the seven mock runners (one of them a bot) plus YOU
 
 
 def test_tie_puts_you_above_ria_and_counts_as_nobody_ahead():
@@ -125,5 +125,44 @@ def test_row_field_order_matches_the_ruling():
     board = build(6076, 6290)
     row = board.rows[0]
     assert [f.name for f in __import__("dataclasses").fields(row)] == [
-        "rank", "name", "frames", "you", "listed", "sells", "target",
+        "rank", "name", "frames", "you", "listed", "sells", "target", "human", "credential",
     ]
+
+
+# ---- HUMAN: one World ID, one record book --------------------------------------------------------------------------
+
+def test_the_mock_runners_are_human_but_the_bot_is_not():
+    board = build(6076, 6290)
+    rows = {row.name: row for row in board.rows}
+    for name in ("KIRAN", "MEERA", "RIA", "ARJUN", "ZOYA", "DEV"):
+        assert rows[name].human is True and rows[name].credential in ("Orb", "Selfie Check"), name
+    bot = rows[BOT]
+    assert (bot.human, bot.credential, bot.listed, bot.sells, bot.target) == (False, None, False, False, False)
+    assert bot.frames == 6076 + 650 and bot.rank == rows["ZOYA"].rank + 1   # beside the human runs, on screen
+    assert rows["YOU"].human is False                                   # no World proof behind the console yet
+
+
+def test_with_world_real_no_made_up_runner_is_human():
+    """A real World never vouches for a mock runner: only rows a World proof stands behind are HUMAN."""
+    board = build(6076, 6290, mock_humans=False)
+    assert not any(row.human for row in board.rows)
+    assert all(row.credential is None for row in board.rows)
+
+
+def test_you_are_human_only_with_a_world_proof_behind_your_book():
+    board = build(6076, 6290, you_human="Orb", mock_humans=False)
+    you = next(row for row in board.rows if row.you)
+    assert (you.human, you.credential) == (True, "Orb")
+    assert [row.name for row in board.rows if row.human] == ["YOU"]
+    rows = mark_you(board.rows, None)                                   # the book is gone (Start over)
+    assert not any(row.human for row in rows)
+    rows = mark_you(rows, "Selfie Check")
+    assert [(row.name, row.credential) for row in rows if row.human] == [("YOU", "Selfie Check")]
+    assert [row.rank for row in rows] == [row.rank for row in board.rows]   # nothing else moves
+    assert mark_you((), "Orb") == ()
+
+
+def test_you_still_rank_where_you_did():
+    board = build(6070, 6290)
+    assert next(row.rank for row in board.rows if row.you) == 5
+    assert board.target.name == "RIA" and board.target.rank == 3

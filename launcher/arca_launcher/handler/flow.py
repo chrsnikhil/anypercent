@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 
 from arca_launcher import coach
+from arca_launcher.handler.board import mark_you
 from arca_launcher.handler.ledger import (GHOST_PRICE, LISTING_DAYS, budget_left, buy, make_book,
                                           owns, save, start_over)
 from arca_launcher.handler.sponsors import Outcome, SponsorNames
@@ -82,6 +83,7 @@ class Flow:
         self._seller = None    # whose ghost is being bought or raced; None: your own best
         self._after_book = None  # where the record-book flow returns (_BOOK_RETURNS); None: hub
         self._jti = None       # the listing approval's one-time id, for the record step
+        self._world_dup = None  # the book World named for a duplicate: signing in to it is World-verified
         self._sync()
 
     # ---- what the view reads ---------------------------------------------------------------
@@ -272,11 +274,17 @@ class Flow:
             elif led.book is None:
                 led.book = make_book(self.rng)
             led.credential = data.get("credential", led.credential)
+            # HUMAN on the board only with a real World proof behind the book, never the mock's.
+            led.world_verified = bool(data.get("book")) and not self.sponsors.mocked("world")
             self._save()
         elif name == "id_dup" and data.get("book"):
             self.ctx["other_book"] = data["book"]   # the book that person already owns, not a made-up one
+            self._world_dup = data["book"]
         elif name == "id_signed":
             led.book = self.ctx.get("other_book") or make_book(self.rng)
+            led.world_verified = led.book == self._world_dup and not self.sponsors.mocked("world")
+            if led.world_verified:
+                led.credential = "World ID"   # World matched the person; which credential, it did not say
             self._save()
         elif name == "ls_done":
             frames = self.ctx.get("run_frames")
@@ -400,6 +408,10 @@ class Flow:
         # Where World App asks for a listing OK: World ID when the bridge runs approvals on IDKit.
         self.ctx["approve_via"] = ("World App > World ID" if self.sponsors.approvals == "idkit"
                                    else "World App > Agent Pass")
+        if self.ctx.get("board_rows"):   # YOU are HUMAN on the board only with a real World proof
+            led = self.ledger
+            self.ctx["board_rows"] = mark_you(self.ctx["board_rows"],
+                                              led.credential if led.book and led.world_verified else None)
 
     def _payload(self):
         """What a real adapter needs to know to run the step; the mock ignores it. `title` is the

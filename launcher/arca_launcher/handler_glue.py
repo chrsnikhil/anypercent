@@ -174,10 +174,14 @@ class HandlerGlue:
                    split=self._split(arcade, best, log_frames))
         return ctx
 
-    @staticmethod
-    def _board_ctx(log_frames, best_frames):
+    def _board(self, log_frames, best_frames):
+        """The board, its mock runners HUMAN only while World is mocked (a real World vouches for none of them).
+        YOU's own mark is the flow's: it follows the record book."""
+        return board.build(log_frames, best_frames, mock_humans=self.app.sponsors.mocked("world"))
+
+    def _board_ctx(self, log_frames, best_frames):
         """Where YOU stand on the board, and what beating the target gives."""
-        b = board.build(log_frames, best_frames)
+        b = self._board(log_frames, best_frames)
         behind = log_frames is not None and best_frames is not None and best_frames > log_frames
         return {"board_rows": b.rows, "board_case": b.case, "target": board.SELLER if b.target else "",
                 "target_time": coach.fmt_time(log_frames) if log_frames is not None else "",
@@ -376,9 +380,9 @@ class HandlerGlue:
         # The result screens' numbers: the old and new place of YOU (a loss shows no gain), and the gap to her.
         old = flow.ctx.get("best_frames")
         best = run if finished and res.get("new_best") else old
-        after = board.build(log_frames, best)
+        after = self._board(log_frames, best)
         flow.ctx.update(board_rows=after.rows, board_case=after.case, best_frames=best,
-                        rank=_you(board.build(log_frames, old)), new_rank=_you(after),
+                        rank=_you(self._board(log_frames, old)), new_rank=_you(after),
                         gap="%.1f s" % (abs(run - log_frames) / 60) if None not in (run, log_frames) else "")
         self._raced = True
         flow.finish_race(result, run)

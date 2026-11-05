@@ -25,6 +25,7 @@ class Ledger:
     listings: list = field(default_factory=list)   # [{game, frames, price, at, sold}]
     pending_sale: dict | None = None
     targets: dict = field(default_factory=dict)    # game_id -> seller
+    world_verified: bool = False                  # the real World bridge verified this book: YOU are HUMAN
 
 
 def load(path):
@@ -57,6 +58,7 @@ def load(path):
     targets = data.get("targets")
     if isinstance(targets, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in targets.items()):
         led.targets = targets
+    led.world_verified = data.get("world_verified") is True
     return led
 
 
@@ -66,7 +68,8 @@ def save(path, ledger):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump({"book": ledger.book, "credential": ledger.credential, "spent": ledger.spent,
                    "spent_day": ledger.spent_day, "purchases": ledger.purchases, "listings": ledger.listings,
-                   "pending_sale": ledger.pending_sale, "targets": ledger.targets}, f, indent=1)
+                   "pending_sale": ledger.pending_sale, "targets": ledger.targets,
+                   "world_verified": ledger.world_verified}, f, indent=1)
     os.replace(tmp, path)
 
 

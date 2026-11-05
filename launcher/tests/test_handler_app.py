@@ -560,7 +560,7 @@ def test_the_hub_context_for_an_arcade_game(tmp_path):
     assert (ctx["game"], ctx["target"], ctx["target_time"], ctx["gap"], ctx["rank"], ctx["new_rank"]) == \
         ("Marine Drive GP", "RIA", fmt_time(LOG), "3.7 s", "5th", "3rd")
     assert (ctx["board_case"], len(ctx["board_rows"]), ctx["best_frames"], ctx["runs"], ctx["sold"]) == \
-        ("ok", 7, BEST, "3", 0)
+        ("ok", 8, BEST, "3", 0)
     assert (ctx["buyer"], ctx["ghost_look"], ctx["wallet"]) == ("", "the *cyan kart*", MOCK_WALLET)
     assert ctx["other_book"].startswith("ANY-") and ctx["other_book"] != "ANY-7QZ"
     assert ctx["arcade"] is True and app.nav.handler.hub_count == 5
