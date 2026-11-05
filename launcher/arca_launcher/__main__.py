@@ -1,11 +1,12 @@
 """python -m arca_launcher [--library DIR] [--scale 1|2|3] [--emulator mgba|retroarch] [--fullscreen] [--fps]
-[--no-handler] [--testlogs DIR] [--world-bridge URL]"""
+[--no-handler] [--testlogs DIR] [--world-bridge URL] [--arkiv-checker 0x...] [--arkiv-rpc URL] [--arkiv-season N]"""
 import argparse
 import os
 import sys
 
 from . import settings
 from .app import App, Config
+from .handler.arkiv_rpc import RABDI_RPC, checker_address
 from .input import parse_joy_map
 
 
@@ -37,15 +38,33 @@ def build_config(argv=None):
                         "beside the --state file; no file, no voice)")
     p.add_argument("--world-bridge", default=os.environ.get("ARCA_WORLD_BRIDGE") or None, metavar="URL",
                    help="the World bridge (apps/world-bridge), e.g. http://127.0.0.1:8787: PB's record book and "
-                        "listing approval go to World for real, Arkiv and Hedera stay mocked (default: "
-                        "$ARCA_WORLD_BRIDGE; neither: every sponsor mocked)")
+                        "listing approval go to World for real, Hedera stays mocked, Arkiv too unless "
+                        "--arkiv-checker is given (default: $ARCA_WORLD_BRIDGE; neither: every sponsor mocked)")
+    p.add_argument("--arkiv-checker", type=checker, default=os.environ.get("ARCA_ARKIV_CHECKER") or None,
+                   metavar="0x...", help="our checker's address, the $creator every Arkiv read is pinned to: with "
+                                         "--world-bridge, PB's board, listing check, ghosts and listings go to Arkiv "
+                                         "for real (default: $ARCA_ARKIV_CHECKER; none: Arkiv stays mocked)")
+    p.add_argument("--arkiv-rpc", default=os.environ.get("ARCA_ARKIV_RPC") or RABDI_RPC, metavar="URL",
+                   help="Arkiv's RPC, read with no access key (default: $ARCA_ARKIV_RPC, else Rabdi's public one)")
+    p.add_argument("--arkiv-season", type=int, default=os.environ.get("ARCA_ARKIV_SEASON") or "1", metavar="N",
+                   help="the board's season (default: $ARCA_ARKIV_SEASON, else 1)")
     a = p.parse_args(argv)
     return Config(library_dir=a.library, state_path=a.state, emulator=a.emulator, retroarch_core=a.retroarch_core,
                   retroarch_cfg=a.retroarch_cfg, scale=a.scale, fullscreen=a.fullscreen, show_fps=a.fps,
                   joy_map=a.joy_map, splash=a.splash, runs_dir=a.runs, overlay=a.overlay,
                   haptics=a.haptics, coach=a.coach, handler=a.handler, handler_warm=a.handler, testlogs_dir=a.testlogs,
                   coach_voice_key=a.coach_voice_key or os.path.join(os.path.dirname(a.state), "coach-voice.key"),
-                  world_bridge=a.world_bridge)
+                  world_bridge=a.world_bridge, arkiv_checker=a.arkiv_checker, arkiv_rpc=a.arkiv_rpc,
+                  arkiv_season=a.arkiv_season)
+
+
+def checker(text):
+    """--arkiv-checker: an address (any case), kept in lowercase; a typo stops the launcher here, never a board pinned
+    to nobody."""
+    try:
+        return checker_address(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not an address: {text!r}") from None
 
 
 def main(argv=None):

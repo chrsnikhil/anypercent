@@ -243,10 +243,10 @@ STATES: dict[str, State] = {
     ),
     "buy_changed": State(
         name="buy_changed", mood="serious", kind="no",
-        card={"t": "no", "h": "Listing changed", "rows": ("Price was {price}, now *0.50 USDC*",),
+        card={"t": "no", "h": "Listing changed", "rows": ("Price was {price}, now *{now_price}*",),
               "what": (("Paid", "nothing"), ("Rule", "never pay a changed listing"),
                         ("Next", "look again, or skip her"))},
-        say="{target}'s price changed from {price} to *0.50* since I looked. I never pay a "
+        say="{target}'s price changed from {price} to *{now_price}* since I looked. I never pay a "
             "listing that changed under me. Cross to look again.",
         steps=_BUY, at=1, fail=True, on={"cross": "target", "circle": "board"},
     ),

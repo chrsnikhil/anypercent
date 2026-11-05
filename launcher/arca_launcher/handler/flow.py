@@ -50,6 +50,7 @@ _HUB_LABELS = dict(zip(_HUB_ROWS, STATES["hub"].card["rows"]))
 # book is made: the purchase or the listing carries on; "My record book" has nothing left to do.
 _BOOK_RETURNS = {"buy_check": "buy_check", "ls_offer": "ls_offer", "book_view": "home"}
 _NAME_FIELDS = frozenset(f.name for f in dataclasses.fields(SponsorNames))
+MOCK_NOW_PRICE = "0.50 USDC"   # the mock's "Price changed": a made-up new price, never a real board's
 
 
 class Flow:
@@ -57,7 +58,8 @@ class Flow:
     keyed by it); `ctx` is the public dict of placeholder values: the app fills the run and
     board ones, the engine adds code, qr, expires_s, jti (the mock's only: a real approval's id
     is never shown), book, credential, price, budget_left, receipt, listing_days, approve_how,
-    approve_via and ghost_kept (and other_book, when World names the book a duplicate owns).
+    approve_via and ghost_kept (and other_book, when World names the book a duplicate owns),
+    now_price (a changed listing's price) and ghost_log (a real target's checked log).
 
     Read-only for the view and the app: state, line, ms_in_state, in_flight, busy, arcade,
     outcomes_open, outcomes ((label, state) rows), outcome_index, hub_index, hub_rows,
@@ -287,12 +289,16 @@ class Flow:
                 led.credential = "World ID"   # World matched the person; which credential, it did not say
             self._save()
         elif name == "ls_done":
-            frames = self.ctx.get("run_frames")
-            if frames is None:
-                frames = self.ctx.get("best_frames")
-            led.listings.append({"game": self.game, "frames": frames, "price": GHOST_PRICE,
-                                 "at": time.time(), "sold": 0})
+            listing = {"game": self.game, "frames": self._run_frames(), "price": GHOST_PRICE, "at": time.time(),
+                       "sold": 0}
+            for row in ("run", "listing"):          # a real board's rows (Arkiv keys); the mock names none
+                if data.get(row):
+                    listing[row] = data[row]
+            led.listings.append(listing)
             self._save()
+        elif name == "buy_changed":
+            # What the listing says now: a real board's price, or "gone"; the mock's made-up change.
+            self.ctx["now_price"] = data.get("now_price") or MOCK_NOW_PRICE
         elif name == "racing":
             if previous == "nobody_ahead":
                 self._seller = None
@@ -321,6 +327,8 @@ class Flow:
             self._jti = data.get("jti", "")
             # On screen only the mock's made-up id: a real approval's id is never shown.
             self.ctx["jti"] = self._jti if self.sponsors.mocked("world") else ""
+        if result.ok and step == "load_ghost" and data.get("ghost_log"):
+            self.ctx["ghost_log"] = data["ghost_log"]   # a real target's log, checked: what the race draws her from
         if result.ok and step == "pay":
             charged = self._charge(data.get("receipt", ""))
             if not charged and not owns(self.ledger, self.game, self._seller):
@@ -413,9 +421,23 @@ class Flow:
             self.ctx["board_rows"] = mark_you(self.ctx["board_rows"],
                                               led.credential if led.book and led.world_verified else None)
 
+    def _run_frames(self):
+        """The run a listing is about: the one just raced, else the best."""
+        frames = self.ctx.get("run_frames")
+        return self.ctx.get("best_frames") if frames is None else frames
+
     def _payload(self):
         """What a real adapter needs to know to run the step; the mock ignores it. `title` is the
-        game's name as people read it (World App shows it on a listing approval)."""
+        game's name as people read it (World App shows it on a listing approval); `arcade_id` the
+        arcade game's id (runs and boards are named by it); `frames` the run a listing is about.
+        A real board's target names its run, listing, log and time; `receipt` is what was paid
+        for her ghost (a listed ghost's key is released against it)."""
+        bought = self.ledger.purchases.get(f"{self.game}:{self._seller}") or {}
         return {"game": self.game, "title": self.ctx.get("game"), "seller": self._seller,
                 "price": GHOST_PRICE, "book": self.ledger.book, "jti": self._jti,
-                "run_time": self.ctx.get("run_time")}
+                "run_time": self.ctx.get("run_time"), "frames": self._run_frames(),
+                "arcade_id": self.ctx.get("arcade_id"), "target_run": self.ctx.get("target_run"),
+                "target_listing": self.ctx.get("target_listing"),
+                "target_log_h": self.ctx.get("target_log_h"),
+                "target_frames": self.ctx.get("target_frames"),
+                "receipt": bought.get("receipt") or self.ctx.get("receipt")}

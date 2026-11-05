@@ -18,6 +18,7 @@ from .hw import Hardware
 from .input import Inputs
 from .library import LibraryError, load_library
 from . import themes
+from .handler.arkiv_rpc import RABDI_RPC
 from .handler.flow import RaceTarget
 from .handler.mock import MockSponsors
 from .handler_glue import HandlerGlue
@@ -47,14 +48,22 @@ HANDLER_IDLE_MS = 180000                           # idle on PB's screens this l
 log = logging.getLogger(__name__)
 
 
-def make_sponsors(cfg):
-    """PB's sponsors: World for real through its bridge when one is given (Arkiv and Hedera still mocked), else all
-    mocked."""
+def make_sponsors(cfg, replay=None, games=None):
+    """PB's sponsors: World for real through its bridge when one is given, and Arkiv for real too when the checker it
+    pins every board read to is given as well (the bridge is also the service Arkiv's listings and listed ghosts go
+    through); Hedera still mocked. Neither: every sponsor mocked. replay(arcade_id, log_path) times a log with the
+    game's replay tool; games are the arcade ids whose boards are read at start."""
     def clock_ms():
         return int(time.monotonic() * 1000)
     if cfg.world_bridge:
         from .handler.world import WorldSponsors
-        return WorldSponsors(cfg.world_bridge, clock_ms)
+        world = WorldSponsors(cfg.world_bridge, clock_ms)
+        if not cfg.arkiv_checker:
+            return world
+        from .handler.arkiv import ARCADE_GAMES, ArkivSponsors
+        return ArkivSponsors(world, cfg.world_bridge, cfg.arkiv_rpc, cfg.arkiv_checker, cfg.arkiv_season,
+                             cfg.runs_dir, os.path.dirname(cfg.state_path) or ".", clock_ms, replay=replay,
+                             games=ARCADE_GAMES if games is None else games)
     return MockSponsors(clock_ms)
 
 
@@ -96,6 +105,9 @@ class Config:
     handler_warm: bool = False                     # read every arcade game's board in the background after start
     testlogs_dir: str = "/opt/anypercent/testlogs"  # each arcade game's shipped test log: the handler's target ghost
     world_bridge: str | None = None                # the World bridge's URL: World for real (None: every sponsor mocked)
+    arkiv_checker: str | None = None               # with world_bridge: Arkiv for real, reads pinned to this $creator
+    arkiv_rpc: str = RABDI_RPC                     # Arkiv's public RPC: no access key on the console
+    arkiv_season: int = 1
 
 
 class Display:
@@ -145,7 +157,10 @@ class App:
         self.nav.handler_enabled = cfg.handler     # arcade games get a PB button beside Play: the hub by touch
         self.nav.booth_url = self._booth_url()
         self.light = themes.apply(self.prefs.theme).light
-        self.sponsors = sponsors if sponsors is not None else make_sponsors(cfg)
+        if sponsors is None:
+            arcades = [g.arcade["id"] for g in games if g.arcade]
+            sponsors = make_sponsors(cfg, replay=self._replay_time, games=arcades)
+        self.sponsors = sponsors
         self.handler = HandlerGlue(self) if cfg.handler else None       # feeds nav.handler, the open flow
         self._find_saved_places()
         self._report_app_exit(games)
@@ -211,6 +226,12 @@ class App:
             from .arcade_bridge import Bridge
             self._bridge = Bridge(self.cfg.runs_dir, emulator=self.cfg.emulator)   # .sav or RetroArch's .srm
         return self._bridge
+
+    def _replay_time(self, arcade_id, log_path):
+        """A log's finished time from its arcade game's replay tool (None: unfinished, no such game, the tool failed).
+        The Arkiv adapter's worker checks a bought ghost with it, off the main thread."""
+        arcade = next((g.arcade for g in self.nav.games if g.arcade and g.arcade.get("id") == arcade_id), None)
+        return self.bridge.log_time(arcade, log_path) if arcade is not None else None
 
     @property
     def state_dir(self):

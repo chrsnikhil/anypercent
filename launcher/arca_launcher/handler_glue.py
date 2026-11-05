@@ -1,14 +1,20 @@
 """PB the handler, wired into the launcher. The App owns one of these while the handler is on (nav.handler is the open
 flow, handler/flow.py; this is what feeds it).
 
-It builds a game's hub context (the mock board around the game's shipped test log, the player's best, a made-up
-wallet), works out where the target is faster in the background, turns the flow's RaceTarget into a launch with her
-ghost and reports the race back to the flow, and opens the flows nobody asked for (the day's record book offer, a new
-best's listing offer, a mock sale) once PB is quiet on Home."""
+It builds a game's hub context (the board, the player's best, a made-up wallet), works out where the target is faster
+in the background, turns the flow's RaceTarget into a launch with her ghost and reports the race back to the flow, and
+opens the flows nobody asked for (the day's record book offer, a new best's listing offer, a mock sale) once PB is
+quiet on Home.
+
+The board is Arkiv's when the sponsors say it is real (sponsors.board(): its run rows, read in the background) and the
+mock one around the game's shipped test log otherwise. On a real board the target is a real run: her ghost is the log
+load_ghost checked and kept (never the test log), a race is judged against her row's time, and attract mode's run to
+beat and the record book's run count come from the rows too."""
 import json
 import logging
 import os
 import random
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -25,6 +31,10 @@ SALE_AFTER_S = 60                    # a listing sells on the first return Home 
 # a board reading, not a sponsor step.
 OK_RUMBLE, NO_RUMBLE, SALE_RUMBLE = (0.5, 0.5, 140), (0.4, 0.0, 180), (0.8, 0.8, 300)
 _UNFELT = ("result", "own_result", "nobody_ahead")
+# A real board read that lands while one of these is on screen redraws it; any later screen keeps the target it had.
+BOARD_STATES = ("hub", "board", "board_new", "no_board", "nobody_ahead")
+BOARD_TIMES_MS = 1000                # attract mode's runs to beat are taken from the real boards this often
+_LOG_H = re.compile(r"[0-9a-f]{64}")
 # What each arcade game draws her ghost as (games/*/src/view.cpp), so PB can say what to look for.
 GHOST_LOOKS = {"MDGP": "the *cyan kart*", "ZIPG": "the *pale Zip*", "RUSH": "the *see-through runner*",
                "SEGF": "the *teal phantom*", "SHIP": "the *see-through runner*"}
@@ -80,8 +90,17 @@ class HandlerGlue:
         self._warm_jobs = {}               # (arcade id, "time" or "ghost") -> its warm_up read
         self._locks = {}                   # (arcade id, "time" or "ghost") -> its read's Lock
         self._felt = None                  # (flow, state name) the pad last rumbled for, or saw without a rumble
-        if self._ledger.pending_sale is not None:  # a sale counted before a restart, never told: PB tells it now
+        self._read = None                  # the real board read the open flow's board was built from
+        self._real_ghosts = {}             # a real target's checked log -> her ghost bytes, drawn once
+        self._times_ms = BOARD_TIMES_MS    # since attract mode's runs to beat were last taken from the real boards
+        # A sale counted before a restart, never told: PB tells it now. Only the mock counts sales, so a real board
+        # never tells one (it stays in the ledger for a mocked run again).
+        if self._ledger.pending_sale is not None and not self._real():
             self.pending = self._sale_offer(self._ledger.pending_sale)
+
+    def _real(self):
+        """The board is real (Arkiv): its rows, never the mock runners."""
+        return not self.app.sponsors.mocked("board")
 
     @property
     def ledger(self):
@@ -111,11 +130,16 @@ class HandlerGlue:
         """Once a frame: tick the open flow, or open a waiting one when PB is quiet on Home. Returns a command for the
         app (a RaceTarget), or None."""
         nav = self.app.nav
+        real = self._real()
+        if real:
+            self._board_times(dt)
         if nav.screen is Screen.HANDLER:
             flow = nav.handler
             if self._raced and flow.state.name == "hub":
                 self._raced = False
                 flow.ctx.update(self._context(self._game), run_frames=None)
+            elif real and flow.state.name in BOARD_STATES:
+                self._fresh_board(flow)
             if self._job is not None:
                 flow.ctx["split"] = _split_text(self._job)
             cmd = flow.tick(dt)
@@ -158,35 +182,86 @@ class HandlerGlue:
         arcade = game.arcade if game is not None else None
         arcades = [arcade] if arcade else [g.arcade for g in self.app.nav.games if g.arcade]
         ctx = {"game": game.title if game is not None else "this game", "buyer": "", "wallet": MOCK_WALLET,
-               "arcade": bool(arcade), "game_titles": {g.id: g.title for g in self.app.nav.games},
+               "arcade": bool(arcade), "arcade_id": arcade.get("id") if arcade else None,
+               "game_titles": {g.id: g.title for g in self.app.nav.games},
                "other_book": ledger.make_book(random.Random()),
                "sold": sum(x.get("sold", 0) for x in self.ledger.listings),
                "runs": str(sum(self._runs(a) for a in arcades)),
                "ghost_look": GHOST_LOOKS.get(arcade.get("id"), "the *see-through runner*") if arcade else "the ghost"}
         if arcade is None:
             self._job = None
-            ctx.update(self._board_ctx(None, None), log_frames=None, best_frames=None, run_time="", split="")
+            ctx.update(self._board_ctx(None, None, None), log_frames=None, best_frames=None, run_time="", split="")
             return ctx
-        log_frames, best = self._log_time(arcade), self._best(arcade)
+        best = self._best(arcade)
         best_frames = best["time_frames"] if best else None
-        ctx.update(self._board_ctx(log_frames, best_frames), log_frames=log_frames, best_frames=best_frames,
+        log_frames = None if self._real() else self._log_time(arcade)   # a real board never needs the test log
+        board_ctx = self._board_ctx(arcade, log_frames, best_frames)
+        ctx.update(board_ctx, log_frames=log_frames, best_frames=best_frames,
                    run_time=coach.fmt_time(best_frames) if best_frames is not None else "",
-                   split=self._split(arcade, best, log_frames))
+                   split=self._split(arcade, best, log_frames, board_ctx["target_log_h"]))
         return ctx
 
     def _board(self, log_frames, best_frames):
-        """The board, its mock runners HUMAN only while World is mocked (a real World vouches for none of them).
+        """The mock board, its mock runners HUMAN only while World is mocked (a real World vouches for none of them).
         YOU's own mark is the flow's: it follows the record book."""
         return board.build(log_frames, best_frames, mock_humans=self.app.sponsors.mocked("world"))
 
-    def _board_ctx(self, log_frames, best_frames):
-        """Where YOU stand on the board, and what beating the target gives."""
+    def _real_board(self, arcade, best_frames):
+        """(the real board for arcade from its last Arkiv read, that read). No read yet: no board, never made up."""
+        read = self.app.sponsors.board(arcade["id"]) if arcade else None
+        led = self.ledger
+        you = led.credential if led.book and led.world_verified else None
+        return board.build_real(read.rows if read else (), best_frames, led.book, you), read
+
+    def _board_for(self, arcade, log_frames, best_frames):
+        return self._real_board(arcade, best_frames)[0] if self._real() else self._board(log_frames, best_frames)
+
+    def _board_ctx(self, arcade, log_frames, best_frames):
+        """Where YOU stand on the board, what beating the target gives, and the target itself: her name, time and
+        frames, and on a real board her run, its listing and its log."""
+        if self._real():
+            b, read = self._real_board(arcade, best_frames)
+            self._read = read
+            t = b.target
+            run = next((r for r in read.rows if r.key == t.key), None) if t is not None and read else None
+            mine = next((r.frames for r in b.rows if r.you), None)
+            return {"board_rows": b.rows, "board_case": b.case, "target": t.name if t else "",
+                    "target_time": coach.fmt_time(t.frames) if t else "", "target_frames": t.frames if t else None,
+                    "target_run": t.key if t else None, "target_listing": t.listing if t else None,
+                    "target_log_h": run.log_h if run else None,
+                    "gap": "%.1f s" % ((mine - t.frames) / 60) if t and mine is not None and mine > t.frames else "",
+                    "rank": _you(b), "new_rank": ordinal(t.rank) if t else ""}
         b = self._board(log_frames, best_frames)
         behind = log_frames is not None and best_frames is not None and best_frames > log_frames
         return {"board_rows": b.rows, "board_case": b.case, "target": board.SELLER if b.target else "",
                 "target_time": coach.fmt_time(log_frames) if log_frames is not None else "",
-                "gap": "%.1f s" % ((best_frames - log_frames) / 60) if behind else "",
+                "target_frames": log_frames if b.target else None, "target_run": None, "target_listing": None,
+                "target_log_h": None, "gap": "%.1f s" % ((best_frames - log_frames) / 60) if behind else "",
                 "rank": _you(b), "new_rank": ordinal(b.target.rank) if b.target else ""}
+
+    def _fresh_board(self, flow):
+        """A newer real board read for the open game: its board screens show it (the first press after start may
+        come before the first read)."""
+        arcade = self._game.arcade if self._game is not None else None
+        if not arcade or self.app.sponsors.board(arcade["id"]) is self._read:
+            return
+        flow.ctx.update(self._board_ctx(arcade, None, flow.ctx.get("best_frames")))
+
+    def _board_times(self, dt):
+        """Attract mode's run to beat for each arcade game from its real board: the fastest run whose ghost is listed
+        (none listed: no card)."""
+        self._times_ms += dt
+        if self._times_ms < BOARD_TIMES_MS:
+            return
+        self._times_ms = 0
+        for game in self.app.nav.games:
+            gid = game.arcade.get("id") if game.arcade else None
+            read = self.app.sponsors.board(gid, look=False) if isinstance(gid, str) else None
+            run = next((r for r in read.rows if r.listing), None) if read else None
+            if run is not None:
+                self.app.nav.board_times[game.id] = (run.book or run.label, coach.fmt_time(run.frames))
+            else:
+                self.app.nav.board_times.pop(game.id, None)
 
     def _test_log(self, arcade):
         return os.path.join(self.app.cfg.testlogs_dir, arcade["id"] + ".acl")
@@ -227,6 +302,8 @@ class HandlerGlue:
         of their own, in Home's order: the first PB press on a game never waits for a replay. One replay a job, keyed
         (arcade id, "time" or "ghost"): a launch (settle) or a PB press waits for at most the one already running, and
         cancels the rest; a cancelled one is queued again after the next game."""
+        if self._real():                           # the boards are Arkiv's, read by the sponsors' own worker
+            return
         arcades = [g.arcade for g in self.app.nav.row if g is not None and g.arcade]
         arcades = [a for a in arcades if isinstance(a.get("id"), str) and os.path.isfile(self._test_log(a))]
         for kind, read in (("time", self._read_log_time), ("ghost", self._warm_ghost)):
@@ -262,6 +339,10 @@ class HandlerGlue:
         return best if isinstance(best, dict) and isinstance(best.get("time_frames"), int) else None
 
     def _runs(self, arcade):
+        """The record book's runs: its rows on a real board, else this console's finished runs."""
+        if self._real():
+            read, book = self.app.sponsors.board(arcade["id"], look=False), self.ledger.book
+            return sum(1 for r in read.rows if r.book == book) if read and book else 0
         try:
             return len(self.app.bridge.history(arcade["id"], n=1000))
         except Exception:
@@ -269,12 +350,19 @@ class HandlerGlue:
             return 0
 
     # ---- where the target is faster: the one background job ---------------------------------------------------------
-    def _split(self, arcade, best, log_frames):
-        """Start (or find) the comparison of the player's best ghost with the target's; its text so far."""
+    def _split(self, arcade, best, log_frames, target_log_h=None):
+        """Start (or find) the comparison of the player's best ghost with the target's; its text so far. Only with
+        the target's log on this console: the test log on the mock board, a real target's once her ghost is loaded."""
         self._job = None
-        if best is None or log_frames is None:
+        if best is None:
             return ""
-        key = (arcade["id"], best.get("final_hash"))
+        if self._real():
+            target_log = self._ghost_log(target_log_h)
+        else:
+            target_log = self._test_log(arcade) if log_frames is not None else None
+        if target_log is None:
+            return ""
+        key = (arcade["id"], best.get("final_hash"), target_log)
         if key not in self._jobs:
             try:
                 bridge = self.app.bridge
@@ -282,11 +370,17 @@ class HandlerGlue:
                 log.exception("no comparison for %s", arcade["id"])
                 return ""
             best_log = os.path.join(self.app.cfg.runs_dir, "best", arcade["id"] + ".acl")
-            test_log = self._test_log(arcade)
-            self._jobs[key] = self._pool.submit(                    # the best run and the test log both finish
-                lambda: coach.compare(bridge.ghost(arcade, best_log), bridge.ghost(arcade, test_log), finished=True))
+            self._jobs[key] = self._pool.submit(                    # the best run and the target's both finish
+                lambda: coach.compare(bridge.ghost(arcade, best_log), bridge.ghost(arcade, target_log), finished=True))
         self._job = self._jobs[key]
         return _split_text(self._job)
+
+    def _ghost_log(self, log_h):
+        """A real target's checked log on this console (runs_dir/ghosts/<log_h>.acl), or None."""
+        if not (isinstance(log_h, str) and _LOG_H.fullmatch(log_h)):
+            return None
+        path = os.path.join(self.app.cfg.runs_dir, "ghosts", log_h + ".acl")
+        return path if os.path.isfile(path) else None
 
     def settle(self):
         """Let a comparison still running finish first: a game never shares the CPU with it. No time limit of its
@@ -320,16 +414,36 @@ class HandlerGlue:
             log.warning("cannot race %s", cmd.game_id)
             flow.finish_race("unfinished", None)
             return
-        ghost = self._her_ghost(game.arcade) if cmd.seller else None
+        if cmd.seller and flow.ctx.get("target_run"):              # a real target: the log load_ghost checked
+            ghost = self._real_ghost(game.arcade, flow.ctx)
+        else:
+            ghost = self._her_ghost(game.arcade) if cmd.seller else None
         if cmd.seller and ghost is None:           # never her race with the player's own best in its place
             nav.notice = f"{cmd.seller}'s ghost could not be loaded"
             flow.finish_race("unfinished", None)
             return
-        self.race = (flow, cmd.seller, flow.ctx.get("log_frames"))
+        self.race = (flow, cmd.seller, flow.ctx.get("target_frames"), flow.ctx.get("log_frames"), game.arcade)
         try:
             self.app.launch(game, ghost=ghost)
         finally:
             self.race = None
+
+    def _real_ghost(self, arcade, ctx):
+        """A real target's ghost bytes, drawn once from the log load_ghost checked against her row (ghost_log, which
+        must be her log_h's file). None when it is not here or does not draw; that is not kept."""
+        path, expected = ctx.get("ghost_log"), self._ghost_log(ctx.get("target_log_h"))
+        if not path or expected is None or os.path.abspath(path) != os.path.abspath(expected):
+            return None
+        if expected not in self._real_ghosts:
+            try:
+                ghost = self.app.bridge.ghost_bytes(arcade, expected)
+            except Exception:
+                log.exception("the target's ghost did not draw for %s", arcade.get("id"))
+                return None
+            if not ghost:
+                return None
+            self._real_ghosts[expected] = ghost
+        return self._real_ghosts[expected]
 
     def _her_ghost(self, arcade):
         """The target's ghost bytes from the game's test log, drawn once (a replay): racing her again never waits.
@@ -366,24 +480,25 @@ class HandlerGlue:
             self.warm_up()                         # the reads the launch cancelled, now the game is over
 
     def _race_over(self, res, ok, asked):
-        flow, seller, log_frames = self.race
+        flow, seller, target_frames, log_frames, arcade = self.race
         finished = bool(res) and bool(res.get("finished"))
         run = res.get("time_frames") if finished else None
         if not res:
             result = "unfinished" if not ok or asked else "unverified"
         elif not finished:
             result = "unfinished"
-        elif seller:
-            result = "beat" if run is not None and log_frames is not None and run < log_frames else "lost"
+        elif seller:                               # judged against her time: her row's on a real board
+            result = "beat" if run is not None and target_frames is not None and run < target_frames else "lost"
         else:
             result = "beat" if res.get("new_best") else "lost"
         # The result screens' numbers: the old and new place of YOU (a loss shows no gain), and the gap to her.
         old = flow.ctx.get("best_frames")
         best = run if finished and res.get("new_best") else old
-        after = self._board(log_frames, best)
+        after = self._board_for(arcade, log_frames, best)
+        ref = target_frames if target_frames is not None else log_frames
         flow.ctx.update(board_rows=after.rows, board_case=after.case, best_frames=best,
-                        rank=_you(self._board(log_frames, old)), new_rank=_you(after),
-                        gap="%.1f s" % (abs(run - log_frames) / 60) if None not in (run, log_frames) else "")
+                        rank=_you(self._board_for(arcade, log_frames, old)), new_rank=_you(after),
+                        gap="%.1f s" % (abs(run - ref) / 60) if None not in (run, ref) else "")
         self._raced = True
         flow.finish_race(result, run)
         if self.app.nav.handler is not None:

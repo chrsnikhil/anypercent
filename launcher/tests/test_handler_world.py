@@ -26,7 +26,7 @@ LISTING_FAILURES = ("ls_denied", "ls_expired", "ls_wrong", "ls_mismatch", "ls_re
 BOOK = {"book": "ANY-K2P", "credential": "Orb", "runner_id": "3f9a0c21"}
 LIST_PAYLOAD = {"game": "MDGP", "title": "Marine Drive GP", "seller": None, "price": GHOST_PRICE, "book": "ANY-7QZ",
                 "jti": None, "run_time": "1:42.83"}
-DIGEST = "List Marine Drive GP 1:42.83 ghost for 0.10 USDC"     # what World App shows the person approving
+DIGEST = "List Marine Drive GP 1:42.83 ghost for 0.10 USDC on the public board"   # what World App shows
 # The stage each phone step is begun at (the stage the step before it moved past).
 AT = {"idkit_scan": "scan", "idkit_confirm": "confirm", "idkit_verify": "verify", "approve_scan": "scan",
       "approve": "approve"}
@@ -218,13 +218,13 @@ def _digest(payload):
 
 def test_the_digest_world_app_shows_is_readable_and_fits_the_bridge():
     assert _digest(LIST_PAYLOAD) == DIGEST
-    assert _digest(dict(LIST_PAYLOAD, title=None)) == "List MDGP 1:42.83 ghost for 0.10 USDC"   # no title: its id
+    assert _digest(dict(LIST_PAYLOAD, title=None)) == "List MDGP 1:42.83 ghost for 0.10 USDC on the public board"
     messy = _digest(dict(LIST_PAYLOAD, title="Marine\tDrive\nGP\x7f", run_time="1:42.83\r"))
     assert messy == DIGEST                                              # no control characters reach World App
     for title in ("Super " * 40, "\U0001F3CE" * 120, "x" * 500):        # a long title gives way, never the price
         action = _digest(dict(LIST_PAYLOAD, title=title))
         assert len(action.encode("utf-16-le")) // 2 <= 160               # the bridge counts JavaScript's way
-        assert action.startswith("List ") and action.endswith("... 1:42.83 ghost for 0.10 USDC"), action
+        assert action.startswith("List ") and action.endswith("... 1:42.83 ghost for 0.10 USDC on the public board")
         assert not any(ord(ch) < 32 or ord(ch) == 127 for ch in action)
 
 

@@ -7,7 +7,10 @@
 # handler), A/S = L1/R1, Enter = Start, Backspace = Select.
 # World for real: set ARCA_WORLD_BRIDGE to the World bridge's URL (apps/world-bridge), e.g.
 #   wsl -d Ubuntu-24.04 -u root -- env ARCA_WORLD_BRIDGE=http://127.0.0.1:8787 bash .../launcher/dev/laptop.sh
-# Unset, every sponsor stays mocked.
+# Unset, every sponsor stays mocked. Arkiv for real as well: also set ARCA_ARKIV_CHECKER to the checker's address (the
+# $creator every board read is pinned to); ARCA_ARKIV_RPC and ARCA_ARKIV_SEASON are optional (Rabdi's public RPC, 1):
+#   wsl -d Ubuntu-24.04 -u root -- env ARCA_WORLD_BRIDGE=http://127.0.0.1:8787 ARCA_ARKIV_CHECKER=0x... \
+#     bash .../launcher/dev/laptop.sh
 set -euo pipefail
 source "$(dirname "$0")/../../sandbox/00_env.sh"
 HERE="$PROJECT/launcher"
@@ -24,6 +27,16 @@ WORLD=()
 if [ -n "${ARCA_WORLD_BRIDGE:-}" ]; then
   WORLD=(--world-bridge "$ARCA_WORLD_BRIDGE")
 fi
+ARKIV=()
+if [ -n "${ARCA_ARKIV_CHECKER:-}" ]; then
+  ARKIV+=(--arkiv-checker "$ARCA_ARKIV_CHECKER")
+fi
+if [ -n "${ARCA_ARKIV_RPC:-}" ]; then
+  ARKIV+=(--arkiv-rpc "$ARCA_ARKIV_RPC")
+fi
+if [ -n "${ARCA_ARKIV_SEASON:-}" ]; then
+  ARKIV+=(--arkiv-season "$ARCA_ARKIV_SEASON")
+fi
 cd "$HERE"
 exec "$PY" -m arca_launcher --library "$LIB" --testlogs "$SANDBOX/devicecheck" --state "$SANDBOX/laptop-state.json" --scale 2 \
-  "${WORLD[@]}" "$@"
+  "${WORLD[@]}" "${ARKIV[@]}" "$@"

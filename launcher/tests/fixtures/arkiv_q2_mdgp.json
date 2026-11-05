@@ -1,0 +1,180 @@
+{
+ "jsonrpc": "2.0",
+ "id": 1,
+ "result": {
+  "data": [
+   {
+    "key": "0x586c2103143203861c820ea6587b2ff7ffc433e488be625c223d57c437a7f3ed",
+    "creator": "0xab8483f64d9c6d1ecf9b849ae677dd3315835cb2",
+    "expiresAt": "0x46a1d0",
+    "attributes": [
+     {
+      "name": "arkiv.schema",
+      "type": "str",
+      "value": "anypercent.listing"
+     },
+     {
+      "name": "run",
+      "type": "key",
+      "value": "0x07f7702a230cfd8db76614eb1ccd245d220f375f744ead5cd3b22530cd61c43d"
+     },
+     {
+      "name": "game",
+      "type": "str",
+      "value": "MDGP"
+     },
+     {
+      "name": "season",
+      "type": "i32",
+      "value": 1
+     },
+     {
+      "name": "frames",
+      "type": "u64",
+      "value": "0x15c2"
+     },
+     {
+      "name": "log_h",
+      "type": "str",
+      "value": "3a6a4818aab088a575cd9fde98be28d1a1bd3cd8b120e0e413e25f4654236d35"
+     },
+     {
+      "name": "price",
+      "type": "dec",
+      "value": "0.1"
+     },
+     {
+      "name": "seller",
+      "type": "str",
+      "value": "3f9a0c21d4e5b6a7"
+     },
+     {
+      "name": "book",
+      "type": "str",
+      "value": "ANY-6PS"
+     },
+     {
+      "name": "human",
+      "type": "bool",
+      "value": true
+     }
+    ]
+   },
+   {
+    "key": "0x1f072f0d218b696817f5d74dc1dfb4f9503c7f74e22f25870d19a31ccb2cc301",
+    "creator": "0x5b38da6a701c568545dcfcb03fcb875f56beddc4",
+    "expiresAt": "0x46a1d0",
+    "attributes": [
+     {
+      "name": "arkiv.schema",
+      "type": "str",
+      "value": "anypercent.listing"
+     },
+     {
+      "name": "run",
+      "type": "key",
+      "value": "0x6f4679c89485bebe1f2d147980643339a4dc4cc7671a0f74b05c879f7fd3f231"
+     },
+     {
+      "name": "game",
+      "type": "str",
+      "value": "MDGP"
+     },
+     {
+      "name": "season",
+      "type": "i32",
+      "value": 1
+     },
+     {
+      "name": "frames",
+      "type": "u64",
+      "value": "0x181a"
+     },
+     {
+      "name": "log_h",
+      "type": "str",
+      "value": "30517b00ba3af194a1f5bc70a325c7de8de03825fa3bae049b05364cab2bde00"
+     },
+     {
+      "name": "price",
+      "type": "dec",
+      "value": "0.1"
+     },
+     {
+      "name": "seller",
+      "type": "str",
+      "value": "3f9a0c21d4e5b6a7"
+     },
+     {
+      "name": "book",
+      "type": "str",
+      "value": "ANY-6PS"
+     },
+     {
+      "name": "human",
+      "type": "bool",
+      "value": true
+     }
+    ]
+   },
+   {
+    "key": "0x05f4c63419ce77438c8991d0828d13df10248d5fc2197740067c854e55332d07",
+    "creator": "0x5b38da6a701c568545dcfcb03fcb875f56beddc4",
+    "expiresAt": "0x46a1d0",
+    "attributes": [
+     {
+      "name": "arkiv.schema",
+      "type": "str",
+      "value": "anypercent.listing"
+     },
+     {
+      "name": "run",
+      "type": "key",
+      "value": "0x2af4c37a753bbb4d2d55245b1b511dfe1801417dfe12f78f7a38d6e13fe522c3"
+     },
+     {
+      "name": "game",
+      "type": "str",
+      "value": "MDGP"
+     },
+     {
+      "name": "season",
+      "type": "i32",
+      "value": 1
+     },
+     {
+      "name": "frames",
+      "type": "u64",
+      "value": "0x1900"
+     },
+     {
+      "name": "log_h",
+      "type": "str",
+      "value": "cd1a7f3e8c9c51082c4ca432395657ef89df4c6f2c03d21c2a8fc58dc3d26164"
+     },
+     {
+      "name": "price",
+      "type": "dec",
+      "value": "0.1"
+     },
+     {
+      "name": "seller",
+      "type": "str",
+      "value": "71c0ee5d2b9a8f34"
+     },
+     {
+      "name": "book",
+      "type": "str",
+      "value": "ANY-K2P"
+     },
+     {
+      "name": "human",
+      "type": "bool",
+      "value": true
+     }
+    ]
+   }
+  ],
+  "blockNumber": "0x3fe91"
+ }
+}

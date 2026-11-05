@@ -1020,3 +1020,77 @@ def test_a_hub_with_no_arcade_game_has_only_the_book_rows(tmp_path):
     rig = Rig(tmp_path / "arcade")
     assert rig.flow.arcade and rig.flow.hub_count == 5
     assert rig.flow.hub_rows == STATES["hub"].card["rows"]
+
+
+# ---- what a real board needs from the flow (the Arkiv adapter) ------------------------------------------------------
+
+def test_a_changed_listing_names_its_new_price(tmp_path):
+    """The mock's "Price changed" makes its price up; a real board says what the listing says now."""
+    rig = Rig(tmp_path / "mock")
+    rig.flow.start("buy_check")
+    rig.flow.press("square")
+    rig.flow.pick([label for label, _ in rig.flow.outcomes].index("Price changed"))
+    rig.wait(16)
+    assert rig.state == "buy_changed" and rig.flow.ctx["now_price"] == "0.50 USDC"
+    assert "Price was 0.10, now *0.50 USDC*" == rig.flow.fill(rig.flow.state.card["rows"][0])
+    for now in ("gone", "0.25 USDC"):
+        class Changed(SpySponsors):
+            def begin(self, step, payload, now=now):
+                call = super().begin(step, payload)
+                if step == "check_listing":
+                    call._result = Result(ok=False, failure="buy_changed", data={"now_price": now})
+                return call
+        rig = Rig(tmp_path / now, sponsors=Changed)
+        rig.flow.start("buy_check")
+        rig.wait(16)
+        assert rig.state == "buy_changed" and rig.flow.ctx["now_price"] == now
+        assert now in rig.flow.line and rig.flow.ledger.spent == 0
+
+
+def test_the_payload_names_a_real_target_and_the_run_to_list(tmp_path):
+    run, listing, log_h = "0x" + "ab" * 32, "0x" + "cd" * 32, "ef" * 32
+    rig = Rig(tmp_path, ledger=_owned_ledger(), arcade_id="MDGP", target_run=run, target_listing=listing,
+              target_log_h=log_h, target_frames=6070, run_frames=None, best_frames=6290)
+    rig.flow.start("buy_check")                                   # RIA's ghost is owned: straight to the load
+    payload = rig.sponsors.calls[-1].payload
+    assert rig.sponsors.steps() == ["load_ghost"]
+    target = (payload["target_run"], payload["target_listing"], payload["target_log_h"], payload["target_frames"])
+    assert target == (run, listing, log_h, 6070)
+    assert (payload["arcade_id"], payload["frames"], payload["receipt"]) == ("MDGP", 6290, "mock-1")
+    rig.flow.ctx["run_frames"] = 6000                              # a run just raced is what a listing is about
+    assert rig.flow._payload()["frames"] == 6000
+
+
+def test_a_loaded_real_ghost_is_kept_for_the_race(tmp_path):
+    class Real(SpySponsors):
+        def begin(self, step, payload):
+            call = super().begin(step, payload)
+            if step == "load_ghost":
+                call._result = Result(ok=True, data={"ghost_log": "/runs/ghosts/ef.acl"})
+            return call
+    rig = Rig(tmp_path, sponsors=Real, ledger=_owned_ledger())
+    rig.flow.start("buy_load")
+    rig.wait(16)
+    assert rig.state == "buy_done" and rig.flow.ctx["ghost_log"] == "/runs/ghosts/ef.acl"
+
+
+def test_a_real_listing_keeps_its_rows_and_the_mocks_names_none(tmp_path):
+    rows = {"run": "0x" + "12" * 32, "listing": "0x" + "34" * 32, "tx": "0x" + "56" * 32}
+
+    class Real(SpySponsors):
+        def begin(self, step, payload):
+            call = super().begin(step, payload)
+            if step == "publish":
+                call._result = Result(ok=True, data=rows)
+            return call
+    rig = Rig(tmp_path / "real", sponsors=Real, run_frames=6100)
+    rig.flow.start("ls_arkiv")
+    rig.wait(16)
+    (entry,) = rig.saved().listings
+    assert (entry["run"], entry["listing"], entry["frames"]) == (rows["run"], rows["listing"], 6100)
+    assert "tx" not in entry
+    rig = Rig(tmp_path / "mock", run_frames=6100)
+    rig.flow.start("ls_arkiv")
+    rig.wait(1400)
+    (entry,) = rig.saved().listings
+    assert "run" not in entry and "listing" not in entry

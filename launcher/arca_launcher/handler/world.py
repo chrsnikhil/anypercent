@@ -30,6 +30,7 @@ EXPIRY_GRACE_MS = 3000        # this long past a request's own expires_s with no
 START_TIMEOUT_S = 5.0         # a start may wait on World's own servers
 ASK_TIMEOUT_S = 2.0
 ACTION_MAX = 160              # the bridge's limit on a listing's digest (World App shows it)
+BOARD_TAIL = " on the public board"   # every listing approval names where the run goes
 TICK_S, IDLE_TICK_S = 0.1, 1.0
 
 _KIND = {"idkit_scan": "idkit", "idkit_confirm": "idkit", "idkit_verify": "idkit",
@@ -170,6 +171,10 @@ class WorldSponsors:
                 world = "busy"
         out["world"] = world
         return out
+
+    def board(self, game_id: str, look: bool = True):
+        """Arkiv is still mocked here: no real board."""
+        return None
 
     def begin(self, step: str, payload: dict):
         kind = _KIND.get(step)
@@ -345,14 +350,21 @@ class WorldSponsors:
         return {"book": payload.get("book") or "", "action": _digest(payload)}
 
 
+def _title(payload):
+    """The game's name as the digest shows it: its title, or its id when there is none; one printable line."""
+    return _printable(payload.get("title")) or _printable(payload.get("game"))
+
+
 def _digest(payload):
-    """What World App shows the person approving a listing: "List Marine Drive GP 1:42.83 ghost for 0.10 USDC". The
-    game's title (its arcade id only when there is none), no control characters, and within the bridge's
-    ACTION_MAX (counted in UTF-16 units, as the bridge's JavaScript does): a long title gives way, never the price."""
+    """What World App shows the person approving a listing: "List Marine Drive GP 1:42.83 ghost for 0.10 USDC on the
+    public board" (the approval says where the run goes: Arkiv's public board). The game's title (its id only when
+    there is none), no control characters, and within the bridge's ACTION_MAX (counted in UTF-16 units, as the
+    bridge's JavaScript does): a long title gives way, never the price or the board."""
     tail = " ".join(x for x in (_printable(payload.get("run_time")), "ghost") if x)
     if isinstance(payload.get("price"), int):
         tail += " for %.2f USDC" % (payload["price"] / 100)
-    title = _printable(payload.get("title")) or _printable(payload.get("game"))
+    tail += BOARD_TAIL
+    title = _title(payload)
     room = ACTION_MAX - _units(f"List  {tail}")
     if _units(title) > room:
         while title and _units(title) > room - 3:

@@ -2,7 +2,8 @@
 played by RIA) surrounded by mock runners who never sell. Field order on Row is pinned by a
 controller ruling that amends the brief's own "YOU directly below RIA" claim, which contradicts
 the brief's own offsets (ARJUN at log+170 sits between RIA and a YOU at log+214)."""
-from arca_launcher.handler.board import BOT, MOCK_NAMES, SELLER, Board, Row, build, mark_you
+from arca_launcher.handler.board import BOT, MOCK_NAMES, SELLER, Board, Row, build, build_real, mark_you
+from arca_launcher.handler.sponsors import RunRow
 
 
 def test_target_is_the_log_runner_when_you_are_behind():
@@ -125,8 +126,9 @@ def test_row_field_order_matches_the_ruling():
     board = build(6076, 6290)
     row = board.rows[0]
     assert [f.name for f in __import__("dataclasses").fields(row)] == [
-        "rank", "name", "frames", "you", "listed", "sells", "target", "human", "credential",
+        "rank", "name", "frames", "you", "listed", "sells", "target", "human", "credential", "key", "listing",
     ]
+    assert (row.key, row.listing) == (None, None)                      # the mock board's rows are on no chain
 
 
 # ---- HUMAN: one World ID, one record book --------------------------------------------------------------------------
@@ -166,3 +168,90 @@ def test_you_still_rank_where_you_did():
     board = build(6070, 6290)
     assert next(row.rank for row in board.rows if row.you) == 5
     assert board.target.name == "RIA" and board.target.rank == 3
+
+
+# ---- the real board: Arkiv's run rows (build_real) ------------------------------------------------------------------
+
+def run(name, frames, listed=False, human=None, credential=None, book=True, key=None):
+    """A run row as arkiv_rpc decodes it: name is the book (ANY-...) or, with book=False, an open-tier label."""
+    human = book if human is None else human
+    return RunRow(key=key or "0x%064x" % (hash((name, frames)) & (2 ** 256 - 1)), game="MDGP", title="MARINE DRIVE GP",
+                  frames=frames, runner=name.lower().ljust(16, "0")[:16], book=name if book else None,
+                  label=None if book else name, human=human, credential=(credential or "Orb") if human else None,
+                  log_h=("%064x" % frames), rules=4, expires_block=8000000,
+                  listing=("0x%064x" % (frames + 1)) if listed else None, price="0.1" if listed else None)
+
+
+ROWS = (run("ANY-K2P", 6000), run("ANY-7QZ", 6100, listed=True), run("TEAM", 6150, book=False),
+        run("ANY-K2P", 6180, listed=True), run("ANY-2KD", 6200, listed=True), run("BOT-7", 6250, book=False),
+        run("ANY-9MX", 6400, listed=True))
+
+
+def names(board):
+    return [row.name for row in board.rows]
+
+
+def test_one_row_per_runner_the_fastest_kept():
+    board = build_real(ROWS, 6290, None, None)
+    assert names(board) == ["ANY-K2P", "ANY-7QZ", "TEAM", "ANY-2KD", "BOT-7", "YOU", "ANY-9MX"]
+    k2p = board.rows[0]
+    assert (k2p.frames, k2p.listed, k2p.sells) == (6000, False, False)  # her fastest is not listed; her slower one was
+    assert [row.rank for row in board.rows] == list(range(1, 8))
+    assert all(row.key for row in board.rows if not row.you)
+
+
+def test_the_target_is_the_listed_run_just_ahead_of_you():
+    board = build_real(ROWS, 6290, None, None)
+    assert board.case == "ok" and board.target.name == "ANY-2KD" and board.target.frames == 6200
+    assert board.target.listing == ROWS[4].listing and board.target.key == ROWS[4].key
+    assert [row.name for row in board.rows if row.target] == ["ANY-2KD"]
+    assert [row.name for row in board.rows if row.sells] == ["ANY-7QZ", "ANY-2KD", "ANY-9MX"]
+    assert build_real(ROWS, 6150, None, None).target.name == "ANY-7QZ"   # TEAM is ahead, but sells no ghost
+    assert build_real(ROWS, 6200, None, None).target.name == "ANY-7QZ"   # a tie is not ahead
+
+
+def test_a_new_visitor_races_the_slowest_listed_run():
+    board = build_real(ROWS, None, None, None)
+    assert board.case == "no_best" and board.target.name == "ANY-9MX"
+    assert board.rows[-1].you and board.rows[-1].frames is None
+
+
+def test_nobody_ahead_and_no_board():
+    assert build_real(ROWS, 6050, None, None).case == "nobody_ahead"
+    assert build_real(ROWS, 6050, None, None).target is None
+    unlisted = tuple(r for r in ROWS if not r.listing)
+    assert build_real(unlisted, 6290, None, None).case == "nobody_ahead"
+    assert build_real(unlisted, None, None, None).case == "nobody_ahead"   # nothing to buy: race your own
+    empty = build_real((), 6290, "ANY-7QZ", "Orb")
+    assert (empty.case, empty.rows, empty.target) == ("no_board", (), None)
+
+
+def test_you_are_the_better_of_your_local_best_and_your_own_row():
+    board = build_real(ROWS, 6290, "ANY-7QZ", "Orb")                   # your book's run (6100) beats the local best
+    you = next(row for row in board.rows if row.you)
+    assert names(board).count("ANY-7QZ") == 0 and you.frames == 6100 and you.rank == 2
+    assert (you.listed, you.sells, you.key) == (True, False, ROWS[1].key)   # your own listing: never yours to buy
+    assert board.case == "nobody_ahead"                                  # K2P's 6000 is not listed
+    board = build_real(ROWS, 5900, "ANY-7QZ", "Orb")                   # a local best faster than the board
+    you = board.rows[0]
+    assert you.you and you.frames == 5900 and not you.listed and you.key is None
+    assert names(board).count("ANY-7QZ") == 0
+
+
+def test_human_comes_from_the_rows():
+    board = build_real(ROWS, 6290, None, None)
+    rows = {row.name: row for row in board.rows}
+    assert [name for name, row in rows.items() if row.human] == ["ANY-K2P", "ANY-7QZ", "ANY-2KD", "ANY-9MX"]
+    assert rows["ANY-2KD"].credential == "Orb" and rows["TEAM"].credential is None and not rows["BOT-7"].human
+    assert not rows["YOU"].human                                         # no World proof behind the console's book
+    plain = (run("ANY-5RT", 6000, human=False),)                         # a booked row that says not human: not human
+    assert not build_real(plain, 6290, None, None).rows[0].human
+    you = next(r for r in build_real(ROWS, 6290, "ANY-4HJ", "Orb").rows if r.you)
+    assert (you.human, you.credential) == (True, "Orb")                  # a real World proof behind the book
+    you = next(r for r in build_real(ROWS, 6290, "ANY-7QZ", None).rows if r.you)
+    assert (you.human, you.credential) == (True, "Orb")                  # your own row says so
+
+
+def test_rows_from_arkiv_are_never_mock_runners():
+    board = build_real(ROWS, 6290, None, None)
+    assert not set(names(board)) & (set(MOCK_NAMES) - {BOT})             # BOT-7 here is a real open-tier label

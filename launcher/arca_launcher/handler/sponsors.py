@@ -48,6 +48,37 @@ class Outcome:
     late: bool = False
 
 
+@dataclass(frozen=True)
+class RunRow:
+    """One checked run on Arkiv's board: an `anypercent.run` row our checker created, with its live listing when it
+    has one. book is the record book (None on an open-tier row, which carries a label instead); human and credential
+    are the row's own fields, the only source of a HUMAN badge. expires_block is the row's `$expiresAt`; price is
+    the listing's price in USDC as Arkiv holds it (a decimal string such as "0.1")."""
+    key: str
+    game: str
+    title: str
+    frames: int
+    runner: str
+    book: str | None
+    label: str | None
+    human: bool
+    credential: str | None
+    log_h: str
+    rules: int
+    expires_block: int
+    listing: str | None = None
+    price: str | None = None
+
+
+@dataclass(frozen=True)
+class BoardRead:
+    """One game's board as last read from Arkiv: its run rows fastest first and the block they were read at. stale:
+    the rows come from the console's cache, because the latest read failed or none has finished since start."""
+    rows: tuple[RunRow, ...]
+    block: int
+    stale: bool = False
+
+
 class Call(Protocol):
     """One in-flight (or already resolved) sponsor step. A phone step's info carries "code" (the short code the
     console shows and the phone repeats), "expires_s" and, from a real adapter, "qr": the link its QR encodes."""
@@ -70,6 +101,12 @@ class Sponsors(Protocol):
 
     def status(self) -> dict[str, str]:
         """"world" | "board" | "third" -> "ok" | "busy" | "off"."""
+        ...
+
+    def board(self, game_id: str, look: bool = True) -> BoardRead | None:
+        """The arcade game's real board as last read (Arkiv); None while the board is mocked, or never read. look:
+        someone is looking at this game's board, so a real adapter keeps it fresh (False: a glance, e.g. attract
+        mode's run to beat)."""
         ...
 
     def begin(self, step: str, payload: dict) -> Call:

@@ -151,6 +151,10 @@ class MockSponsors:
                 out[service] = "busy" if timed and active.waiting() else "ok"
         return out
 
+    def board(self, game_id: str, look: bool = True):
+        """No real board: the glue draws the mock one around the game's test log."""
+        return None
+
     def set_down(self, service: str, down: bool) -> None:
         self._down[service] = down
 

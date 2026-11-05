@@ -1,4 +1,6 @@
-"""The mock board around the one real ghost: each game has exactly one real ghost (its shipped
+"""The board PB shows: the real one from Arkiv's run rows (build_real) when Arkiv is real, else the mock one (build).
+
+The mock board around the one real ghost: each game has exactly one real ghost (its shipped
 test log), shown as one mock runner (RIA) at the log's real time. The other mock runners are
 offsets from that same log; only RIA's ghost can ever be bought in mock mode, so "listed"
 (shown on the board as selling) and "sells" (actually purchasable) are tracked separately.
@@ -39,6 +41,8 @@ class Row:
     target: bool
     human: bool = False             # a World-verified record book stands behind this run
     credential: str | None = None   # what World checked ("Orb", "Selfie Check"), when known
+    key: str | None = None          # the real board's run row on Arkiv (None: a mock runner, or YOU's local best)
+    listing: str | None = None      # the live listing that offers this run's ghost, on the real board
 
 
 @dataclass(frozen=True)
@@ -93,6 +97,54 @@ def build(log_frames: int | None, best_frames: int | None, you_human: str | None
     rows = mark_you(rows, you_human)
     target = next((row for row in rows if row.target), None)
     return Board(rows=rows, target=target, case=case)
+
+
+def build_real(rows, best_frames: int | None, you_book: str | None, you_human: str | None) -> Board:
+    """The board from Arkiv's run rows (sponsors.RunRow, fastest first as Q1 reads them), the spec's way:
+
+    - one row per runner (a book, or an open-tier label): the first, which is the fastest;
+    - listed: a live listing offers that run; sells: listed and not YOU;
+    - YOU: the better of the local best and YOU's own row on Arkiv (book == you_book);
+    - the target: the listed run with the largest time below YOU's (no time from YOU: the slowest listed run); none
+      ahead is "nobody_ahead"; no run rows at all is "no_board".
+
+    HUMAN and its credential come from each row's own fields. YOU's come from YOU's own row when the board shows it,
+    else from you_human (the credential World checked for the console's book, with a real World proof behind it)."""
+    if not rows:
+        return Board(rows=(), target=None, case="no_board")
+    mine, others, seen = None, [], set()
+    for run in sorted(rows, key=lambda r: r.frames):        # stable: Q1's own order among equal times
+        if you_book is not None and run.book == you_book:
+            mine = mine or run
+            continue
+        name = run.book or run.label
+        if name not in seen:
+            seen.add(name)
+            others.append(run)
+    you_run = mine if mine is not None and (best_frames is None or mine.frames <= best_frames) else None
+    you_frames = you_run.frames if you_run is not None else best_frames
+
+    target = None
+    for run in others:                                      # fastest first: the last that qualifies is the target
+        if run.listing is not None and (you_frames is None or run.frames < you_frames):
+            target = run
+    case = "nobody_ahead" if target is None else "no_best" if you_frames is None else "ok"
+
+    entries = [(run.book or run.label, run.frames, False, run) for run in others]
+    entries.append(("YOU", you_frames, True, you_run))
+    entries.sort(key=lambda e: (e[1] if e[1] is not None else float("inf"), 0 if e[2] else 1))
+    out = []
+    for rank, (name, frames, you, run) in enumerate(entries, start=1):
+        listed = run is not None and run.listing is not None
+        if you and run is None:
+            human, credential = you_human is not None, you_human
+        else:
+            human, credential = run.human, run.credential if run.human else None
+        out.append(Row(rank=rank, name=name, frames=frames, you=you, listed=listed, sells=listed and not you,
+                       target=run is not None and run is target, human=human, credential=credential,
+                       key=run.key if run is not None else None, listing=run.listing if run is not None else None))
+    rows_out = tuple(out)
+    return Board(rows=rows_out, target=next((row for row in rows_out if row.target), None), case=case)
 
 
 def mark_you(rows, you_human: str | None):
