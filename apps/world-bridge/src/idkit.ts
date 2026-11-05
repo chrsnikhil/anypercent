@@ -12,7 +12,7 @@
  * HMAC; the book id is derived from it, so the same human always gets the same book.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { IDKit, CredentialRequest, any, type IDKitRequest } from "@worldcoin/idkit-core";
+import { IDKit, proofOfHuman, type IDKitRequest } from "@worldcoin/idkit-core";
 import { hashSignal } from "@worldcoin/idkit-core/hashing";
 import { Nullifier } from "@worldcoin/idkit-core/nullifier";
 import { signRequest } from "@worldcoin/idkit-core/signing";
@@ -51,7 +51,10 @@ export interface IdkitDeps {
   verify(payload: unknown): Promise<{ status: number; body: unknown }>;
 }
 
-/** The real thing: RP-signed IDKit request, Orb (Proof of Human) or Selfie Check, 4.0 proofs only. */
+/** The real thing: an RP-signed IDKit request with World's proof-of-human preset (a 4.0 Orb credential, legacy Orb
+ * fallback allowed by World App). A custom any(proof_of_human, selfie) request hangs World App ("something went
+ * wrong", no error sent back) when Selfie Check is not enabled for the app, so the preset is used. Only 4.0 proofs
+ * pass verifyProof's own checks; a legacy fallback proof is refused there. */
 export function realIdkitDeps(cfg: Config, ttlS: number): IdkitDeps {
   const w = cfg.world;
   return {
@@ -67,12 +70,9 @@ export function realIdkitDeps(cfg: Config, ttlS: number): IdkitDeps {
           expires_at: s.expiresAt,
           signature: s.sig,
         },
-        allow_legacy_proofs: false,
+        allow_legacy_proofs: true,
         environment: w.environment,
-      }).constraints(
-        any(CredentialRequest("proof_of_human", { signal }), CredentialRequest("selfie", { signal })),
-        { timeout: 8000 },
-      );
+      }).preset(proofOfHuman({ signal }), { timeout: 8000 });
     },
     async verify(payload) {
       const res = await fetch(`${w.portalBase}/api/v4/verify/${encodeURIComponent(w.rpId)}`, {
@@ -313,7 +313,8 @@ export class IdkitSessions {
     if (body.action !== undefined && body.action !== this.opts.action) return fail("action");
 
     // 200 means at least one item verified: use an item the portal did not fail, with a credential
-    // we accept, still valid.
+    // we accept. Validity is the portal's check: an item's expires_at_min is the request's lower bound
+    // (about the time it was made, so already past here), not the credential's own expiry.
     const portalResults = (Array.isArray(body.results) ? body.results : []) as Array<{
       identifier?: unknown;
       success?: unknown;
@@ -326,7 +327,6 @@ export class IdkitSessions {
       const credential =
         typeof it.issuer_schema_id === "number" ? SCHEMA_CREDENTIAL[it.issuer_schema_id] : undefined;
       if (!credential) continue;
-      if (typeof it.expires_at_min === "number" && it.expires_at_min < nowS) continue; // credential lapsed
       if (!chosen || credential === "Orb") chosen = { item: it, credential };
     }
     if (!chosen) return fail("credential");

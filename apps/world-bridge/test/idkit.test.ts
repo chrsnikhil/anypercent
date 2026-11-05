@@ -282,13 +282,21 @@ describe("IDKit record book", () => {
     assert.equal((await finish(idkit, (await idkit.start("pi")).id)).failure, "id_rejected");
   });
 
-  it("an expired credential or one we do not accept: id_nocred", async () => {
-    const lapsed = new FakeWorld((signal) => [confirmed(proof(signal, "0x0abc", {}, { expires_at_min: 1000 }))]);
-    const a = make(lapsed);
-    assert.equal((await finish(a.idkit, (await a.idkit.start("pi")).id)).failure, "id_nocred");
+  it("a credential we do not accept: id_nocred", async () => {
     const passport = new FakeWorld((signal) => [confirmed(proof(signal, "0x0abc", {}, { issuer_schema_id: 9303, identifier: "passport" }))]);
     const b = make(passport);
     assert.equal((await finish(b.idkit, (await b.idkit.start("pi")).id)).failure, "id_nocred");
+  });
+
+  it("expires_at_min is the request's lower bound, not the credential's expiry: a past one still makes a book", async () => {
+    // A real World App proof carries expires_at_min = about the request's time, so it is seconds in the past by the
+    // time the portal has verified it. The portal checks validity; reading it as a lapse refused every real Orb.
+    const real = new FakeWorld((signal) => [confirmed(proof(signal, "0x0abc", {}, {
+      identifier: "proof_of_human", issuer_schema_id: 1, expires_at_min: Math.floor(Date.now() / 1000) - 20 }))]);
+    const a = make(real);
+    const v = await finish(a.idkit, (await a.idkit.start("pi")).id);
+    assert.equal(v.failure, null);
+    assert.equal(v.data.credential, "Orb");
   });
 
   it("the portal unreachable or 5xx: id_offline", async () => {
