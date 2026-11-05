@@ -1,0 +1,120 @@
+/**
+ * The bridge's only state on disk: data/state.json.
+ *
+ * - books:    nullifier HMAC -> the record book that World ID got (one per human);
+ * - bindings: book -> the HMAC of the Agent Pass (iss, sub) bound to it on first approval;
+ * - jtis:     ID-token jtis already consumed.
+ *
+ * Every operation is synchronous read-modify-write inside one event-loop turn, so two requests can
+ * never interleave inside a claim: the check and the write are one atomic step for this process.
+ * Writes go to a temp file and are renamed over the old one.
+ */
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { bookCandidate } from "./hmac.js";
+
+export interface BookRecord {
+  book: string;
+  credential: string;
+  runner_id: string;
+  created_at: number;
+}
+
+interface StateFile {
+  version: 1;
+  books: Record<string, BookRecord>;
+  bindings: Record<string, { sub_key: string; bound_at: number }>;
+  jtis: Record<string, number>;
+}
+
+export type BindResult = "bound" | "match" | "mismatch";
+
+export class Store {
+  private readonly file: string;
+  private state: StateFile;
+
+  constructor(private readonly dir: string, private readonly secret: string) {
+    mkdirSync(dir, { recursive: true });
+    this.file = join(dir, "state.json");
+    this.state = this.read();
+  }
+
+  private read(): StateFile {
+    try {
+      const parsed = JSON.parse(readFileSync(this.file, "utf8")) as Partial<StateFile>;
+      return {
+        version: 1,
+        books: parsed.books ?? {},
+        bindings: parsed.bindings ?? {},
+        jtis: parsed.jtis ?? {},
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return { version: 1, books: {}, bindings: {}, jtis: {} };
+      }
+      throw new Error(`state file ${this.file} is unreadable; refusing to start over it`);
+    }
+  }
+
+  private write(): void {
+    const tmp = `${this.file}.tmp`;
+    writeFileSync(tmp, JSON.stringify(this.state, null, 1));
+    renameSync(tmp, this.file);
+  }
+
+  /** The book a nullifier already owns, if any. */
+  bookFor(nKey: string): BookRecord | undefined {
+    return this.state.books[nKey];
+  }
+
+  /**
+   * One World ID, one record book. Returns the new book, or the existing one with created=false
+   * when this nullifier already has a book (the caller answers id_dup).
+   */
+  claimBook(
+    nKey: string,
+    credential: string,
+    runner: string,
+    now: number,
+  ): { created: boolean; record: BookRecord } {
+    const existing = this.state.books[nKey];
+    if (existing) return { created: false, record: existing };
+    const taken = new Set<string>(Object.values(this.state.books).map((b) => b.book));
+    for (const b of Object.keys(this.state.bindings)) taken.add(b);
+    let book = "";
+    for (let attempt = 0; ; attempt++) {
+      book = bookCandidate(this.secret, nKey, attempt);
+      if (!taken.has(book)) break;
+    }
+    const record: BookRecord = { book, credential, runner_id: runner, created_at: now };
+    this.state.books[nKey] = record;
+    this.write();
+    return { created: true, record };
+  }
+
+  /** Trust on first use: the first approval binds the book to that account; later ones must match. */
+  bindOrCheck(book: string, sKey: string, now: number): BindResult {
+    const bound = this.state.bindings[book];
+    if (!bound) {
+      this.state.bindings[book] = { sub_key: sKey, bound_at: now };
+      this.write();
+      return "bound";
+    }
+    return bound.sub_key === sKey ? "match" : "mismatch";
+  }
+
+  /** Read-only twin of bindOrCheck for an approval the console already backed out of. */
+  checkBinding(book: string, sKey: string): BindResult {
+    const bound = this.state.bindings[book];
+    if (!bound) return "bound";
+    return bound.sub_key === sKey ? "match" : "mismatch";
+  }
+
+  /** Consume a jti exactly once. False: it was already used. */
+  useJti(key: string, now: number): boolean {
+    if (this.state.jtis[key] !== undefined) return false;
+    this.state.jtis[key] = now;
+    this.write();
+    return true;
+  }
+}
