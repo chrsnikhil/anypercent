@@ -15,7 +15,7 @@
      },
      {
       "name": "run",
-      "type": "key",
+      "type": "bytes32",
       "value": "0x07f7702a230cfd8db76614eb1ccd245d220f375f744ead5cd3b22530cd61c43d"
      },
      {
@@ -72,7 +72,7 @@
      },
      {
       "name": "run",
-      "type": "key",
+      "type": "bytes32",
       "value": "0x6f4679c89485bebe1f2d147980643339a4dc4cc7671a0f74b05c879f7fd3f231"
      },
      {
@@ -129,7 +129,7 @@
      },
      {
       "name": "run",
-      "type": "key",
+      "type": "bytes32",
       "value": "0x2af4c37a753bbb4d2d55245b1b511dfe1801417dfe12f78f7a38d6e13fe522c3"
      },
      {

@@ -230,6 +230,7 @@ MISFITS = {
     "another game": _set("game", value="SHIP"),
     "log_h not hex": _set("log_h", value="../../etc/passwd" + "0" * 48),
     "log_h uppercase": _set("log_h", value=h("6ps-fast").upper()),
+    "log_h typed bytes32": _set("log_h", type="bytes32"),          # "bytes32" stands for "key" only in key columns
     "credential a number": _set("credential", type="i32", value=1),
     "book with a control character": _set("book", value="ANY-\n6PS"),
     "title too long": _set("title", value="X" * 65),

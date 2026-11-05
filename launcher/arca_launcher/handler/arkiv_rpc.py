@@ -238,6 +238,8 @@ def _row(entity, schema, columns, optional, checker):
             out[name] = None
             continue
         typed, raw = got[name]
+        if kind == "key" and typed == "bytes32":
+            typed = "key"           # Rabdi labels a key column "bytes32" (the SDK's reader takes it as a key too)
         value = _value(kind, raw) if typed == kind else _BAD
         if value is _BAD or (kind == "str" and not _text_ok(value)):
             return None
