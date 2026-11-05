@@ -43,9 +43,9 @@ _FAILURES = {"idkit": ("id_rejected", "id_expired", "id_nocred", "id_dup", "id_o
 _DOWN = {"idkit": "id_offline", "agentpass": "ls_world_down"}
 _EXPIRED = {"idkit": "id_expired", "agentpass": "ls_expired"}
 _CANCELLED = {"idkit": "id_cancel", "agentpass": "ls_cancel"}   # where Circle went; the flow never lands on these
-# What an answer must carry to be shown: a success, the record book (one per person) or the approval's one-time id;
-# a duplicate, the book that person already owns.
-_NEEDS = {"idkit": "book", "agentpass": "jti", "id_dup": "book"}
+# What a success must carry to be shown: the record book (one per person) or the approval's one-time id. A duplicate
+# may come without its book (World App refused the second sign-up before any proof): the flow says so, unnamed.
+_NEEDS = {"idkit": "book", "agentpass": "jti"}
 
 
 def http_transport(bridge_url):
@@ -356,16 +356,13 @@ def _checked(kind, reply):
 
 
 def _outcome(kind, reply):
-    """A done request as the step's Result. A failure the handler has no screen for, or an answer missing what its
+    """A done request as the step's Result. A failure the handler has no screen for, or a success missing what its
     screen shows (a book, an approval id), is World down: the console never makes either up."""
     data = reply["data"]
-    if reply["ok"] is True:
-        name = None
-    elif reply["failure"] in _FAILURES[kind]:
-        name = reply["failure"]
-    else:
+    if reply["ok"] is not True:
+        if reply["failure"] not in _FAILURES[kind]:
+            return Result(ok=False, failure=_DOWN[kind])
+        return Result(ok=False, failure=reply["failure"], data=dict(data))
+    if not (isinstance(data.get(_NEEDS[kind]), str) and data[_NEEDS[kind]]):
         return Result(ok=False, failure=_DOWN[kind])
-    need = _NEEDS.get(name or kind)
-    if need is not None and not (isinstance(data.get(need), str) and data[need]):
-        return Result(ok=False, failure=_DOWN[kind])
-    return Result(ok=True, data=dict(data)) if name is None else Result(ok=False, failure=name, data=dict(data))
+    return Result(ok=True, data=dict(data))

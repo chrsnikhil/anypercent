@@ -14,7 +14,9 @@ the JS object `S`) with controller-ruled amendments layered on top:
   had to pick between (three after a bought ghost, `own_result`/`own_again` after racing your own
   best), a fresh-visitor board, the three down-sponsor timeouts Ruling 8 split out of
   `buy_down`/`ls_record_fail` so a failure's name always matches which step timed out, and
-  `buy_late`, so a payment that landed late never leaves "nothing was paid" on screen.
+  `buy_late`, so a payment that landed late never leaves "nothing was paid" on screen;
+- one more came with real World: `id_dup_unnamed`, the flow's `id_dup` when World App refused a
+  second sign-up before the bridge could name the book (nothing to sign in to).
 
 This module is pure data (plus `copy_texts`/`PLACEHOLDERS`, small helpers over that data): no
 pygame, no sponsor calls, no clock. Task 6 (`flow.py`) walks `on`; Task 9 draws `card` by its
@@ -94,7 +96,7 @@ STATES: dict[str, State] = {
     "id_done": State(
         name="id_done", mood="excited", kind="ok", fx="confetti",
         card={"t": "done", "h": "Record book ready", "rows": ("*{book}* is yours",),
-              "what": (("Verified", "by {world} (Selfie Check)"), ("Stored", "a one-per-person code"),
+              "what": (("Verified", "by {world} ({credential})"), ("Stored", "a one-per-person code"),
                         ("Not stored", "your name or face"))},
         say="You are in! Record book *{book}* is yours. Every run you finish lands in it. "
             "Cross to carry on.",
@@ -124,6 +126,15 @@ STATES: dict[str, State] = {
         say="That {world} ID already has record book *{other_book}*. One per person, so I can "
             "not make a second. Cross to sign in to it instead.",
         steps=_ID3, at=2, fail=True, on={"cross": "id_signed", "circle": "home"},
+    ),
+    "id_dup_unnamed": State(
+        name="id_dup_unnamed", mood="worried", kind="no",
+        card={"t": "no", "h": "Already registered", "rows": ("This {world} ID already has a record book",),
+              "what": (("Second book", "refused"), ("Your book", "untouched, runs kept"),
+                        ("Rule", "one per person"))},
+        say="That {world} ID already has a record book. One per person, so World App said no to a "
+            "second. The games still play.",
+        steps=_ID3, at=2, fail=True, on={"cross": "home", "circle": "home"},
     ),
     "id_signed": State(
         name="id_signed", mood="happy", kind="ok", fx="confetti",
@@ -293,7 +304,7 @@ STATES: dict[str, State] = {
               "rows": ("World App > Agent Pass", "*List ghost: {game} {run_time}*",
                         "{price} USDC to *{wallet}*")},
         say="Scan this with World App. It asks to list your *{run_time}* ghost for *{price} USDC*. "
-            "Cross to go, Circle to back out.",
+            "{approve_how}, Circle to back out.",
         steps=_LS, at=0, call="approve_scan", phone=True, deadline_ms=1200000,
         on={"ok": "ls_approve", "timeout": "ls_expired", "circle": "ls_cancel"},
     ),

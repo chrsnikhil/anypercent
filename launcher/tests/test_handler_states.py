@@ -16,7 +16,8 @@ from arca_launcher.handler_glue import MOCK_WALLET
 # eighteen new ones: the hub flow, the post-race outcomes the prototype's `racing` auto-advance
 # never had to pick between (three after a bought ghost, two more after your own best), a
 # fresh-visitor board, the three down-sponsor timeouts Ruling 8 split out of
-# `buy_down`/`ls_record_fail`, and `buy_late` (a payment that landed after all).
+# `buy_down`/`ls_record_fail`, and `buy_late` (a payment that landed after all). Plus
+# `id_dup_unnamed`: a duplicate World App refused before the bridge could name its book.
 _PROTOTYPE_STATES = {
     "s_boot", "id_scan", "id_confirm", "id_verifying", "id_done", "id_rejected", "id_expired",
     "id_dup", "id_signed", "id_nocred", "id_cancel", "id_offline",
@@ -30,7 +31,7 @@ _NEW_STATES = {
     "hub", "need_book", "no_board", "no_run", "nobody_ahead", "race_lost", "race_unfinished",
     "race_unverified", "book_view", "listings_view", "start_over",
     "board_new", "buy_check_fail", "buy_load_fail", "ls_publish_fail",
-    "buy_late", "own_result", "own_again",
+    "buy_late", "own_result", "own_again", "id_dup_unnamed",
 }
 
 # Sample values for every non-sponsor-name placeholder the table uses, so copy can be filled
@@ -43,7 +44,7 @@ _SAMPLES = {
     "book": "ANY-7Q3", "other_book": "ANY-2KD", "code": "R4D-91X", "wallet": MOCK_WALLET,
     "buyer": "ARJUN", "ghost_look": "the *lime kart*", "split": "the hairpin",
     "game": "Marine Drive GP", "runs": 14, "sold": 3, "jti": "5e1f09ab", "listing_days": 7,
-    "ghost_kept": "RIA's ghost is still yours. ",
+    "ghost_kept": "RIA's ghost is still yours. ", "credential": "Orb", "approve_how": "Cross to go",
 }
 
 # The prototype states whose own S entry carries a `what` (handler-states.html). A fix round
@@ -64,7 +65,7 @@ def _filled(text: str) -> str:
 
 def test_every_prototype_state_is_here():
     assert _PROTOTYPE_STATES | _NEW_STATES == set(STATES)
-    assert len(STATES) == 59
+    assert len(STATES) == 60
 
 
 def test_start_matches_the_brief():
@@ -360,7 +361,7 @@ def test_placeholders_constant_matches_what_the_table_uses():
         "world", "board", "third", "pay_rail", "record_rail", "target", "target_time", "gap",
         "rank", "new_rank", "run_time", "price", "budget_left", "book", "other_book", "code",
         "wallet", "buyer", "ghost_look", "split", "game", "runs", "sold", "jti", "listing_days",
-        "ghost_kept",
+        "ghost_kept", "credential", "approve_how",
     }
     assert PLACEHOLDERS == expected
 

@@ -60,7 +60,7 @@ def has_colour(surf, rect, colour):
 
 def test_the_sample_context_fills_every_placeholder():
     names = {f.name for f in dataclasses.fields(SponsorNames)}
-    engine = {"book", "price", "budget_left", "listing_days"}         # the flow fills these itself
+    engine = {"book", "price", "budget_left", "listing_days", "credential", "approve_how"}   # the flow fills these
     assert PLACEHOLDERS - names - engine <= set(CTX)
 
 

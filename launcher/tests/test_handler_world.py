@@ -14,10 +14,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from arca_launcher.handler import world
-from arca_launcher.handler.flow import Flow
+from arca_launcher.handler.flow import CloseHandler, Flow
 from arca_launcher.handler.ledger import GHOST_PRICE, Ledger, load
 from arca_launcher.handler.mock import MockSponsors
 from arca_launcher.handler.sponsors import TIMEOUT_MS, Result
+from arca_launcher.handler.states import STATES, copy_texts
 from arca_launcher.handler.world import WorldSponsors
 
 IDKIT_FAILURES = ("id_rejected", "id_expired", "id_nocred", "id_dup", "id_offline")
@@ -167,7 +168,6 @@ def test_each_record_book_failure_fails_the_step_it_lands_on(name, failure):
     {"stage": "done", "ok": False, "failure": "rate_limited", "data": {}},   # a name the handler has no screen for
     {"stage": "done", "ok": False, "failure": None, "data": {}},
     {"stage": "done", "ok": True, "failure": None, "data": {"credential": "Orb"}},   # a success with no book
-    {"stage": "done", "ok": False, "failure": "id_dup", "data": {}},         # a duplicate with no book to sign in to
 ])
 def test_an_answer_the_handler_cannot_show_is_world_down(reply):
     sponsors, clock, bridge = make()
@@ -175,6 +175,16 @@ def test_an_answer_the_handler_cannot_show_is_world_down(reply):
     bridge.move(**reply)
     step(sponsors, clock)
     assert call.poll().failure == "id_offline"
+
+
+@pytest.mark.parametrize("name", ("idkit_scan", "idkit_confirm", "idkit_verify"))
+def test_a_duplicate_world_app_refused_is_still_a_duplicate(name):
+    """World App itself refuses a second sign-up before any proof exists: the bridge can not name the book."""
+    sponsors, clock, bridge = make()
+    call = walk_to(sponsors, clock, bridge, name)
+    bridge.move("done", ok=False, failure="id_dup", data={})
+    step(sponsors, clock)
+    assert call.poll() == Result(ok=False, failure="id_dup", data={})
 
 
 # ---- the listing approval: Agent Pass ---------------------------------------------------------------------------
@@ -566,6 +576,51 @@ def test_the_same_person_again_signs_in_to_their_book(tmp_path):
     assert rig.state == "id_dup" and rig.flow.ctx["other_book"] == "ANY-2KD"
     rig.flow.press("cross")
     assert rig.state == "id_signed" and rig.flow.ledger.book == "ANY-2KD"
+
+
+def test_a_duplicate_with_no_book_named_says_so_without_one(tmp_path):
+    """World App refused the second sign-up itself: "already registered", no book named, nothing to sign in to."""
+    rig = WorldRig(tmp_path)
+    rig.to("id_confirm")
+    rig.bridge.move("done", ok=False, failure="id_dup", data={})
+    rig.wait(500)
+    assert rig.state == "id_dup_unnamed"
+    texts = [rig.flow.fill(t) for t in copy_texts(rig.flow.state)]
+    assert rig.flow.state.card["h"] == STATES["id_dup"].card["h"] == "Already registered"
+    assert "This World ID already has a record book" in texts
+    assert not any("ANY-" in t for t in texts + [rig.flow.line])        # never the glue's made-up book
+    assert rig.flow.press("cross") == CloseHandler()
+    assert rig.flow.ledger.book is None and load(rig.path).book is None
+
+
+def test_the_listing_qr_says_how_to_go_on(tmp_path):
+    rig = WorldRig(tmp_path, book="ANY-7QZ")
+    rig.flow.start("ls_scan")
+    assert rig.flow.line.endswith(". Approve on your phone, Circle to back out.")   # Cross does nothing here
+    mock = Flow(MockSponsors(lambda: 0), Ledger(book="ANY-7QZ"), rig.path, "MDGP", dict(CTX),
+                today=lambda: "2026-11-06")
+    mock.start("ls_scan")
+    assert mock.line.endswith(". Cross to go, Circle to back out.")
+
+
+def test_the_record_book_says_which_credential_world_checked(tmp_path):
+    from test_handler_flow import Rig
+    rig = WorldRig(tmp_path / "world")
+    rig.to("id_verifying")
+    rig.bridge.move("done", ok=True, data=BOOK)                         # an Orb
+    rig.wait(500)
+    assert rig.state == "id_done"
+    what ={rig.flow.fill(a): rig.flow.fill(b) for a, b in rig.flow.state.card["what"]}
+    assert what["Verified"] == "by World (Orb)"
+    rig = Rig(tmp_path / "mock", book=None)                             # the mock checks a Selfie Check
+    rig.flow.start("book")
+    for _ in range(3):                                                  # s_boot, then Cross for the phone twice
+        rig.flow.press("cross")
+        rig.wait(16)
+    rig.wait(1700)
+    assert rig.state == "id_done"
+    what = {rig.flow.fill(a): rig.flow.fill(b) for a, b in rig.flow.state.card["what"]}
+    assert what["Verified"] == "by World (Selfie Check)"
 
 
 @pytest.mark.parametrize("failure", ("id_rejected", "id_expired", "id_nocred", "id_offline"))

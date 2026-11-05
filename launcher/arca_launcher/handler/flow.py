@@ -54,8 +54,9 @@ _NAME_FIELDS = frozenset(f.name for f in dataclasses.fields(SponsorNames))
 class Flow:
     """One handler session. `game` is the arcade game id (purchases, listings and targets are
     keyed by it); `ctx` is the public dict of placeholder values: the app fills the run and
-    board ones, the engine adds code, qr, expires_s, jti, book, price, budget_left, receipt,
-    listing_days and ghost_kept (and other_book, when World names the book a duplicate owns).
+    board ones, the engine adds code, qr, expires_s, jti, book, credential, price, budget_left,
+    receipt, listing_days, approve_how and ghost_kept (and other_book, when World names the book
+    a duplicate owns).
 
     Read-only for the view and the app: state, line, ms_in_state, in_flight, busy, arcade,
     outcomes_open, outcomes ((label, state) rows), outcome_index, hub_index, hub_rows,
@@ -303,6 +304,8 @@ class Flow:
         nxt = self.state.on["ok"] if result.ok else result.failure
         if nxt not in STATES:
             nxt = self.state.on["timeout"]  # an adapter naming a state the table lacks
+        if nxt == "id_dup" and not data.get("book") and not self.sponsors.mocked("world"):
+            nxt = "id_dup_unnamed"          # World App refused before any book could be named
         if result.ok and step == "approve":
             self.ctx["jti"] = data.get("jti", "")
         if result.ok and step == "pay":
@@ -386,6 +389,9 @@ class Flow:
         # A late receipt may take spending past the budget; show that as none left, not negative.
         self.ctx["budget_left"] = "%.2f" % (max(0, budget_left(self.ledger, self.today())) / 100)
         self.ctx["listing_days"] = LISTING_DAYS
+        self.ctx["credential"] = self.ledger.credential or "World ID"   # what World checked: Orb, Selfie Check
+        # A real phone answers on the phone; only the mock's Cross stands in for it.
+        self.ctx["approve_how"] = "Cross to go" if self.sponsors.mocked("world") else "Approve on your phone"
 
     def _payload(self):
         """What a real adapter needs to know to run the step; the mock ignores it."""
