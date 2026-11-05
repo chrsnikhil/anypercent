@@ -19,26 +19,15 @@ import { jtiKey, subKey } from "./hmac.js";
 import { DOCUMENTED_ACR, validateIdToken } from "./idtoken.js";
 import type { DeviceGrantClient } from "./oidc.js";
 import type { Store } from "./store.js";
+import {
+  CANCEL_FAILURE,
+  StartFailure,
+  type ApprovalProvider,
+  type ApprovalView,
+  type StartedApproval,
+} from "./approvals.js";
 
-export interface ApprovalView {
-  stage: "scan" | "approve" | "done";
-  ok: boolean | null;
-  failure: LsFailure | null;
-  data: Record<string, unknown>;
-}
-
-export interface StartedApproval {
-  id: string;
-  qr: string;
-  code: string;
-  expires_s: number;
-}
-
-export class StartFailure extends Error {
-  constructor(public readonly failure: LsFailure, public readonly status: number, message: string) {
-    super(message);
-  }
-}
+export { BOOK_RE, CANCEL_FAILURE, StartFailure, type ApprovalView, type StartedApproval } from "./approvals.js";
 
 export interface AgentPassOptions {
   idp: DeviceGrantClient;
@@ -78,14 +67,11 @@ interface Session {
   timer: NodeJS.Timeout | null;
 }
 
-export const BOOK_RE = /^ANY-[A-Z0-9]{3,8}$/;
-
-/** What the console answers for an approval it backed out of. */
-export const CANCEL_FAILURE: LsFailure = "ls_denied";
 
 const CHECKS = " (checked: RS256 signature via JWKS, iss, aud, exp, iat, auth_time in this attempt, acr, jti unused)";
 
-export class AgentPass {
+export class AgentPass implements ApprovalProvider {
+  readonly kind = "agentpass" as const;
   private readonly sessions = new Map<string, Session>();
   private readonly now: () => number;
   private readonly msPerSecond: number;

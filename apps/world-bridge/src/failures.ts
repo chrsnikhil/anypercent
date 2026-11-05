@@ -114,6 +114,68 @@ export function proofCheckFailure(check: ProofCheck): IdFailure {
   return check === "credential" ? "id_nocred" : "id_rejected";
 }
 
+// ---- Listing approvals on IDKit (APPROVALS=idkit): the same World App request, ls_* names --------
+
+const APPROVAL_APP_ERRORS: Record<string, LsFailure> = {
+  // The person said no on the phone, or the request was aborted.
+  user_rejected: "ls_denied",
+  verification_rejected: "ls_denied",
+  cancelled: "ls_denied",
+  user_presence_failed: "ls_denied", // liveness not completed (we never request it)
+  // Time ran out.
+  timeout: "ls_expired",
+  rp_signature_expired: "ls_expired",
+  // This phone's World ID cannot approve: it holds no credential the request accepts.
+  credential_unavailable: "ls_wrong",
+  world_id_4_not_available: "ls_wrong",
+  world_id_3_not_available: "ls_wrong",
+  feature_unavailable: "ls_wrong",
+  identity_attributes_not_matched: "ls_wrong",
+  // A repeat refused by World: the action is capped (it must allow unlimited verifications), so
+  // this is our setup, not the person.
+  max_verifications_reached: "ls_world_down",
+  nullifier_replayed: "ls_world_down",
+  // RP, clock and config errors, and World's plumbing.
+  invalid_rp_signature: "ls_world_down",
+  duplicate_nonce: "ls_world_down",
+  unknown_rp: "ls_world_down",
+  inactive_rp: "ls_world_down",
+  invalid_rp_id_format: "ls_world_down",
+  timestamp_too_old: "ls_world_down",
+  timestamp_too_far_in_future: "ls_world_down",
+  invalid_timestamp: "ls_world_down",
+  malformed_request: "ls_world_down",
+  invalid_network: "ls_world_down",
+  inclusion_proof_pending: "ls_world_down",
+  inclusion_proof_failed: "ls_world_down",
+  connection_failed: "ls_world_down",
+  unexpected_response: "ls_world_down",
+  generic_error: "ls_world_down",
+  failed_by_host_app: "ls_world_down",
+};
+
+/** A World App / bridge error code from a failed IDKit approval poll. Unknown: World is down. */
+export function approvalAppFailure(code: string | undefined): LsFailure {
+  return (code && APPROVAL_APP_ERRORS[code]) || "ls_world_down";
+}
+
+/**
+ * The portal refused an approval proof. Unavailable, our setup, or a refused repeat (the action is
+ * capped): ls_world_down. Any other refusal of the proof itself: ls_mismatch.
+ */
+export function approvalPortalFailure(status: number, body: PortalError | undefined): LsFailure {
+  if (status === 404 || status >= 500 || status === 429) return "ls_world_down";
+  if (isReplay(body)) return "ls_world_down";
+  if (body?.code && PORTAL_CONFIG_CODES.has(body.code)) return "ls_world_down";
+  return "ls_mismatch";
+}
+
+/** Our own checks on an approval proof. A proof for another request, action or environment, or a
+ *  malformed one: ls_mismatch. No credential we accept: this World ID cannot approve -> ls_wrong. */
+export function approvalProofFailure(check: ProofCheck): LsFailure {
+  return check === "credential" ? "ls_wrong" : "ls_mismatch";
+}
+
 // ---- Agent Pass: RFC 8628 device grant at World IdP (auth.world.org) -------------------------
 
 export type PollStep = { kind: "continue"; slowDown: boolean } | { kind: "fail"; failure: LsFailure };

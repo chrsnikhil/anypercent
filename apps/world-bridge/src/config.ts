@@ -28,6 +28,8 @@ export interface Config {
     /** Extra accepted `acr` values (AGENTPASS_ACCEPTED_ACR); empty: use the default set. */
     acceptedAcr: string[];
   };
+  /** APPROVALS as written ("idkit", "agentpass", or anything else / empty: the default rule). */
+  approvals: string;
   serverSecret: string;
 }
 
@@ -64,6 +66,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, baseDir = proce
         .map((s) => s.trim())
         .filter(Boolean),
     },
+    approvals: str(env, "APPROVALS").toLowerCase(),
     serverSecret: str(env, "SERVER_SECRET"),
   };
 }
@@ -96,4 +99,19 @@ export function agentpassReady(c: Config): boolean {
     issuerOk = false;
   }
   return issuerOk && a.clientId !== "" && a.clientSecret !== "" && secretReady(c);
+}
+
+/**
+ * Which provider runs the listing approvals (the /agentpass/* routes). APPROVALS=idkit|agentpass;
+ * unset or unknown: idkit when Agent Pass is not configured and IDKit is, else agentpass.
+ * `available`: the chosen provider's configuration is present.
+ */
+export function chooseApprovals(c: Config): { kind: "idkit" | "agentpass"; available: boolean } {
+  const kind =
+    c.approvals === "idkit" || c.approvals === "agentpass"
+      ? c.approvals
+      : !agentpassReady(c) && idkitReady(c)
+        ? "idkit"
+        : "agentpass";
+  return { kind, available: kind === "idkit" ? idkitReady(c) : agentpassReady(c) };
 }

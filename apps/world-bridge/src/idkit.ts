@@ -13,19 +13,11 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { IDKit, proofOfHuman, type IDKitRequest } from "@worldcoin/idkit-core";
-import { hashSignal } from "@worldcoin/idkit-core/hashing";
-import { Nullifier } from "@worldcoin/idkit-core/nullifier";
 import { signRequest } from "@worldcoin/idkit-core/signing";
 import type { Config, WorldEnvironment } from "./config.js";
-import {
-  idkitAppFailure,
-  portalFailure,
-  proofCheckFailure,
-  type IdFailure,
-  type PortalError,
-  type ProofCheck,
-} from "./failures.js";
+import { idkitAppFailure, portalFailure, proofCheckFailure, type IdFailure } from "./failures.js";
 import { BOOK_CHARS, nullifierKey, runnerId } from "./hmac.js";
+import { checkProof } from "./proof.js";
 import type { Store } from "./store.js";
 
 export interface IdkitView {
@@ -118,8 +110,6 @@ interface Session {
   timer: NodeJS.Timeout | null;
 }
 
-const SCHEMA_CREDENTIAL: Record<number, string> = { 1: "Orb", 11: "Selfie Check" };
-
 /** What the console answers for a sign-up it backed out of. */
 export const CANCEL_FAILURE: IdFailure = "id_rejected";
 
@@ -129,27 +119,11 @@ export class IdkitStartFailure extends Error {
   }
 }
 
-function displayCode(): string {
+export function displayCode(): string {
   const b = randomBytes(6);
   const ch = (i: number) => BOOK_CHARS[b[i] % BOOK_CHARS.length];
   return `${ch(0)}${ch(1)}${ch(2)}-${ch(3)}${ch(4)}${ch(5)}`;
 }
-
-function sameField(a: unknown, b: string): boolean {
-  try {
-    return typeof a === "string" && BigInt(a) === BigInt(b);
-  } catch {
-    return false;
-  }
-}
-
-type Item = {
-  identifier?: unknown;
-  signal_hash?: unknown;
-  nullifier?: unknown;
-  issuer_schema_id?: unknown;
-  expires_at_min?: unknown;
-};
 
 export class IdkitSessions {
   private readonly sessions = new Map<string, Session>();
@@ -274,85 +248,36 @@ export class IdkitSessions {
   }
 
   private async verify(s: Session, result: unknown): Promise<void> {
-    const r = (result ?? {}) as Record<string, unknown>;
-    const fail = (check: ProofCheck) => this.finish(s, proofCheckFailure(check));
-
-    // Before spending a portal call: the proof must be a 4.0 uniqueness proof for our action in our
-    // environment, bound to this sign-up's signal.
-    if (r.environment !== this.opts.environment) return fail("environment");
-    if (r.protocol_version !== "4.0" || r.action !== this.opts.action) return fail("action");
-    const expected = hashSignal(s.signal);
-    const items = (Array.isArray(r.responses) ? r.responses : []) as Item[];
-    const bound = items.filter((it) => sameField(it.signal_hash, expected));
-    if (bound.length === 0) return fail("signal");
-
-    let status: number;
-    let body: Record<string, unknown> | undefined;
-    try {
-      ({ status, body } = (await this.opts.deps.verify(result)) as {
-        status: number;
-        body: Record<string, unknown> | undefined;
-      });
-    } catch {
-      return this.finish(s, "id_offline");
-    }
+    const ctx = { deps: this.opts.deps, environment: this.opts.environment, action: this.opts.action };
+    const r = await checkProof(ctx, s.signal, result);
     // Circle won while the portal was answering: discard the proof, make and name no book. From
     // here to claimBook everything is synchronous, so a cancel cannot slip in after this check.
     if (s.cancelled) return;
 
-    if (status !== 200 || body?.success !== true) {
-      const failure = portalFailure(status, body as PortalError | undefined);
+    if (!r.ok) {
+      if (r.kind === "network") return this.finish(s, "id_offline");
+      if (r.kind === "check") return this.finish(s, proofCheckFailure(r.check));
+      const failure = portalFailure(r.status, r.body);
       if (failure === "id_dup") {
         // World refused a repeat of a proof it otherwise holds: name the book this nullifier owns.
-        const known = this.lookup(bound);
+        const known = this.lookup(r.canonicals);
         return this.finish(s, "id_dup", known ? { book: known } : {});
       }
       return this.finish(s, failure);
     }
-    if (body.environment !== undefined && body.environment !== this.opts.environment) return fail("environment");
-    if (body.action !== undefined && body.action !== this.opts.action) return fail("action");
 
-    // 200 means at least one item verified: use an item the portal did not fail, with a credential
-    // we accept. Validity is the portal's check: an item's expires_at_min is the request's lower bound
-    // (about the time it was made, so already past here), not the credential's own expiry.
-    const portalResults = (Array.isArray(body.results) ? body.results : []) as Array<{
-      identifier?: unknown;
-      success?: unknown;
-    }>;
     const nowS = Math.floor(this.now() / 1000);
-    let chosen: { item: Item; credential: string } | null = null;
-    for (const it of bound) {
-      const pr = portalResults.find((p) => p.identifier === it.identifier);
-      if (pr && pr.success === false) continue;
-      const credential =
-        typeof it.issuer_schema_id === "number" ? SCHEMA_CREDENTIAL[it.issuer_schema_id] : undefined;
-      if (!credential) continue;
-      if (!chosen || credential === "Orb") chosen = { item: it, credential };
-    }
-    if (!chosen) return fail("credential");
-
-    let canonical: string;
-    try {
-      canonical = Nullifier.fromHex(String(chosen.item.nullifier)).toCanonicalString();
-    } catch {
-      return fail("no_nullifier");
-    }
-    const nKey = nullifierKey(this.opts.secret, this.opts.action, canonical);
-    const runner = runnerId(this.opts.secret, `${this.opts.action}|${canonical}`);
-    const { created, record } = this.opts.store.claimBook(nKey, chosen.credential, runner, nowS);
+    const nKey = nullifierKey(this.opts.secret, this.opts.action, r.canonical);
+    const runner = runnerId(this.opts.secret, `${this.opts.action}|${r.canonical}`);
+    const { created, record } = this.opts.store.claimBook(nKey, r.credential, runner, nowS);
     if (!created) return this.finish(s, "id_dup", { book: record.book });
     return this.finish(s, null, { book: record.book, credential: record.credential, runner_id: record.runner_id });
   }
 
-  private lookup(items: Item[]): string | undefined {
-    for (const it of items) {
-      try {
-        const canonical = Nullifier.fromHex(String(it.nullifier)).toCanonicalString();
-        const rec = this.opts.store.bookFor(nullifierKey(this.opts.secret, this.opts.action, canonical));
-        if (rec) return rec.book;
-      } catch {
-        // not a nullifier
-      }
+  private lookup(canonicals: string[]): string | undefined {
+    for (const c of canonicals) {
+      const rec = this.opts.store.bookFor(nullifierKey(this.opts.secret, this.opts.action, c));
+      if (rec) return rec.book;
     }
     return undefined;
   }

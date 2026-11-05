@@ -5,7 +5,8 @@
  *
  *   npm run smoke                      health, then one IDKit sign-up (scan with World App, or paste
  *                                      the link into simulator.worldcoin.org when WORLD_ENVIRONMENT=staging)
- *   npm run smoke -- --agentpass ANY-XXX   one Agent Pass approval for that book
+ *   npm run smoke -- --agentpass ANY-XXX   one listing approval for that book (World ID or Agent
+ *                                      Pass, whichever APPROVALS runs; /health names it)
  *   BRIDGE_URL=http://172.18.96.1:8787 npm run smoke   another address
  */
 const base = (process.env.BRIDGE_URL ?? "http://127.0.0.1:8787").replace(/\/+$/, "");
@@ -43,7 +44,8 @@ async function main(): Promise<void> {
 
   if (apIdx >= 0) {
     const book = args[apIdx + 1];
-    if (!h.json.agentpass) throw new Error("agentpass is not configured in .env");
+    if (!h.json.agentpass) throw new Error("listing approvals are not configured in .env (see APPROVALS)");
+    console.log(`approvals run on: ${h.json.approvals}`);
     const s = await j("POST", "/agentpass/start", { book, action: "smoke test approval" });
     if (s.status !== 200) throw new Error(`start failed: ${JSON.stringify(s.json)}`);
     console.log(`open on the phone: ${s.json.qr}`);

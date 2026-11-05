@@ -7,14 +7,16 @@ import { hashSignal } from "@worldcoin/idkit-core/hashing";
 import { AgentPass } from "../src/agentpass.js";
 import { IdkitSessions } from "../src/idkit.js";
 import type { DeviceGrantClient, PollResult } from "../src/oidc.js";
-import { buildServer, type Health } from "../src/server.js";
+import { IdkitApprovals } from "../src/idkit-approvals.js";
+import { buildServer, makeHealth, type Health } from "../src/server.js";
 import { Store } from "../src/store.js";
+import { ACTION, awaiting, confirmed, FakeWorld, proof, waiting } from "./fake-world.js";
 import { CLIENT_ID, idToken, ISS, makeKeys, ORB, SECRET, tempDir, type TestKeys } from "./helpers.js";
 
 let keys: TestKeys;
 let server: Server;
 let base = "";
-let health: Health = { world: "ok", idkit: true, agentpass: true };
+let health: Health = { world: "ok", idkit: true, agentpass: true, approvals: "agentpass" };
 let pollScript: PollResult[] = [];
 const logLines: string[] = [];
 let idkit: IdkitSessions;
@@ -79,7 +81,7 @@ before(async () => {
     keys: () => keys.getKey,
   };
   agentpass = new AgentPass({ idp, store, secret: SECRET, clientId: CLIENT_ID, msPerSecond: 2, log: (l) => logLines.push(l) });
-  server = buildServer({ health: () => health, idkit, agentpass, log: (l) => logLines.push(l) });
+  server = buildServer({ health: () => health, idkit, approvals: agentpass, log: (l) => logLines.push(l) });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
@@ -110,11 +112,21 @@ async function until(path: string, stage: string) {
 }
 
 describe("GET /health", () => {
-  it("answers exactly {world, idkit, agentpass}", async () => {
-    health = { world: "off", idkit: false, agentpass: false };
-    assert.deepEqual((await call("GET", "/health")).json, { world: "off", idkit: false, agentpass: false });
-    health = { world: "ok", idkit: true, agentpass: true };
-    assert.deepEqual((await call("GET", "/health")).json, { world: "ok", idkit: true, agentpass: true });
+  it("answers exactly {world, idkit, agentpass, approvals}", async () => {
+    health = { world: "off", idkit: false, agentpass: false, approvals: null };
+    assert.deepEqual((await call("GET", "/health")).json, { world: "off", idkit: false, agentpass: false, approvals: null });
+    health = { world: "ok", idkit: true, agentpass: true, approvals: "idkit" };
+    assert.deepEqual((await call("GET", "/health")).json, { world: "ok", idkit: true, agentpass: true, approvals: "idkit" });
+    health = { world: "ok", idkit: true, agentpass: true, approvals: "agentpass" };
+  });
+
+  it("makeHealth: agentpass = approvals available with either provider; approvals names it", () => {
+    const viaIdkit = { kind: "idkit" } as IdkitApprovals;
+    assert.deepEqual(makeHealth({}, viaIdkit, true), { world: "ok", idkit: true, agentpass: true, approvals: "idkit" });
+    assert.deepEqual(makeHealth(null, agentpass, true), { world: "ok", idkit: false, agentpass: true, approvals: "agentpass" });
+    assert.deepEqual(makeHealth({}, null, true), { world: "ok", idkit: true, agentpass: false, approvals: null });
+    assert.deepEqual(makeHealth(null, null, true), { world: "off", idkit: false, agentpass: false, approvals: null });
+    assert.deepEqual(makeHealth({}, viaIdkit, false), { world: "off", idkit: true, agentpass: true, approvals: "idkit" });
   });
 });
 
@@ -191,9 +203,56 @@ describe("Agent Pass routes", () => {
   });
 });
 
+describe("APPROVALS=idkit: the same /agentpass/* contract, run on IDKit", () => {
+  it("scan -> approve -> done with {jti} for the book's owner; cancel answers {ok: true}", async () => {
+    const store = new Store(tempDir(), SECRET);
+    const owner = new IdkitSessions({
+      deps: new FakeWorld((signal) => [confirmed(proof(signal, "0x0abc", {}, { identifier: "proof_of_human", issuer_schema_id: 1 }))]),
+      store, secret: SECRET, action: ACTION, environment: "staging", pollMs: 2,
+    });
+    const signup = await owner.start("anypercent");
+    let book = "";
+    for (let i = 0; i < 300 && !book; i++) {
+      const v = owner.view(signup.id)!;
+      if (v.stage === "done") book = String(v.data.book);
+      else await new Promise((r) => setTimeout(r, 3));
+    }
+    owner.stopAll();
+    const world = new FakeWorld((signal) => [waiting, waiting, awaiting, awaiting,
+      confirmed(proof(signal, "0x0abc", {}, { identifier: "proof_of_human", issuer_schema_id: 1 }))]);
+    const approvals = new IdkitApprovals({ deps: world, store, secret: SECRET, action: ACTION, environment: "staging", pollMs: 15, log: (l) => logLines.push(l) });
+    const srv = buildServer({ health: () => makeHealth(null, approvals, true), idkit: null, approvals });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    const url = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+    const get = async (path: string) => (await fetch(`${url}${path}`)).json() as Promise<Record<string, any>>;
+    assert.deepEqual(await get("/health"), { world: "ok", idkit: false, agentpass: true, approvals: "idkit" });
+
+    const s = (await (await fetch(`${url}/agentpass/start`, { method: "POST", body: JSON.stringify({ book, action: "list MDGP 1:42.83 ghost at 0.10 USDC" }) })).json()) as Record<string, any>;
+    assert.deepEqual(Object.keys(s).sort(), ["code", "expires_s", "id", "qr"]);
+    assert.equal(s.expires_s, 300);
+    const stages: string[] = [];
+    let v: Record<string, any> = {};
+    for (let i = 0; i < 500; i++) {
+      v = await get(`/agentpass/${s.id}`);
+      if (stages[stages.length - 1] !== v.stage) stages.push(v.stage);
+      if (v.stage === "done") break;
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    assert.deepEqual(stages, ["scan", "approve", "done"]);
+    assert.equal(v.ok, true);
+    assert.deepEqual(Object.keys(v.data), ["jti"]);
+
+    const c = await fetch(`${url}/agentpass/${s.id}/cancel`, { method: "POST" });
+    assert.deepEqual([c.status, await c.json()], [200, { ok: true }]);
+    assert.deepEqual(await get(`/agentpass/${s.id}`), { stage: "done", ok: false, failure: "ls_denied", data: {} });
+    approvals.stopAll();
+    srv.close();
+  });
+});
+
 describe("503 when a service is not configured", () => {
   it("answers the step's down failure", async () => {
-    const bare = buildServer({ health: () => health, idkit: null, agentpass: null });
+    const bare = buildServer({ health: () => health, idkit: null, approvals: null });
     await new Promise<void>((r) => bare.listen(0, "127.0.0.1", r));
     const url = `http://127.0.0.1:${(bare.address() as AddressInfo).port}`;
     const a = await fetch(`${url}/idkit/start`, { method: "POST", body: JSON.stringify({ console: "pi" }) });
@@ -201,7 +260,7 @@ describe("503 when a service is not configured", () => {
     assert.deepEqual(await a.json(), { error: "idkit_not_configured", failure: "id_offline" });
     const b = await fetch(`${url}/agentpass/start`, { method: "POST", body: JSON.stringify({ book: "ANY-ABC", action: "x" }) });
     assert.equal(b.status, 503);
-    assert.deepEqual(await b.json(), { error: "agentpass_not_configured", failure: "ls_world_down" });
+    assert.deepEqual(await b.json(), { error: "approvals_not_configured", failure: "ls_world_down" });
     bare.close();
   });
 });

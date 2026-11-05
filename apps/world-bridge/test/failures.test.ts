@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { IDKitErrorCodes } from "@worldcoin/idkit-core";
 import {
+  approvalAppFailure,
+  approvalPortalFailure,
+  approvalProofFailure,
   devicePollStep,
   ID_FAILURES,
   idkitAppFailure,
@@ -145,10 +148,82 @@ describe("ID-token refusals", () => {
   }
 });
 
+describe("listing approvals on IDKit: World App / bridge errors -> ls_* names", () => {
+  const expected: Record<string, string> = {
+    user_rejected: "ls_denied",
+    verification_rejected: "ls_denied",
+    cancelled: "ls_denied",
+    user_presence_failed: "ls_denied",
+    timeout: "ls_expired",
+    rp_signature_expired: "ls_expired",
+    credential_unavailable: "ls_wrong",
+    world_id_4_not_available: "ls_wrong",
+    world_id_3_not_available: "ls_wrong",
+    feature_unavailable: "ls_wrong",
+    identity_attributes_not_matched: "ls_wrong",
+    max_verifications_reached: "ls_world_down",
+    nullifier_replayed: "ls_world_down",
+    invalid_rp_signature: "ls_world_down",
+    duplicate_nonce: "ls_world_down",
+    unknown_rp: "ls_world_down",
+    inactive_rp: "ls_world_down",
+    invalid_rp_id_format: "ls_world_down",
+    timestamp_too_old: "ls_world_down",
+    timestamp_too_far_in_future: "ls_world_down",
+    invalid_timestamp: "ls_world_down",
+    malformed_request: "ls_world_down",
+    invalid_network: "ls_world_down",
+    inclusion_proof_pending: "ls_world_down",
+    inclusion_proof_failed: "ls_world_down",
+    connection_failed: "ls_world_down",
+    unexpected_response: "ls_world_down",
+    generic_error: "ls_world_down",
+    failed_by_host_app: "ls_world_down",
+  };
+
+  it("covers every code the pinned SDK can return, explicitly", () => {
+    const missing = (Object.values(IDKitErrorCodes) as string[]).filter((c) => !(c in expected));
+    assert.deepEqual(missing, [], "a new SDK error code needs a deliberate mapping");
+  });
+
+  for (const [code, failure] of Object.entries(expected)) {
+    it(`${code} -> ${failure}`, () => assert.equal(approvalAppFailure(code), failure));
+  }
+
+  it("unknown or missing codes: ls_world_down", () => {
+    assert.equal(approvalAppFailure("something_new"), "ls_world_down");
+    assert.equal(approvalAppFailure(undefined), "ls_world_down");
+  });
+
+  it("the portal: down, our setup or a capped action -> ls_world_down; a refused proof -> ls_mismatch", () => {
+    for (const s of [404, 429, 500, 503]) assert.equal(approvalPortalFailure(s, undefined), "ls_world_down");
+    assert.equal(approvalPortalFailure(400, { code: "app_not_migrated" }), "ls_world_down");
+    assert.equal(approvalPortalFailure(400, { code: "max_verifications_reached" }), "ls_world_down");
+    assert.equal(
+      approvalPortalFailure(400, { code: "all_verifications_failed", results: [{ code: "nullifier_replayed" }] }),
+      "ls_world_down",
+    );
+    assert.equal(
+      approvalPortalFailure(400, { code: "all_verifications_failed", results: [{ code: "verification_error" }] }),
+      "ls_mismatch",
+    );
+    assert.equal(approvalPortalFailure(400, undefined), "ls_mismatch");
+  });
+
+  it("our proof checks: mismatches -> ls_mismatch, no accepted credential -> ls_wrong", () => {
+    for (const c of ["environment", "action", "signal", "no_nullifier"] as const) assert.equal(approvalProofFailure(c), "ls_mismatch");
+    assert.equal(approvalProofFailure("credential"), "ls_wrong");
+  });
+});
+
 describe("only the handler's own names ever come out", () => {
   it("IDKit side", () => {
     for (const c of [...(Object.values(IDKitErrorCodes) as string[]), "zzz"]) assert.ok(ID.has(idkitAppFailure(c)));
     for (const s of [200, 400, 404, 500]) assert.ok(ID.has(portalFailure(s, { code: "zzz" })));
+  });
+  it("IDKit approval side", () => {
+    for (const c of [...(Object.values(IDKitErrorCodes) as string[]), "zzz"]) assert.ok(LS.has(approvalAppFailure(c)));
+    for (const s of [200, 400, 404, 500]) assert.ok(LS.has(approvalPortalFailure(s, { code: "zzz" })));
   });
   it("Agent Pass side", () => {
     for (const e of ["access_denied", "expired_token", "zzz", undefined]) {

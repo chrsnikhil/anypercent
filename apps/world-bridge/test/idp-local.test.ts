@@ -109,7 +109,7 @@ before(async () => {
     clientId: CLIENT,
     msPerSecond: 5, // World's 1 s interval = 5 ms here
   });
-  bridge = buildServer({ health: () => ({ world: "ok", idkit: false, agentpass: true }), idkit: null, agentpass });
+  bridge = buildServer({ health: () => ({ world: "ok", idkit: false, agentpass: true, approvals: "agentpass" }), idkit: null, approvals: agentpass });
   await new Promise<void>((r) => bridge.listen(0, "127.0.0.1", r));
   bridgeUrl = `http://127.0.0.1:${(bridge.address() as AddressInfo).port}`;
 });
@@ -212,7 +212,7 @@ describe("Agent Pass over HTTP against a local World IdP", () => {
       secret: SECRET,
       clientId: CLIENT,
     });
-    const srv = buildServer({ health: () => ({ world: "ok", idkit: false, agentpass: true }), idkit: null, agentpass: bad });
+    const srv = buildServer({ health: () => ({ world: "ok", idkit: false, agentpass: true, approvals: "agentpass" }), idkit: null, approvals: bad });
     await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
     const res = await fetch(`http://127.0.0.1:${(srv.address() as AddressInfo).port}/agentpass/start`, {
       method: "POST",

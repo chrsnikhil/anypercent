@@ -2,10 +2,13 @@
  * The HTTP contract the launcher adapter (launcher/arca_launcher/handler/world.py) depends on.
  * See the README for the contract. JSON in, JSON out.
  *
- *   GET  /health                 {"world": "ok"|"off", "idkit": bool, "agentpass": bool}
+ *   GET  /health                 {"world": "ok"|"off", "idkit": bool, "agentpass": bool,
+ *                                 "approvals": "idkit"|"agentpass"|null}
+ *                                ("agentpass": listing approvals are available, by either provider)
  *   POST /idkit/start            {"console"}       -> {"id", "qr", "code", "expires_s"}
  *   GET  /idkit/{id}             {"stage", "ok", "failure", "data"}
  *   POST /agentpass/start        {"book", "action"} -> {"id", "qr", "code", "expires_s"}
+ *                                (run by APPROVALS: Agent Pass device grant, or an IDKit proof)
  *   GET  /agentpass/{id}         {"stage", "ok", "failure", "data"}
  *   POST /agentpass/{id}/cancel  the console's Circle -> {"ok": true}; idempotent
  *   POST /idkit/{id}/cancel      the same for a sign-up (added for the launcher)
@@ -20,19 +23,31 @@
  * The access log has method, route shape, status and time only: never bodies, links or codes.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { AgentPass, BOOK_RE, StartFailure } from "./agentpass.js";
+import { BOOK_RE, StartFailure, type ApprovalProvider, type ApprovalsKind } from "./approvals.js";
 import { IdkitSessions, IdkitStartFailure } from "./idkit.js";
 
 export interface Health {
   world: "ok" | "off";
   idkit: boolean;
   agentpass: boolean;
+  approvals: ApprovalsKind | null;
+}
+
+/** /health from what is wired: `agentpass` means approvals are available, by either provider. */
+export function makeHealth(idkit: unknown | null, approvals: ApprovalProvider | null, reachable: boolean): Health {
+  return {
+    world: (idkit !== null || approvals !== null) && reachable ? "ok" : "off",
+    idkit: idkit !== null,
+    agentpass: approvals !== null,
+    approvals: approvals?.kind ?? null,
+  };
 }
 
 export interface ServerDeps {
   health(): Health;
   idkit: IdkitSessions | null;
-  agentpass: AgentPass | null;
+  /** The listing-approval provider behind /agentpass/*, or null when none is configured. */
+  approvals: ApprovalProvider | null;
   log?: (line: string) => void;
 }
 
@@ -116,21 +131,21 @@ async function route(deps: ServerDeps, req: IncomingMessage): Promise<[number, u
       if (typeof action !== "string" || action.trim() === "" || action.length > 160 || CONTROL_CHARS.test(action)) {
         throw new HttpError(400, { error: "bad_action", failure: "ls_world_down" });
       }
-      if (!deps.agentpass) throw new HttpError(503, { error: "agentpass_not_configured", failure: "ls_world_down" });
+      if (!deps.approvals) throw new HttpError(503, { error: "approvals_not_configured", failure: "ls_world_down" });
       try {
-        return [200, await deps.agentpass.start(book, action.trim())];
+        return [200, await deps.approvals.start(book, action.trim())];
       } catch (err) {
         if (err instanceof StartFailure) throw new HttpError(err.status, { error: "world_unavailable", failure: err.failure });
         throw err;
       }
     }
     if (parts.length === 2 && method === "GET") {
-      const view = deps.agentpass?.view(parts[1]);
+      const view = deps.approvals?.view(parts[1]);
       if (!view) throw new HttpError(404, { error: "unknown_id", failure: "ls_world_down" });
       return [200, view];
     }
     if (parts.length === 3 && parts[2] === "cancel" && method === "POST") {
-      if (!deps.agentpass?.cancel(parts[1])) throw new HttpError(404, { error: "unknown_id", failure: "ls_world_down" });
+      if (!deps.approvals?.cancel(parts[1])) throw new HttpError(404, { error: "unknown_id", failure: "ls_world_down" });
       return [200, { ok: true }];
     }
   }
