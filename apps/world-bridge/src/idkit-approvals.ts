@@ -186,7 +186,9 @@ export class IdkitApprovals implements ApprovalProvider {
         s.view = { ...s.view, stage: "approve" };
         return this.schedule(s, this.pollMs);
       case "failed":
-        return this.finish(s, approvalAppFailure(status.error));
+        // World App's own error code is no secret, and the only way to tell "the action is capped at one
+        // verification" (max_verifications_reached) from a real outage.
+        return this.finish(s, approvalAppFailure(status.error), {}, ` (World App: ${String(status.error)})`);
       case "confirmed":
         s.view = { ...s.view, stage: "approve" };
         s.verifying = true;

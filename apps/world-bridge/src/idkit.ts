@@ -238,7 +238,7 @@ export class IdkitSessions {
         s.view = { ...s.view, stage: "confirm" };
         return this.schedule(s, this.pollMs);
       case "failed":
-        return this.finish(s, idkitAppFailure(status.error));
+        return this.finish(s, idkitAppFailure(status.error), {}, ` (World App: ${String(status.error)})`);
       case "confirmed":
         s.view = { ...s.view, stage: "verify" };
         return this.verify(s, status.result);
