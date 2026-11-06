@@ -13,6 +13,7 @@
 #     bash .../launcher/dev/laptop.sh
 # Hedera for real on top of both (PB pays over x402 and the listing is recorded on HCS, through the same bridge): also
 # set ARCA_HEDERA=1. Without both of the above it stays mocked and the launcher's log says why.
+# Smoother races: set ARCA_WIN_MGBA to a Windows mGBA.exe (as /mnt/c/... ) to run games there instead of WSLg.
 #   wsl -d Ubuntu-24.04 -u root -- env ARCA_WORLD_BRIDGE=http://127.0.0.1:8787 ARCA_ARKIV_CHECKER=0x... ARCA_HEDERA=1 \
 #     bash .../launcher/dev/laptop.sh
 # With World real this window is one console: its id is $SANDBOX/console-id, beside laptop-state.json and the ledger
@@ -47,6 +48,10 @@ fi
 HEDERA=()
 if [ "${ARCA_HEDERA:-}" = "1" ]; then
   HEDERA=(--hedera)
+fi
+if [ -n "${ARCA_WIN_MGBA:-}" ]; then          # smoother races: the Windows mGBA (winmgba/mgba-qt says why)
+  export ARCA_WIN_MGBA
+  export PATH="$HERE/dev/winmgba:$PATH"
 fi
 cd "$HERE"
 exec "$PY" -m arca_launcher --library "$LIB" --testlogs "$SANDBOX/devicecheck" --state "$SANDBOX/laptop-state.json" --scale 2 \

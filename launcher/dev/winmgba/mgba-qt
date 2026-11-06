@@ -1,0 +1,21 @@
+#!/bin/bash
+# Laptop only: mgba-qt inside WSL is paced by WSLg's display, which hands frames over unevenly, so a race stutters.
+# laptop.sh puts this folder first on PATH when ARCA_WIN_MGBA names a Windows mGBA.exe: the same game then runs in
+# the Windows mGBA, synced to Windows' own audio, with the ROM's path handed over as a Windows path (its save still
+# lands beside the ROM, where the launcher reads it). The launcher's own sync options are dropped; the rest pass on.
+set -euo pipefail
+args=("$@")
+n=${#args[@]}
+rom="${args[n-1]}"
+out=(-C audioSync=1 -C videoSync=0)
+i=0
+while (( i < n - 1 )); do
+  if [[ "${args[i]}" == -C && ( "${args[i+1]}" == audioSync=* || "${args[i+1]}" == videoSync=* ) ]]; then
+    i=$((i + 2))
+    continue
+  fi
+  out+=("${args[i]}")
+  i=$((i + 1))
+done
+cd /mnt/c/Windows                       # a Windows working directory: no UNC-path warning from Windows
+exec "$ARCA_WIN_MGBA" "${out[@]}" "$(wslpath -w "$rom")"
