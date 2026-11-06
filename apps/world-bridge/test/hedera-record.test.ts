@@ -117,6 +117,44 @@ describe("record: failures", () => {
     assert.equal((await s.record()).failure, "ls_reused");
   });
 
+  it("ls_copied: this log is already on the board under another book; nothing goes to the topic", async () => {
+    const s = await setup();
+    const plain = actionText(TITLE, 6170, 10);
+    s.approve("jti-copy", s.h.buyer.book, plain);
+    const v = await s.record({ book: s.h.buyer.book, jti: "jti-copy", action: plain, pay_to: undefined, log_h: s.h.logH });
+    assert.equal(v.failure, "ls_copied");
+    assert.equal(s.h.hcs.messages.length, 0);
+    assert.equal(s.h.store.hcsListingFor("jti-copy"), undefined);
+    assert.equal(s.h.store.approvalFor("jti-copy")?.log_h, undefined, "not spent");
+    assert.ok(s.h.lines.some((l) => l.includes("ls_copied (this log is already on the board under another book)")), s.h.lines.join("\n"));
+  });
+
+  it("the copy check passes the book's own run and a log not on the board", async () => {
+    const s = await setup();
+    s.approve("jti-0001");
+    assert.equal((await s.record({ log_h: s.h.logH })).ok, true, "its own run: a relist");
+    s.approve("jti-new");
+    assert.equal((await s.record({ jti: "jti-new", log_h: "c".repeat(64) })).ok, true, "a new run");
+    assert.equal(s.h.hcs.of("LISTING").length, 2);
+  });
+
+  it("Arkiv unreadable at the copy check: ls_record_fail, nothing goes to the topic", async () => {
+    const s = await setup();
+    s.approve("jti-0001");
+    s.h.arkiv.readsDown = true;
+    const v = await s.record({ log_h: s.h.logH });
+    assert.equal(v.failure, "ls_record_fail");
+    assert.equal(s.h.hcs.messages.length, 0);
+    assert.ok(s.h.lines.some((l) => l.includes("copy check")), s.h.lines.join("\n"));
+  });
+
+  it("no log_h (an older console): no copy check, recorded as before", async () => {
+    const s = await setup();
+    s.approve("jti-0001");
+    s.h.arkiv.readsDown = true;
+    assert.equal((await s.record()).ok, true);
+  });
+
   it("ls_record_fail: HCS refused it", async () => {
     const s = await setup();
     s.approve("jti-0001");
@@ -145,6 +183,9 @@ describe("record: failures", () => {
     const s = await setup();
     assert.throws(() => s.h.recorder.start({ ...s.body(), pay_to: "0x1234" }), (e: unknown) => e instanceof RecordRefused && e.status === 400);
     assert.throws(() => s.h.recorder.start({ ...s.body(), frames: 0 }), RecordRefused);
+    for (const log_h of ["AB".repeat(32), "ab".repeat(31), "ab".repeat(33), 7]) {
+      assert.throws(() => s.h.recorder.start({ ...s.body(), log_h }), (e: unknown) => e instanceof RecordRefused && e.status === 400, String(log_h));
+    }
     const res = await fetch(`${s.h.base}/hedera/record`, { method: "POST", body: "{" });
     assert.deepEqual([res.status, await res.json()], [400, { error: "bad_body", failure: "ls_record_fail" }]);
     const big = await fetch(`${s.h.base}/hedera/record`, { method: "POST", body: JSON.stringify({ pad: "x".repeat(5000) }) });

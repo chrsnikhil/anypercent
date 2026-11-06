@@ -131,7 +131,7 @@ export async function hedera(opts: HarnessOptions = {}) {
     log,
   };
   const agent = new Agent(agentOpts);
-  const recorder = new Recorder({ store, hedera: hcs, topic: TOPIC, priceC: 10, gate: () => svc?.recordGate() ?? null, log, timeoutMs: 300 });
+  const recorder = new Recorder({ store, hedera: hcs, arkiv, topic: TOPIC, priceC: 10, gate: () => svc?.recordGate() ?? null, log, timeoutMs: 300 });
   svc = new HederaService({
     cfg,
     priceC: 10,

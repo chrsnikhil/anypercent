@@ -196,7 +196,7 @@ if (payProblems.length === 0) {
 const payOn = store !== null && arkivPort !== null && arkivPort.checker !== null && mirror !== null && hcs !== null && builder !== null;
 const recorder =
   store && hcs
-    ? new Recorder({ store, hedera: hcs, topic: hc.topicId, priceC: ak.priceC, gate: () => hedera.recordGate(), log })
+    ? new Recorder({ store, hedera: hcs, arkiv: publisher ? arkivPort : null, topic: hc.topicId, priceC: ak.priceC, gate: () => hedera.recordGate(), log })
     : null;
 const resource =
   payOn && store && arkivPort && mirror

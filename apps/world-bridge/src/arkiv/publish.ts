@@ -8,11 +8,13 @@
  *
  * Failures (service side; the launcher adds "service unreachable" itself):
  *   ls_expired       approval unknown to this bridge, or older than 24 h and unspent
- *   ls_wrong         approved for another book; book not issued here; this log is listed under
- *                    another book
+ *   ls_wrong         approved for another book, or the book was not issued here (this bridge's own
+ *                    checks of the approval against the book, not a refusal by World)
  *   ls_mismatch      approved text differs (its hash, the title, the time, the price), or the log's
  *                    header names another game, or the replayed time is not the one asked
  *   ls_reused        the approval already put another log on Arkiv
+ *   ls_copied        this exact log is already on the board under another book: a copied run (the
+ *                    dedupe below; /hedera/record runs the same check before its LISTING)
  *   ls_publish_fail  the replay refused or failed; Arkiv down, a revert, out of gas, a timeout
  *
  * A failed write keeps the approval bound to its log, so the console's retry with the same jti goes
@@ -35,7 +37,7 @@ import { CheckerError, LOG_MAX, LOG_MIN, parseHeader, verdict, type CheckerPort 
 import { encryptGhost, sha256Hex } from "./ghost.js";
 import { GAME_IDS, LISTING_DAYS, LISTING_FLAGS, RUN_FLAGS } from "./schema.js";
 
-export type PublishFailure = "ls_expired" | "ls_wrong" | "ls_mismatch" | "ls_reused" | "ls_publish_fail";
+export type PublishFailure = "ls_expired" | "ls_wrong" | "ls_mismatch" | "ls_reused" | "ls_copied" | "ls_publish_fail";
 
 export interface PublishView {
   stage: "check" | "write" | "done";
@@ -123,6 +125,17 @@ export function priceDec(cents: number): string {
   const frac = String(cents % 100).padStart(2, "0").replace(/0+$/, "");
   return frac === "" ? String(whole) : `${whole}.${frac}`;
 }
+
+/**
+ * The dedupe rule (Q7): a log is on the board once, under one book. True when the live run of this
+ * log belongs to another book, so this one is a copy. Publish and the HCS record both ask it.
+ */
+export function isCopy(existing: { book?: string } | null | undefined, book: string): boolean {
+  return !!existing && existing.book !== book;
+}
+
+/** The logged reason for ls_copied. */
+export const COPIED = "this log is already on the board under another book";
 
 /** What World App showed for the listing: the only text an approval allows. */
 export function actionText(title: string, frames: number, priceC: number, payTo?: string | null): string {
@@ -343,7 +356,7 @@ export class Publisher {
       } catch (err) {
         return this.fail(job, "ls_publish_fail", `Arkiv: ${err instanceof ArkivError ? err.message : "read failed"}`);
       }
-      if (existing && existing.book !== b.book) return this.fail(job, "ls_wrong", "this log is already on the board under another book");
+      if (isCopy(existing, b.book)) return this.fail(job, "ls_copied", COPIED);
 
       // 8. Spend: bind the approval to this log before anything goes out.
       const spent = store.spendApproval(b.jti, b.logH);

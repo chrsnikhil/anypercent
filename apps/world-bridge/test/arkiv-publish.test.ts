@@ -204,11 +204,11 @@ describe("publish: every failure row", () => {
     assert.equal((await publish(s, { book: "ANY-ZZZ" })).failure, "ls_wrong");
   });
 
-  it("ls_wrong: the same log already on the board under another book", async () => {
+  it("ls_copied: the same log already on the board under another book (a copied run, not a wrong World ID)", async () => {
     const s = setup();
     s.arkiv.addRun({ game: "MDGP", title: TITLE, season: 1, rules: 4, frames: 6170, log_h: sha256(s.log), runner: "fedcba9876543210", book: s.other.book, human: true, credential: "Orb", tool: "t", log_enc: new Uint8Array(40) });
     s.approve("3f9c0a1b2c3d4e5f");
-    assert.equal((await publish(s)).failure, "ls_wrong");
+    assert.equal((await publish(s)).failure, "ls_copied");
     assert.equal(s.arkiv.batches.length, 0);
     assert.equal(s.store.approvalFor("3f9c0a1b2c3d4e5f")?.log_h, undefined, "not spent");
   });
@@ -380,12 +380,12 @@ describe("publish: retries", () => {
     assert.equal(s.arkiv.listings[1].run, v1.data.run);
   });
 
-  it("a duplicate under another book: ls_wrong", async () => {
+  it("a duplicate under another book: ls_copied", async () => {
     const s = setup();
     s.approve("3f9c0a1b2c3d4e5f");
     await publish(s);
     s.approve("theirs", s.other.book);
-    assert.equal((await publish(s, { jti: "theirs", book: s.other.book })).failure, "ls_wrong");
+    assert.equal((await publish(s, { jti: "theirs", book: s.other.book })).failure, "ls_copied");
     assert.equal(s.arkiv.batches.length, 1);
   });
 

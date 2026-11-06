@@ -3,7 +3,7 @@
  * topic as a LISTING message, word for word, before the checker's replay (that comes at publish).
  * Jobs are keyed by id and by the approval's jti (sha256 of it; the jti is never stored or logged):
  *
- *   check   the approval, the book, the approved text, the payout account
+ *   check   the approval, the book, the approved text, the payout account, then the copy check
  *   submit  the LISTING is out; waiting for its receipt (10 s)
  *   done    {topic, seq, tx, hashscan}, or one of the handler's own failure names
  *
@@ -14,7 +14,15 @@
  *                   actionText(title, frames, price_c, pay_to), or pay_to is not the book's
  *                   registered account
  *   ls_reused       the approval was already spent (published) with no LISTING for it
- *   ls_record_fail  HCS refused it, timed out, or is not configured
+ *   ls_copied       the body's log_h is already on the board under another book: a copied run,
+ *                   which publish would refuse, so no LISTING goes out for it
+ *   ls_record_fail  HCS refused it, timed out, or is not configured; Arkiv could not be read for
+ *                   the copy check
+ *
+ * The copy check is publish's own dedupe (Q7), asked of Arkiv before anything reaches the topic, so
+ * the append-only topic never carries a LISTING for a listing publish refuses as a copy. It needs the
+ * run's log_h, which a console sends from this build on; a body without it (an older console) is
+ * recorded as before and publish still refuses the copy.
  *
  * The record does not spend the approval (publish does). A repeat with the same jti answers the same
  * id; a retry after a failure first asks for the earlier transaction's receipt and reuses it if it
@@ -22,14 +30,15 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { BOOK_RE } from "../approvals.js";
-import { actionText, fmtTime, priceText } from "../arkiv/publish.js";
+import { ArkivError, type ArkivPort } from "../arkiv/client.js";
+import { actionText, COPIED, fmtTime, isCopy, priceText } from "../arkiv/publish.js";
 import { GAME_IDS } from "../arkiv/schema.js";
 import { ACCOUNT_RE } from "../config.js";
 import type { Store } from "../store.js";
 import { listingMessage, seqNumber } from "./messages.js";
 import { hashscan, shortSdkError, type HcsReceipt, type HederaPort } from "./net.js";
 
-export type RecordFailure = "ls_expired" | "ls_wrong" | "ls_mismatch" | "ls_reused" | "ls_record_fail";
+export type RecordFailure = "ls_expired" | "ls_wrong" | "ls_mismatch" | "ls_reused" | "ls_copied" | "ls_record_fail";
 
 export interface RecordView {
   stage: "check" | "submit" | "done";
@@ -54,14 +63,17 @@ export interface RecordBody {
   frames: number;
   price_c: number;
   pay_to?: string;
+  /** sha256 of the run's log (64 lowercase hex), for the copy check. Optional: older consoles omit it. */
+  log_h?: string;
 }
 
 const CONTROL = /[\u0000-\u001f\u007f]/;
+const LOG_H_RE = /^[0-9a-f]{64}$/;
 
-/** The publish body without `log` (spec: HTTP contract). Anything off: 400 bad_body. */
+/** The publish body without `log`, plus its optional `log_h` (spec: HTTP contract). Anything off: 400 bad_body. */
 export function parseRecordBody(raw: Record<string, unknown>): RecordBody {
   const bad = () => new RecordRefused(400, "bad_body");
-  const { book, jti, action, game, title, frames, price_c, pay_to } = raw;
+  const { book, jti, action, game, title, frames, price_c, pay_to, log_h } = raw;
   if (typeof book !== "string" || !BOOK_RE.test(book)) throw bad();
   if (typeof jti !== "string" || !/^[\x21-\x7e]{1,256}$/.test(jti)) throw bad();
   if (typeof action !== "string" || action === "" || action.length > 160 || CONTROL.test(action)) throw bad();
@@ -70,7 +82,18 @@ export function parseRecordBody(raw: Record<string, unknown>): RecordBody {
   if (typeof frames !== "number" || !Number.isInteger(frames) || frames < 1 || frames > 0xffffffff) throw bad();
   if (typeof price_c !== "number" || !Number.isInteger(price_c) || price_c < 0 || price_c > 1_000_000) throw bad();
   if (pay_to !== undefined && pay_to !== null && (typeof pay_to !== "string" || !ACCOUNT_RE.test(pay_to))) throw bad();
-  return { book, jti, action, game, title, frames, price_c, ...(typeof pay_to === "string" ? { pay_to } : {}) };
+  if (log_h !== undefined && log_h !== null && (typeof log_h !== "string" || !LOG_H_RE.test(log_h))) throw bad();
+  return {
+    book,
+    jti,
+    action,
+    game,
+    title,
+    frames,
+    price_c,
+    ...(typeof pay_to === "string" ? { pay_to } : {}),
+    ...(typeof log_h === "string" ? { log_h } : {}),
+  };
 }
 
 export type RecordGate = () => null | "hedera_not_configured" | "hedera_unavailable";
@@ -79,6 +102,8 @@ export interface RecorderOptions {
   store: Store;
   /** Null when the record is not configured (then every start is 503). */
   hedera: HederaPort | null;
+  /** The copy check's Arkiv reads (Q7). Null or absent: Arkiv is off here, no copy check (publish is off too). */
+  arkiv?: Pick<ArkivPort, "runByLogHash"> | null;
   topic: string;
   /** ARKIV_GHOST_PRICE_C. */
   priceC: number;
@@ -87,6 +112,8 @@ export interface RecorderOptions {
   log?: (line: string) => void;
   /** Submit and receipt, together (10 s). */
   timeoutMs?: number;
+  /** The copy check's Arkiv read (3 s). */
+  checkMs?: number;
   approvalTtlMs?: number;
   holdMs?: number;
 }
@@ -116,12 +143,14 @@ export class Recorder {
   private readonly byKey = new Map<string, string>();
   private readonly now: () => number;
   private readonly timeoutMs: number;
+  private readonly checkMs: number;
   private readonly approvalTtlMs: number;
   private readonly holdMs: number;
 
   constructor(private readonly opts: RecorderOptions) {
     this.now = opts.now ?? Date.now;
     this.timeoutMs = opts.timeoutMs ?? 10_000;
+    this.checkMs = opts.checkMs ?? 3_000;
     this.approvalTtlMs = opts.approvalTtlMs ?? 24 * 3_600_000;
     this.holdMs = opts.holdMs ?? 3_600_000;
   }
@@ -204,6 +233,18 @@ export class Recorder {
       }
     }
     if (rec.log_h !== undefined) return this.fail(job, "ls_reused", "approval already spent with no LISTING for it");
+
+    // The copy check: publish's own dedupe, before anything reaches the append-only topic.
+    const { arkiv } = this.opts;
+    if (b.log_h !== undefined && arkiv) {
+      const existing = await within(arkiv.runByLogHash(b.log_h), this.checkMs).catch((err: unknown) => ({ err }));
+      if (existing === "timeout") return this.fail(job, "ls_record_fail", "Arkiv did not answer the copy check in time");
+      if (existing && "err" in existing) {
+        const why = existing.err instanceof ArkivError ? existing.err.message : "read failed";
+        return this.fail(job, "ls_record_fail", `Arkiv could not be read for the copy check: ${why}`);
+      }
+      if (isCopy(existing, b.book)) return this.fail(job, "ls_copied", COPIED);
+    }
 
     // Submit, then the receipt, within 10 s together.
     job.view = { stage: "submit", ok: null, failure: null, data: {} };
