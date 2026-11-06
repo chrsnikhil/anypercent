@@ -20,10 +20,11 @@
  *   ls_record_fail  HCS refused it, timed out, or is not configured; Arkiv could not be read for
  *                   the copy check
  *
- * The copy check is publish's own dedupe (Q7), asked of Arkiv before anything reaches the topic, so
- * the append-only topic never carries a LISTING for a listing publish refuses as a copy. It needs the
- * run's log_h, which a console sends from this build on; a body without it (an older console) is
- * recorded as before and publish still refuses the copy.
+ * The copy check is publish's own dedupe (Q7 on stamps: the checker's stamp of this log, whichever
+ * console owns the run), asked of Arkiv before anything reaches the topic, so the append-only topic
+ * never carries a LISTING for a listing publish refuses as a copy. It needs the run's log_h, which a
+ * console sends from this build on; a body without it (an older console) is recorded as before and
+ * publish still refuses the copy.
  *
  * The record does not spend the approval (publish does). A repeat with the same jti answers the same
  * id; a retry after a failure first asks for the earlier transaction's receipt and reuses it if it
@@ -103,8 +104,8 @@ export interface RecorderOptions {
   store: Store;
   /** Null when the record is not configured (then every start is 503). */
   hedera: HederaPort | null;
-  /** The copy check's Arkiv reads (Q7). Null or absent: Arkiv is off here, no copy check (publish is off too). */
-  arkiv?: Pick<ArkivPort, "runByLogHash"> | null;
+  /** The copy check's Arkiv read (Q7 on stamps). Null or absent: Arkiv is off here, no copy check (publish is off too). */
+  arkiv?: Pick<ArkivPort, "stampByLogHash"> | null;
   topic: string;
   /** ARKIV_GHOST_PRICE_C. */
   priceC: number;
@@ -239,7 +240,7 @@ export class Recorder {
     // The copy check: publish's own dedupe, before anything reaches the append-only topic.
     const { arkiv } = this.opts;
     if (b.log_h !== undefined && arkiv) {
-      const existing = await within(arkiv.runByLogHash(b.log_h), this.checkMs).catch((err: unknown) => ({ err }));
+      const existing = await within(arkiv.stampByLogHash(b.log_h), this.checkMs).catch((err: unknown) => ({ err }));
       if (existing === "timeout") return this.fail(job, "ls_record_fail", "Arkiv did not answer the copy check in time");
       if (existing && "err" in existing) {
         const why = existing.err instanceof ArkivError ? existing.err.message : "read failed";

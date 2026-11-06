@@ -187,3 +187,22 @@ describe("GET /console/{id}?wallet=0x...", () => {
     }
   });
 });
+
+describe("the owner can compare the full wallet with the console (console:link)", () => {
+  it("a link answers the full reported wallet beside its text; a release names none", async () => {
+    const s = setup();
+    const tag = s.consoles.view(PI, A).tag;
+    const link = await s.consoles.startOp({ op: "link", console: tag, book: s.book });
+    assert.equal(link.wallet, A.toLowerCase(), "the whole address, not the short form the text shows");
+    assert.ok(link.action.includes(shortWallet(A)));
+    await waitFor(() => s.consoles.boundTo(PI) !== null);
+    const release = await s.consoles.startOp({ op: "release", console: tag });
+    assert.equal(release.wallet, null);
+  });
+
+  it("console-op prints it in full beside the action, to check against the console's own screen", async () => {
+    const { walletLine } = await import("../scripts/approve-common.js");
+    assert.equal(walletLine(A.toLowerCase()), `console wallet     ${A.toLowerCase()}\n                   (the console shows 0x1a2b…9f3e on My record book: the text above names this wallet)`);
+    assert.match(walletLine(null), /^console wallet     none reported/);
+  });
+});

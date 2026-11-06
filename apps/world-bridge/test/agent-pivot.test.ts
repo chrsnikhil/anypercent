@@ -13,7 +13,7 @@ import { actionText } from "../src/arkiv/publish.js";
 import { Consoles } from "../src/consoles.js";
 import type { Agent, BuyView, HeldScout } from "../src/hedera/agent.js";
 import { HCS_MAX_BYTES, intentMessage } from "../src/hedera/messages.js";
-import { makeLog } from "./fake-arkiv.js";
+import { HOUSE_WALLET, makeLog } from "./fake-arkiv.js";
 import { HOUSE, SELLER_ACCT, USDC } from "./fake-hedera.js";
 import { GHOST, hedera, type Harness, type HarnessOptions } from "./hedera-harness.js";
 import { waitFor } from "./helpers.js";
@@ -42,11 +42,11 @@ function nothingSigned(h: Harness) {
   assert.equal(h.fac.calls.length, 0, "the facilitator saw no request");
 }
 
-/** A house BOT run and listing on the fake board, as a house batch writes them. */
+/** A house BOT run and listing on the fake board, as a house batch writes them: the house wallet's, stamped by the checker. */
 function addBot(h: Harness, label = "BOT-A2", over: { pay_to?: string; human?: boolean } = {}) {
   const log = makeLog("MDGP", 4, 6236, 64, 4242 + h.arkiv.runs.length);
   const logH = sha256Hex(log);
-  const run = h.arkiv.addRun(houseRun({ game: "MDGP", season: 1, rules: 4, frames: 6236, log_h: logH, label, runner: "b07b07b07b07b07b", tool: "arcade_replay sha256:a992006e6280", log_enc: encryptGhost(GHOST, logH, log), splits: [2248, 1994, 1994] }));
+  const run = h.arkiv.addRun(houseRun({ game: "MDGP", season: 1, rules: 4, frames: 6236, log_h: logH, label, runner: "b07b07b07b07b07b", tool: "arcade_replay sha256:a992006e6280", log_enc: encryptGhost(GHOST, logH, log), splits: [2248, 1994, 1994] }), HOUSE_WALLET);
   const listing = h.arkiv.addListing(run, { ...houseListing({ game: "MDGP", season: 1, frames: 6236, log_h: logH, priceC: 10, seller: "b07b07b07b07b07b", label, pay_to: over.pay_to ?? HOUSE }), ...(over.human ? { human: true } : {}) });
   const body = { seller: label, listing, run, log_h: logH, frames: 6236 };
   return { log, logH, run, listing, body };
@@ -68,14 +68,14 @@ describe("a BOT seller, paid to the house", () => {
     assert.equal(offer?.description, "Any% ghost: MARINE DRIVE GP 1:43.93 by BOT-A2 (generated)");
   });
 
-  it("a label listing that pays another account, or says HUMAN: buy_suspended not_house, nothing signed", async () => {
+  it("a label listing that pays another account: buy_suspended not_house; one that says HUMAN on a BOT run never counts (gone); nothing signed", async () => {
     const h = await setup();
     const other = addBot(h, "BOT-A3", { pay_to: SELLER_ACCT });
     const v = await buy(h, other.body);
     assert.deepEqual([v.failure, v.data], ["buy_suspended", { why: "not_house" }]);
     const human = addBot(h, "BOT-A4", { human: true });
     const w = await buy(h, human.body);
-    assert.deepEqual([w.failure, w.data], ["buy_suspended", { why: "not_house" }]);
+    assert.deepEqual([w.failure, w.data], ["buy_changed", { now_price: "gone" }], "its HUMAN disagrees with the run's stamp: the reader drops it");
     nothingSigned(h);
     assert.equal(h.hcs.of("INTENT").length, 0);
   });
@@ -85,7 +85,7 @@ describe("a BOT seller, paid to the house", () => {
     const bot = addBot(h);
     const v = await buy(h, { ...bot.body, seller: "BOT-A7" });
     assert.deepEqual([v.failure, v.data], ["buy_changed", { now_price: "gone" }]);
-    assert.throws(() => h.agent.start(h.body({ ...bot.body, seller: "TEAM" })), /bad_body/);
+    assert.throws(() => h.agent.start(h.body({ ...bot.body, seller: "HOUSE" })), /bad_body/);
     assert.throws(() => h.agent.start(h.body({ ...bot.body, seller: "BOT-A" })), /bad_body/);
     nothingSigned(h);
   });

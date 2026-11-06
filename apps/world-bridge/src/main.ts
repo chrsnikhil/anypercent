@@ -3,10 +3,11 @@
  * and serves the HTTP contract. Missing configuration never stops the service: /health reports the
  * missing parts as false and their start endpoints answer 503 with the step's down failure.
  *
- * Arkiv (src/arkiv/*): the checker's key lives only in this .env. A probe every 30 s checks
- * eth_chainId against ARKIV_CHAIN_ID and the checker's balance, so /health never waits on Arkiv.
- * Players' runs and listings are written by each console's own wallet; the checker only stamps
- * them (src/arkiv/publish.ts). No console key ever reaches this process.
+ * Arkiv (src/arkiv/*): the checker's key and the house wallet's key (HOUSE_ARKIV_KEY) live only in
+ * this .env. A probe every 30 s checks eth_chainId against ARKIV_CHAIN_ID and the checker's balance,
+ * so /health never waits on Arkiv. Players' runs and listings are written by each console's own
+ * wallet, the BOT ones by the house wallet; the checker only stamps them (src/arkiv/publish.ts,
+ * house.ts), and every reader ranks stamped runs only. No console key ever reaches this process.
  *
  * Hedera (src/hedera/*): the operator and agent keys live only in this .env. A probe every 30 s
  * reads the mirror (HEDERA_USDC once, the agent's USDC, the operator's HBAR) and the
@@ -155,13 +156,16 @@ void probe();
 const probeTimer = setInterval(() => void probe(), 30_000);
 probeTimer.unref();
 
-// ---- Arkiv: the board's writes (checker key, here only) and the listed-ghost key release ----
+// ---- Arkiv: the checker's stamps (checker key, here only), the house wallet's BOT rows (house key,
+// here only) and the listed-ghost key release ----
 const ak = cfg.arkiv;
 const arkivIssues = arkivProblems(cfg);
 const checkerKey = PRIVATE_KEY_RE.test(ak.checkerKey) ? ak.checkerKey : undefined;
+const houseIssues = houseProblems(cfg);
+const houseKey = !houseIssues.some((p) => p.startsWith("HOUSE_ARKIV_KEY")) ? cfg.house.arkivKey : undefined;
 let arkivPort: SdkArkiv | null = null;
 try {
-  arkivPort = new SdkArkiv({ rpcUrl: arkivRpcUrl(ak), accessKey: ak.accessKey, checkerKey });
+  arkivPort = new SdkArkiv({ rpcUrl: arkivRpcUrl(ak), accessKey: ak.accessKey, checkerKey, houseKey });
 } catch {
   log("arkiv off (ARKIV_RPC is not usable)");
 }
@@ -337,10 +341,10 @@ const scout: ScoutService | null =
       })
     : null;
 
-// ---- the house's BOT batches (written only after HOUSE_OWNER_BOOK's World approval) ----
-const houseIssues = houseProblems(cfg);
+// ---- the house's BOT batches (written by the house wallet only after HOUSE_OWNER_BOOK's World
+// approval, then stamped by the checker) ----
 const house: HouseService | null =
-  store && arkivPort && checkerKey && expiry && houseIssues.length === 0
+  store && arkivPort && arkivPort.house && checkerKey && expiry && houseIssues.length === 0
     ? new HouseService({
         store,
         arkiv: arkivPort,
@@ -369,7 +373,7 @@ const health = () => ({
   ...makeHealth(idkit, approvals, reachable),
   ...arkiv.health(),
   ...hedera.health(),
-  ...pivotHealth({ consoles, splits: splitsReady(cfg), scout, house, arkivWrites: arkiv.health().arkiv_writes }),
+  ...pivotHealth({ consoles, splits: splitsReady(cfg), scout, house, houseProblems: houseIssues, arkivWrites: arkiv.health().arkiv_writes }),
 });
 
 const server = buildServer({ health, idkit, approvals, arkiv, hedera, consoles, scout, house, log });
@@ -406,7 +410,7 @@ server.listen(cfg.port, cfg.host, () => {
   log(
     `pivot: consoles ${consoles ? "on" : "off"}, splits ${splitsReady(cfg) ? `${cfg.splits.games.join(",")} via ${cfg.splits.tool}` : "off"}, ` +
       `scout ${scout ? (groq ? `model ${cfg.groq.model}` : "rule (no GROQ_API_KEY)") : "off (needs Arkiv and Hedera payments)"}, ` +
-      `house ${house ? `${cfg.house.id} for ${cfg.house.ownerBook}` : `off until set: ${houseIssues.join(", ")}`}`,
+      `house ${house ? `${cfg.house.id} for ${cfg.house.ownerBook}, house wallet ${arkivPort?.house ? checksum(arkivPort.house) : "none"}` : `off until set: ${houseIssues.join(", ") || "Arkiv writes"}`}`,
   );
 });
 

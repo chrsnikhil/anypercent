@@ -218,8 +218,8 @@ describe("old rows and the readers", () => {
     assert.equal(page.entityUrl(run), `${page.EXPLORER}/entity/${run}`); // as the service's explorer_entity builds it
     for (const odd of [undefined, null, 7, "", "0x12", run + "00", run.toUpperCase(), `../${run}`]) assert.equal(page.entityUrl(odd), null, String(odd));
     const body = html.split("// ---- State")[1];
-    assert.ok(body.includes('"on Arkiv"') && body.includes('"listing"') && body.includes("arkivLinks(meta, r)"));
-    assert.ok(/hederaLinks\(meta, r\.listing\);\s*\n\s*arkivLinks\(meta, r\);/.test(body), "next to the Hedera links");
+    assert.ok(body.includes('"on Arkiv"') && body.includes('"listing"') && body.includes('"stamp"') && body.includes("arkivLinks(meta, r)"));
+    assert.ok(/hederaLinks\(meta, r\.listing\);\s*\n\s*if \(!r\.ignored\) arkivLinks\(meta, r\);/.test(body), "next to the Hedera links (a row nobody stamped gets none)");
   });
 });
 

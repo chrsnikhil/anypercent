@@ -348,8 +348,8 @@ describe("the console routes", () => {
 describe("/health's pivot fields", () => {
   it("console, splits, scout and house, from what is wired", async () => {
     const { pivotHealth } = await import("../src/server.js");
-    assert.deepEqual(pivotHealth({ consoles: null, splits: false, scout: null, house: null, arkivWrites: true }), { console: false, splits: false, scout: "off", house: false });
-    assert.deepEqual(pivotHealth({ consoles: {}, splits: true, scout: { mode: () => "model" }, house: {}, arkivWrites: true }), { console: true, splits: true, scout: "model", house: true });
+    assert.deepEqual(pivotHealth({ consoles: null, splits: false, scout: null, house: null, arkivWrites: true }), { console: false, splits: false, scout: "off", house: false, house_off: "not configured" });
+    assert.deepEqual(pivotHealth({ consoles: {}, splits: true, scout: { mode: () => "model" }, house: {}, arkivWrites: true }), { console: true, splits: true, scout: "model", house: true, house_off: null });
     assert.equal(pivotHealth({ consoles: {}, splits: true, scout: { mode: () => "rule" }, house: {}, arkivWrites: false }).house, false, "house needs Arkiv writes");
   });
 });

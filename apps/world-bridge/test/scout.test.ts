@@ -140,7 +140,7 @@ describe("eligibility (code, before any model)", () => {
     const e = await cands((a) => {
       addBot(a, "BOT-A1", [2087, 1995, 2088], undefined, { pay_to: "0.0.5123456" });
       addBot(a, "BOT-A2", [2248, 1994, 1994], undefined, { human: true });
-      addBot(a, "TEAM", [2087, 2088, 1994]);
+      addBot(a, "HOUSE-1", [2087, 2088, 1994]);
       addBot(a, "BOT-A4", [2168, 2078, 1994]);
     });
     assert.deepEqual(e.candidates.map((c) => c.name), ["BOT-A4"]);

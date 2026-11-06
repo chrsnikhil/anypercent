@@ -12,6 +12,7 @@
 import QRCode from "qrcode";
 import { loadEnv } from "./arkiv-common.js";
 import type { Config } from "../src/config.js";
+import { shortWallet } from "../src/consoles.js";
 
 export { arg, die, flag } from "./arkiv-common.js";
 export { loadEnv };
@@ -44,11 +45,12 @@ export async function call(base: string, method: "GET" | "POST", path: string, b
   return { status: res.status, json };
 }
 
-/** What the person sees before scanning: the exact text, the QR, the short code. */
-export async function showApproval(action: string, approval: { qr: string; code: string; expires_s: number }): Promise<void> {
+/** What the person sees before scanning: the exact text (with `beside` under it), the QR, the short code. */
+export async function showApproval(action: string, approval: { qr: string; code: string; expires_s: number }, beside?: string): Promise<void> {
   console.log("");
   console.log("World App will show, word for word:");
   console.log(`  ${action}`);
+  if (beside) console.log(beside);
   console.log("");
   if (approval.qr) console.log(await QRCode.toString(approval.qr, { type: "terminal", small: true }));
   console.log(`Scan it with World App (code ${approval.code}); it expires in ${approval.expires_s} s.`);
@@ -92,4 +94,13 @@ export async function follow(base: string, viewPath: string, cancelPath: string,
 
 export function row(label: string, value: string, link?: string | null): void {
   console.log(`${label.padEnd(18)} ${value}${link ? `\n${"".padEnd(19)}${link}` : ""}`);
+}
+
+/**
+ * The wallet a console link names, in full (the approval text shows only its short form), with
+ * what the console itself shows, so the owner can compare the two before scanning.
+ */
+export function walletLine(wallet: string | null): string {
+  if (!wallet) return `${"console wallet".padEnd(18)} none reported (linked for PB's spending only: its runs are never stamped)`;
+  return `${"console wallet".padEnd(18)} ${wallet}\n${"".padEnd(19)}(the console shows ${shortWallet(wallet)} on My record book: the text above names this wallet)`;
 }

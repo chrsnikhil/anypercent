@@ -44,7 +44,7 @@ if (!ACCOUNT_RE.test(evilPayTo)) die("--evil-pay-to must be 0.0.N");
 const checker = privateKeyToAccount(cfg.arkiv.checkerKey as Hex).address;
 const arkiv = new SdkArkiv({ rpcUrl: arkivRpcUrl(cfg.arkiv), accessKey: cfg.arkiv.accessKey, checkerAddress: checker });
 const listing = await arkiv.getListing(listingKey);
-if (!listing) die(`${listingKey} is not a live listing of the checker's.`);
+if (!listing) die(`${listingKey} is not a live listing of a stamped run (created by the run's own wallet).`);
 if (!listing.pay_to) die(`${listingKey} has no pay_to: it is not for sale (relist it after npm run hedera:payto).`);
 if (evilPayTo === listing.pay_to) die("--evil-pay-to must differ from the listing's pay_to.");
 

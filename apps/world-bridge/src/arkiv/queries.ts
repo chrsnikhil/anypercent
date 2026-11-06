@@ -1,13 +1,23 @@
 /**
- * Q1-Q9 (spec: Queries), as functions returning the exact strings every reader sends to
+ * Q1-Q10 (spec: Queries), as functions returning the exact strings every reader sends to
  * `arkiv_query`: the console (launcher handler/arkiv_rpc.py), the web board (public/board.html), the
  * service and the scripts. They render exactly as the SDK's own query builder would (a test checks
  * that), so a stranger can paste one into curl and get the board.
  *
- * - `C` is the checker's address, always written in its EIP-55 form, as `npm run arkiv:keygen`
- *   prints it and /arkiv/config returns it.
- * - Every reader pins `$creator = addr(C)`: rows anyone else writes never reach a board (Q8 is the
- *   one query without the pin, for the look-alike demo).
+ * Console-owned records: a run and its listing are created by the console's own wallet (the house's
+ * for BOT runs) and the checker stamps the run (anypercent.stamp). A board is read in two steps,
+ * joined by board.ts:
+ * - the stamps, pinned to the checker: `q1Stamps` (one game and season, fastest first),
+ *   `qStampForRun` (the stamp of one run), `qStampByLogHash` (the stamp of one log);
+ * - the runs and listings, pinned to the wallet a stamp names as its `console`: Q1, Q2, Q6, Q7 and
+ *   `qListingForRun` take that wallet as their creator pin.
+ * A run counts only when a checker stamp names it, its creator is the stamp's console and the
+ * copied columns agree; a listing only when its creator is that console and its `run` that run.
+ *
+ * - Every creator pin is written in its EIP-55 form (the checker as `npm run arkiv:keygen` prints
+ *   it and /arkiv/config returns it, a console wallet the same way).
+ * - Q8 is the one board query without a pin (the look-alike demo); `q6ListingByKey` reads one
+ *   listing whatever its creator, so the reader can compare that creator with the stamp's console.
  * - Every input is checked before it goes into a string, so nothing can widen a query.
  *
  * The smoke script runs the same queries against the anypercent.smoke.* twins.
@@ -15,9 +25,12 @@
 import { getAddress } from "viem";
 import { GAME_IDS, REAL, type SchemaNames } from "./schema.js";
 
-/** Q1 as a template, exactly as board.html and the launcher write it (a test checks both). */
+/** Q1 as a template, exactly as board.html writes it (a test checks it). `${creator}` is the creator pin: the console a stamp names. */
 export const Q1_TEMPLATE =
-  "arkiv.schema = str('anypercent.run') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${checker}) ORDER BY frames:u64 ASC";
+  "arkiv.schema = str('anypercent.run') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${creator}) ORDER BY frames:u64 ASC";
+/** Q1 on stamps as a template, exactly as board.html writes it (a test checks it). */
+export const Q1_STAMPS_TEMPLATE =
+  "arkiv.schema = str('anypercent.stamp') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${checker}) ORDER BY frames:u64 ASC";
 
 /** What a run board selects: never `log` or `log_enc` (only one ghost at a time selects those). Splits are optional. */
 export const RUN_BOARD_ATTRS = ["game", "title", "frames", "runner", "book", "label", "human", "credential", "log_h", "rules", "s1", "s2", "s3", "s4", "split_kind"] as const;
@@ -61,12 +74,17 @@ function entityKey(k: string): string {
   return k.toLowerCase();
 }
 
-/** Q1: the run board of one game and season, fastest first. */
+/** Q1 on stamps: the checker's stamps of one game and season, fastest first (the board before the join). */
+export function q1Stamps(g: string, s: number, checker: string, names: SchemaNames = REAL): string {
+  return `arkiv.schema = ${sv(names.stamp)} AND game = ${sv(game(g))} AND season = i32(${season(s)}) AND $creator = addr(${checksum(checker)}) ORDER BY frames:u64 ASC`;
+}
+
+/** Q1: the runs of one game and season created by `checker` (a stamp's console wallet), fastest first. */
 export function q1Board(g: string, s: number, checker: string, names: SchemaNames = REAL): string {
   return `arkiv.schema = ${sv(names.run)} AND game = ${sv(game(g))} AND season = i32(${season(s)}) AND $creator = addr(${checksum(checker)}) ORDER BY frames:u64 ASC`;
 }
 
-/** Q2: the live listings of one game and season, fastest first. */
+/** Q2: the live listings of one game and season created by `checker` (a stamp's console wallet), fastest first. */
 export function q2Listings(g: string, s: number, checker: string, names: SchemaNames = REAL): string {
   return `arkiv.schema = ${sv(names.listing)} AND game = ${sv(game(g))} AND season = i32(${season(s)}) AND $creator = addr(${checksum(checker)}) ORDER BY frames:u64 ASC`;
 }
@@ -78,10 +96,16 @@ export function q3JustAhead(g: string, s: number, frames: number | bigint, check
   return `arkiv.schema = ${sv(names.listing)} AND game = ${sv(game(g))} AND season = i32(${season(s)}) AND frames < u64(${f}) AND $creator = addr(${checksum(checker)}) ORDER BY frames:u64 DESC`;
 }
 
-/** Q4: one record book's runs (the profile): times, HUMAN and credential. */
+/** Q4: one record book's runs created by `checker` (a stamp's console wallet): times, HUMAN and credential. */
 export function q4BookRuns(book: string, checker: string, names: SchemaNames = REAL): string {
   need(BOOK_RE.test(book), "book");
   return `arkiv.schema = ${sv(names.run)} AND book = ${sv(book)} AND $creator = addr(${checksum(checker)}) ORDER BY frames:u64 ASC`;
+}
+
+/** Q4 on stamps: one record book's stamped runs (the profile, before the join). */
+export function q4BookStamps(book: string, checker: string, names: SchemaNames = REAL): string {
+  need(BOOK_RE.test(book), "book");
+  return `arkiv.schema = ${sv(names.stamp)} AND book = ${sv(book)} AND $creator = addr(${checksum(checker)}) ORDER BY frames:u64 ASC`;
 }
 
 /** Q4, by runner id instead of book. */
@@ -90,26 +114,32 @@ export function q4RunnerRuns(runner: string, checker: string, names: SchemaNames
   return `arkiv.schema = ${sv(names.run)} AND runner = ${sv(runner)} AND $creator = addr(${checksum(checker)}) ORDER BY frames:u64 ASC`;
 }
 
-/** Q5: one record book's listed ghosts, soonest to end first. */
+/** Q5: one record book's listed ghosts created by `checker` (a stamp's console wallet), soonest to end first. */
 export function q5BookListings(book: string, checker: string, names: SchemaNames = REAL): string {
   need(BOOK_RE.test(book), "book");
   return `arkiv.schema = ${sv(names.listing)} AND book = ${sv(book)} AND $creator = addr(${checksum(checker)}) ORDER BY $expiresAt:u64 ASC`;
 }
 
-/** Q6: one listing by key (check_listing). */
+/** Q6: one listing by key (check_listing), created by `checker`. */
 export function q6Listing(key: string, checker: string, names: SchemaNames = REAL): string {
   return `arkiv.schema = ${sv(names.listing)} AND $key = key(${entityKey(key)}) AND $creator = addr(${checksum(checker)})`;
 }
 
-/** Q6 on runs: one run by key (check_listing; a plain ghost selects `log`). */
+/** Q6 on listings without a creator pin: the reader then compares its creator with its run's stamp. */
+export function q6ListingByKey(key: string, names: SchemaNames = REAL): string {
+  return `arkiv.schema = ${sv(names.listing)} AND $key = key(${entityKey(key)})`;
+}
+
+/** Q6 on runs: one run by key, created by `checker` (a stamp's console wallet). */
 export function q6Run(key: string, checker: string, names: SchemaNames = REAL): string {
   return `arkiv.schema = ${sv(names.run)} AND $key = key(${entityKey(key)}) AND $creator = addr(${checksum(checker)})`;
 }
 
 /**
- * Q7: the live run with this log, if any (limit 1). Pinned to the checker it finds the old rows the
- * checker wrote itself; pinned to a console's wallet, a run that console wrote (publish looks for a
- * run whose transaction landed while the console was not told).
+ * Q7: the live run with this log created by `checker`, a console's (or the house's) wallet, if any
+ * (limit 1): publish looks for a run whose transaction landed while the console was not told, the
+ * house for its own rows on a retry. Whether a log is on the board is asked of the stamps
+ * (`qStampByLogHash`).
  */
 export function q7RunByLogHash(logH: string, checker: string, names: SchemaNames = REAL): string {
   need(LOG_H_RE.test(logH), "log_h");
@@ -136,17 +166,28 @@ export function q10LapLeaders(g: string, s: number, checker: string, lap = 2, na
 }
 
 /**
- * The service's own: the live listing of one run (dedupe: write a listing only when none is live).
- * `checker` is the creator pin: the checker for its old rows, a console's wallet for its own.
+ * Q10 on stamps: the lap leaders read from the copied splits alone (the web board; each stamp is
+ * then joined to its run like any other).
  */
+export function q10LapStamps(g: string, s: number, checker: string, lap = 2, names: SchemaNames = REAL): string {
+  need(Number.isInteger(lap) && lap >= 1 && lap <= 4, "lap");
+  return `arkiv.schema = ${sv(names.stamp)} AND game = ${sv(game(g))} AND season = i32(${season(s)}) AND $creator = addr(${checksum(checker)}) ORDER BY s${lap}:u64 ASC`;
+}
+
+/** The service's own: the live listing of one run created by `checker`, the run's console (or house) wallet. */
 export function qListingForRun(runKey: string, checker: string, names: SchemaNames = REAL): string {
   return `arkiv.schema = ${sv(names.listing)} AND run = key(${entityKey(runKey)}) AND $creator = addr(${checksum(checker)})`;
 }
 
-/** Q7 on stamps: the checker's live stamp of the run with this log, if any (publish's dedupe; limit 1). */
+/** Q7 on stamps: the checker's live stamp of the run with this log, if any (every dedupe; limit 1). */
 export function qStampByLogHash(logH: string, checker: string, names: SchemaNames = REAL): string {
   need(LOG_H_RE.test(logH), "log_h");
   return `arkiv.schema = ${sv(names.stamp)} AND log_h = ${sv(logH)} AND $creator = addr(${checksum(checker)})`;
+}
+
+/** The checker's live stamp of one run, if any (a ghost, an offer, a buyer's guard; limit 1). */
+export function qStampForRun(runKey: string, checker: string, names: SchemaNames = REAL): string {
+  return `arkiv.schema = ${sv(names.stamp)} AND run = key(${entityKey(runKey)}) AND $creator = addr(${checksum(checker)})`;
 }
 
 /** What a stamp read selects: every column (a stamp has no blob). */

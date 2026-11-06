@@ -80,6 +80,12 @@ export interface HouseConfig {
   /** HOUSE_MAX_BATCH (8) and HOUSE_TX_PAIRS (6). NaN when malformed. */
   maxBatch: number;
   txPairs: number;
+  /**
+   * HOUSE_ARKIV_KEY: the house wallet's private key (0x + 64 hex). It creates the BOT runs and
+   * listings, which the checker then stamps like any console's; never the checker's own key.
+   * Service only: never logged, never on a console.
+   */
+  arkivKey: string;
 }
 
 export interface ExplorerConfig {
@@ -154,7 +160,7 @@ export interface ArkivConfig {
   chainId: number;
   /** ARKIV_ACCESS_KEY: appended as the RPC URL's last path segment. Service only. */
   accessKey: string;
-  /** ARKIV_CHECKER_KEY: 0x + 64 hex. Creates every row. */
+  /** ARKIV_CHECKER_KEY: 0x + 64 hex. Creates every stamp (never a run or listing); funds consoles (arkiv:fund). */
   checkerKey: string;
   /** ARKIV_STRANGER_KEY: the look-alike and extension demos only. */
   strangerKey: string;
@@ -243,6 +249,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, baseDir = proce
       ownerBook: str(env, "HOUSE_OWNER_BOOK"),
       maxBatch: intOrNaN(str(env, "HOUSE_MAX_BATCH", "8")),
       txPairs: intOrNaN(str(env, "HOUSE_TX_PAIRS", "6")),
+      arkivKey: str(env, "HOUSE_ARKIV_KEY"),
     },
     explorer: {
       tx: str(env, "ARKIV_EXPLORER_TX", ARKIV_EXPLORER_TX),
@@ -485,12 +492,15 @@ export function scoutMode(c: Config, keyRefused = false): "model" | "rule" {
 
 /**
  * What keeps house batches off, by .env name: the house account, the owner's book, the batch caps,
- * the splits tool (every BOT row needs lap splits), and everything an Arkiv write needs.
+ * the house wallet's key (HOUSE_ARKIV_KEY, which must not be the checker's), the splits tool (every
+ * BOT row needs lap splits), and everything an Arkiv write needs.
  */
 export function houseProblems(c: Config, nowMs = Date.now()): string[] {
   const h = c.house;
   const out: string[] = [];
   if (!ACCOUNT_RE.test(h.id)) out.push("HEDERA_HOUSE_ID");
+  if (!PRIVATE_KEY_RE.test(h.arkivKey)) out.push("HOUSE_ARKIV_KEY");
+  else if (h.arkivKey.toLowerCase() === c.arkiv.checkerKey.toLowerCase()) out.push("HOUSE_ARKIV_KEY (not the checker's key)");
   if (!/^ANY-[A-Z0-9]{3,8}$/.test(h.ownerBook)) out.push("HOUSE_OWNER_BOOK");
   if (!Number.isInteger(h.maxBatch) || h.maxBatch < 1 || h.maxBatch > 8) out.push("HOUSE_MAX_BATCH");
   if (!Number.isInteger(h.txPairs) || h.txPairs < 1 || h.txPairs > 8) out.push("HOUSE_TX_PAIRS");

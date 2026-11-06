@@ -100,7 +100,20 @@ export interface HouseBatchRecord {
   /** The HOUSE message, once a node accepted it (seq once its receipt came). */
   hcs?: { topic: string; tx: string; seq?: string };
   /** What the write answered: every run, listing and transaction so far. */
-  result?: { runs: string[]; listings: string[]; txs: string[] };
+  result?: HouseResult;
+}
+
+/**
+ * A house batch's write: the house wallet's runs, listings and transactions, then the checker's
+ * stamps and their transactions. A result from before console-owned records (the checker wrote the
+ * rows itself) has no `stamps`.
+ */
+export interface HouseResult {
+  runs: string[];
+  listings: string[];
+  txs: string[];
+  stamps?: string[];
+  stamp_txs?: string[];
 }
 
 export type SpendResult = "spent" | "same" | "other" | "unknown";

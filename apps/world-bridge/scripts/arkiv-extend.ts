@@ -2,11 +2,13 @@
  * npm run arkiv:extend -- <run key>
  *
  * The extension demo (spec: Scripts). The STRANGER wallet, which owns nothing:
- *   1. extends a checker run by one day: it succeeds (runs are created with permissionlessExtension);
+ *   1. extends a stamped run (a console's own, or the house's) by one day: it succeeds (runs are
+ *      created with permissionlessExtension);
  *   2. tries to patch that run: refused (readonly, and not the owner);
  *   3. tries to extend the run's listing: refused (listings are not permissionless; a listing never
  *      outlives its week).
- * It prints the run's old and new $expiresAt (blocks, and about when).
+ * It prints the run's old and new $expiresAt (blocks, and about when). The run's stamp can be kept
+ * alive the same way (stamps are permissionless too).
  */
 import { ExpirationTime, MAX_LIFETIME } from "@arkiv-network/sdk";
 import { str } from "@arkiv-network/sdk/schema";
@@ -28,11 +30,11 @@ async function main(): Promise<void> {
   const checker = new SdkArkiv({ rpcUrl: arkivRpcUrl(ak), accessKey: ak.accessKey, checkerKey: ak.checkerKey });
   const stranger = clientsFor(cfg, ak.strangerKey);
   const run = await checker.getRun(runKey, false);
-  if (!run || run.expiresAt === null) die("no live run with that key written by the checker");
+  if (!run || run.expiresAt === null) die("no live run with that key that a checker stamp names");
   const timing = await stranger.pub.getBlockTiming();
   const when = (block: bigint) =>
     new Date((timing.currentBlockTime + Number(block - timing.currentBlock) * timing.blockDuration) * 1000).toUTCString();
-  console.log(`run ${run.key}: ${run.book ?? run.label}, $expiresAt ${run.expiresAt} (about ${when(run.expiresAt)})`);
+  console.log(`run ${run.key} (owned by ${run.owner}, stamp ${run.stamp}): ${run.book ?? run.label}, $expiresAt ${run.expiresAt} (about ${when(run.expiresAt)})`);
 
   // 1. Extend by a day (an extension sets an absolute expiry; it must be later than the current one).
   const cap = timing.currentBlock + MAX_LIFETIME;
@@ -54,7 +56,7 @@ async function main(): Promise<void> {
   }
 
   // 3. Extend the listing: refused.
-  const listing = await checker.liveListingFor(runKey);
+  const listing = await checker.liveListingFor(runKey, run.owner);
   if (!listing) {
     console.log("3. this run has no live listing to try");
     return;

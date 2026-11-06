@@ -12,8 +12,9 @@
  *   refused       402 with a fresh PAYMENT-REQUIRED whose `error` is the facilitator's reason, no log;
  *                 the body says at which stage: "check" or "verify" (nothing was submitted) or
  *                 "settle" (the transaction may have been submitted)
- *   not for sale  404 {"error":"not_for_sale"}: the listing or its run is not live, not the
- *                 checker's, has no pay_to, or the run has no log_enc
+ *   not for sale  404 {"error":"not_for_sale"}: the listing or its run is not live, the run has no
+ *                 checker stamp, the listing is not its console's, has no pay_to, or the run has no
+ *                 log_enc
  *   off           503 {"error":"hedera_not_configured" | "hedera_unavailable"}
  *
  * A settle that failed or did not answer leaves the payment pending: the transaction is watched on
@@ -77,8 +78,8 @@ export function decCents(dec: string): number {
 export const sha256Hex = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
 /**
- * Offers read from Arkiv (Q6 on the listing and on its run, both pinned to the checker), opened with
- * the ghost secret.
+ * Offers read from Arkiv (getListing and getRun: the listing counts only when its run is stamped by
+ * the checker and the listing comes from that run's own console wallet), opened with the ghost secret.
  */
 export class ArkivOffers implements OfferSource {
   constructor(private readonly arkiv: Pick<ArkivPort, "getListing" | "getRun">, private readonly ghostSecret: string) {}

@@ -15,9 +15,11 @@
  *
  * The link names the Arkiv wallet the console reported (its runs are stamped only from that wallet;
  * a console that reported none is linked with the text above minus the wallet). A bound console
- * that reports a new wallet takes one more link to its own book.
+ * that reports a new wallet takes one more link to its own book. The text shows the wallet in short
+ * form, so the full address is printed beside it: compare it with the console (My record book shows
+ * the short form; the console logs the full address once) before scanning.
  */
-import { arg, bridgeBase, call, die, follow, loadEnv, row, showApproval } from "./approve-common.js";
+import { arg, bridgeBase, call, die, follow, loadEnv, row, showApproval, walletLine } from "./approve-common.js";
 
 const op = process.argv[2];
 const cfg = loadEnv();
@@ -41,7 +43,8 @@ if (started.status !== 200) {
   };
   die(`${op} refused: ${why[started.json.error] ?? `${started.status} ${started.json.error ?? "no answer"}`}`);
 }
-await showApproval(String(started.json.action), started.json.approval);
+const fullWallet = op === "link" ? walletLine(typeof started.json.wallet === "string" ? started.json.wallet : null) : undefined;
+await showApproval(String(started.json.action), started.json.approval, fullWallet);
 const done = await follow(base, `/console/op/${started.json.id}`, `/console/op/${started.json.id}/cancel`, {
   scan: "waiting for the scan",
   approve: "waiting for the approval in World App",

@@ -4,14 +4,16 @@
  * The live smoke on Rabdi (spec: Tests, Part A live smoke), under the anypercent.smoke.* schemas
  * with a one-hour expiry. In order:
  *   1. chain id and both balances (stops here, naming what to fund, if either wallet is empty);
- *   2. one run+listing batch with predicted keys (and a second, plain open-tier run);
+ *   2. one run+listing batch with predicted keys (and a second run, no listing, no splits);
  *   3. Q1-Q7 equivalents: ORDER BY, $creator, bool, key, dec, the $expiresAt:u64 sort, select.count;
  *      Q10 (ORDER BY s2:u64 on an optional indexed split: where a row without splits sorts);
  *   4. a checker patch is refused (readonly), and so is the stranger's;
  *   5. the stranger can extend the run but not the listing;
  *   6. the stranger's look-alike row is absent from the pinned query and present without the pin;
  *   7. the checker deletes the smoke rows (and the stranger its look-alike).
- * It prints gas, tGLM spent and per-query latency for friction.md. --raw also prints one raw Q1
+ * This smoke exercises the query language and the flags on the smoke twins with the checker as the
+ * writer; the console-owned flow (a console wallet writes, the checker stamps) is checked live with
+ * the consoles themselves. It prints gas, tGLM spent and per-query latency for friction.md. --raw also prints one raw Q1
  * page and one raw Q2 page (the launcher's decoder fixtures). Never prints a key: addresses, entity keys and tx hashes.
  */
 import { createHash, randomBytes } from "node:crypto";
@@ -99,7 +101,7 @@ async function main(): Promise<void> {
   const created: { run?: string; run2?: string; listing?: string; lookalike?: string } = {};
 
   try {
-    // 2. One run+listing batch with predicted keys, then a plain open-tier run.
+    // 2. One run+listing batch with predicted keys, then a second run (no listing, no splits).
     console.log("2. writes");
     const run1: RunValues = {
       game: "MDGP", title: "SMOKE MDGP", season: 1, rules: 4, frames: 6170, log_h: logHA, runner: "5a5a5a5a5a5a5a5a",
@@ -115,12 +117,12 @@ async function main(): Promise<void> {
     await fee("run+listing batch", w.tx);
     const run2: RunValues = {
       game: "MDGP", title: "SMOKE MDGP", season: 1, rules: 4, frames: 7000, log_h: logHB, runner: "6b6b6b6b6b6b6b6b",
-      label: "SMOKE", human: false, tool: "arcade_replay sha256:000000000000", log: logB,
+      label: "SMOKE", human: false, tool: "arcade_replay sha256:000000000000", log_enc: encryptGhost(secret, logHB, logB),
     };
     const [w2, msW2] = await timed(() => port.writeRun({ values: run2, flags: RUN_FLAGS, expiry: hour }));
     created.run2 = w2.run;
     latency.push(["write run (to receipt)", msW2]);
-    await fee("open-tier run", w2.tx);
+    await fee("second run", w2.tx);
 
     // 3. The queries.
     console.log("3. queries");

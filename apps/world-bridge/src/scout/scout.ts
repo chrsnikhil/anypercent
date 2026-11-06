@@ -6,7 +6,8 @@
  *   GET  /scout/{id} -> {stage: "replay" | "read" | "think" | "done", ok, failure, data}
  *
  *   replay  YOU's log through the checker and arcade_splits (no lap times: the rule runs, and says so)
- *   read    Q1 and Q2 on Arkiv, pinned to the checker; the candidates (eligible.ts)
+ *   read    the board on Arkiv: the checker's stamps joined to each console's runs and listings
+ *           (boardRuns, boardListings); the candidates (eligible.ts)
  *   think   Groq chooses one candidate by id (groq.ts), unless there is nothing for it to compare
  *   done    the pick, the laps, the reason and who chose: the model, or the board's rule
  *

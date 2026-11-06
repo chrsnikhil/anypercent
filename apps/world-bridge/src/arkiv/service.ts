@@ -180,10 +180,10 @@ export class ArkivService {
   }
 
   /**
-   * A ghost by run key. The run must be live and created by the checker (Q6). A `log_enc` row needs
-   * a receipt that pays for this run, is decrypted here and must hash to the row's log_h; a plain
-   * row (the open tier: its log is public on Arkiv anyway) is served as is, also only when it
-   * hashes to its log_h.
+   * A ghost by run key. The run must count (board.ts): live, named by a checker stamp, created by
+   * the console the stamp names. It carries `log_enc`: a receipt that pays for this run is needed,
+   * the ghost is decrypted here and must hash to the run's log_h. A run with no sealed ghost is not
+   * served.
    */
   async ghost(body: Record<string, unknown>): Promise<{ log: string; log_h: string }> {
     const { run, receipt } = body;
@@ -201,19 +201,18 @@ export class ArkivService {
     }
     if (!row) throw new RouteError(404, { error: "not_on_board", failure: GHOST_FAILURE });
 
-    let plain: Uint8Array | null;
-    if (row.log_enc) {
-      if (!GHOST_SECRET_RE.test(this.opts.ghostSecret)) throw new RouteError(503, { error: "arkiv_not_configured", failure: GHOST_FAILURE });
-      if (!(await this.opts.payments.accept(receipt, row.key))) throw new RouteError(402, { error: "payment_required", failure: GHOST_FAILURE });
-      plain = decryptGhost(this.opts.ghostSecret, row.log_h, row.log_enc);
-    } else {
-      plain = row.log ?? null;
+    if (!row.log_enc) {
+      this.opts.log?.(`arkiv ghost ${row.key}: has no sealed ghost, not served`);
+      throw new RouteError(404, { error: "not_on_board", failure: GHOST_FAILURE });
     }
+    if (!GHOST_SECRET_RE.test(this.opts.ghostSecret)) throw new RouteError(503, { error: "arkiv_not_configured", failure: GHOST_FAILURE });
+    if (!(await this.opts.payments.accept(receipt, row.key))) throw new RouteError(402, { error: "payment_required", failure: GHOST_FAILURE });
+    const plain = decryptGhost(this.opts.ghostSecret, row.log_h, row.log_enc);
     if (!plain || sha256Hex(plain) !== row.log_h) {
       this.opts.log?.(`arkiv ghost ${row.key}: does not match its log_h, not served`);
       throw new RouteError(404, { error: "not_on_board", failure: GHOST_FAILURE });
     }
-    this.opts.log?.(`arkiv ghost ${row.key}: served (${row.log_enc ? "decrypted, receipt accepted" : "plain"})`);
+    this.opts.log?.(`arkiv ghost ${row.key}: served (decrypted, receipt accepted)`);
     return { log: Buffer.from(plain).toString("base64"), log_h: row.log_h };
   }
 

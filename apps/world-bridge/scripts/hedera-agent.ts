@@ -8,8 +8,9 @@
  * its reason. A terminal purchase names no console.
  *
  * PB with no console: the "agent pays with no human" demo. It
- *   1. reads the listed ghost just ahead of --frames straight from Arkiv (Q3, pinned to the checker;
- *      without --frames, the slowest listed ghost) and says why in one line;
+ *   1. reads the listed ghost just ahead of --frames straight from Arkiv (the board: the checker's
+ *      stamps joined to each console's runs and listings; without --frames, the slowest listed
+ *      ghost) and says why in one line;
  *   2. runs the same buy() as POST /hedera/buy, on the running bridge (the same store, caps and
  *      guards), and follows its stages;
  *   3. fetches the ghost through /arkiv/ghost with the payment's transaction id and checks its hash
@@ -24,11 +25,9 @@ import { readFileSync } from "node:fs";
 import type { Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { BOOK_RE } from "../src/approvals.js";
-import { listingFromRow, SdkArkiv, sellerName } from "../src/arkiv/client.js";
+import { SdkArkiv, sellerName } from "../src/arkiv/client.js";
 import { fmtTime } from "../src/arkiv/publish.js";
-import { LISTING_ATTRS, q3JustAhead, selectOf } from "../src/arkiv/queries.js";
-import { decodePage } from "../src/arkiv/rows.js";
-import { GAME_IDS, LISTING_TYPES, REAL } from "../src/arkiv/schema.js";
+import { GAME_IDS } from "../src/arkiv/schema.js";
 import { arkivRpcUrl, PRIVATE_KEY_RE } from "../src/config.js";
 import { parseMessage } from "../src/hedera/messages.js";
 import { decCents } from "../src/hedera/resource.js";
@@ -43,7 +42,7 @@ const logPath = arg("log");
 if (!BOOK_RE.test(book) || !GAME_IDS.includes(game) || (youFrames !== null && !(Number.isInteger(youFrames) && youFrames > 0)) || (scoutMode && !logPath)) {
   die("Usage: npm run hedera:agent -- --book ANY-XXX --game MDGP [--frames 6290] | --log <path to .acl> --scout");
 }
-if (!PRIVATE_KEY_RE.test(cfg.arkiv.checkerKey)) die("ARKIV_CHECKER_KEY is not set: the checker's address pins every read.");
+if (!PRIVATE_KEY_RE.test(cfg.arkiv.checkerKey)) die("ARKIV_CHECKER_KEY is not set: the checker's address pins every stamp read.");
 const checker = privateKeyToAccount(cfg.arkiv.checkerKey as Hex).address;
 const base = cfg.hedera.resourceBase;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -90,12 +89,11 @@ if (scoutMode) {
   scoutId = sj.id;
   console.log(`PB: buying ${d.pick.name}'s ghost for ${d.pick.price_c / 100} USDC to ${d.pick.pay_to}, no human in the loop. PB's guards still decide.`);
 } else {
-  // 1. The listed ghost just ahead, from Arkiv.
-  const asked = [...LISTING_ATTRS];
-  const res = await arkiv.query(q3JustAhead(game, cfg.arkiv.season, youFrames ?? 0xffffffff, checker, REAL), selectOf(asked), 1);
-  const page = decodePage(res.data, LISTING_TYPES, asked, REAL.listing, checker);
-  const l = page.rows[0] ? listingFromRow(page.rows[0]) : null;
-  if (!l) die(`No listed ${game} ghost ${youFrames ? `ahead of ${fmtTime(youFrames)}` : "on the board"} (Q3 at block ${res.blockNumber}).`);
+  // 1. The listed ghost just ahead, from Arkiv: the largest listed time below YOU's on the stamped board.
+  const pages = await arkiv.boardPages(game, cfg.arkiv.season);
+  const below = youFrames ?? 0xffffffff;
+  const l = arkiv.joinPages(pages).listings.filter((x) => Number(x.frames) < below).sort((a, b) => Number(b.frames) - Number(a.frames))[0] ?? null;
+  if (!l) die(`No listed ${game} ghost ${youFrames ? `ahead of ${fmtTime(youFrames)}` : "on the board"} (stamped board at block ${pages.block}).`);
   const seller = sellerName(l);
   if (l.book === book) die(`The ghost just ahead is ${book}'s own: PB never buys your own book.`);
   console.log(

@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { after, describe, it } from "node:test";
 import { actionText } from "../src/arkiv/publish.js";
 import { RecordRefused, type RecordView } from "../src/hedera/record.js";
+import { CHECKER, STRANGER } from "./fake-arkiv.js";
 import { SELLER_ACCT, TOPIC } from "./fake-hedera.js";
 import { hedera, type Harness } from "./hedera-harness.js";
 import { waitFor } from "./helpers.js";
@@ -133,6 +134,23 @@ describe("record: failures", () => {
     assert.equal(s.h.store.hcsListingFor("jti-copy"), undefined);
     assert.equal(s.h.store.approvalFor("jti-copy")?.log_h, undefined, "not spent");
     assert.ok(s.h.lines.some((l) => l.includes("ls_copied (this log is already on the board under another book)")), s.h.lines.join("\n"));
+  });
+
+  it("ls_copied reads the stamps: a copied log of a console-owned run is refused before its LISTING; a run no stamp names is no copy", async () => {
+    const s = await setup();
+    const plain = actionText(TITLE, 6170, 10);
+    // The harness's run is the seller console's own (WALLET_A), stamped by the checker: on the board.
+    assert.notEqual(s.h.arkiv.runs[0].creator, CHECKER);
+    assert.ok(s.h.arkiv.stamps.some((st) => st.spec.values.run === s.h.run));
+    s.approve("jti-copy", s.h.buyer.book, plain);
+    assert.equal((await s.record({ book: s.h.buyer.book, jti: "jti-copy", action: plain, pay_to: undefined, log_h: s.h.logH })).failure, "ls_copied");
+    assert.equal(s.h.hcs.of("LISTING").length, 0, "no LISTING for a copy");
+    // A run of another log under another book that no checker stamp names (a stranger's, an old checker row): not on the board.
+    const loose = "c".repeat(64);
+    s.h.arkiv.addRun({ ...s.h.arkiv.runs[0].spec.values, log_h: loose }, STRANGER, { stamp: false });
+    s.h.arkiv.addRun({ ...s.h.arkiv.runs[0].spec.values, log_h: loose }, CHECKER, { stamp: false });
+    s.approve("jti-loose", s.h.buyer.book, plain);
+    assert.equal((await s.record({ book: s.h.buyer.book, jti: "jti-loose", action: plain, pay_to: undefined, log_h: loose })).ok, true);
   });
 
   it("the copy check passes the book's own run and a log not on the board", async () => {

@@ -189,7 +189,8 @@ describe("publish: issue, the console signs, the checker stamps", () => {
       tool: "arcade_replay sha256:a992006e6280",
     });
     assert.deepEqual(st.spec.flags, STAMP_FLAGS);
-    assert.deepEqual(st.spec.expiry, { kind: "atBlock", block: s.arkiv.expiresAtBlock }, "the stamp expires with its run");
+    // Season end + 30 d (T0 + 60 d here) is 2,592,000 two-second blocks after the fake chain's block 1,000,000.
+    assert.deepEqual(st.spec.expiry, { kind: "atBlock", block: 3_592_000n }, "the stamp expires with its run");
     assert.deepEqual(s.arkiv.batches.map((b) => b.kind), ["stamp"]);
     assert.deepEqual([v.data.stamp, v.data.stamp_tx], [st.key, s.arkiv.batches[0].tx]);
     assert.deepEqual(s.store.approvalFor(JTI)?.result, { run: run.key, listing: listing.key, tx: v.data.tx, stamp: st.key, stamp_tx: v.data.stamp_tx });
@@ -729,5 +730,99 @@ describe("publish: the body (400 bad_body) and the gate (503)", () => {
     assert.ok([...s.arkiv.runs, ...s.arkiv.listings].every((r) => r.creator === WALLET_A));
     assert.ok(s.arkiv.stamps.every((r) => r.creator === CHECKER));
     assert.ok(s.arkiv.batches.every((b) => b.kind === "stamp"));
+  });
+});
+
+describe("publish: the stamp follows what was issued (Task 1 review follow-ups)", () => {
+  it("the stamp never outlives the run as issued: stamped at the earlier of the run's own expiry and the issued one", async () => {
+    for (const [runBlock, stampBlock] of [
+      [9_000_000n, 3_592_000n], // the console pushed its run out to the chain's maximum: the stamp stays at season end + 30 d
+      [2_000_000n, 2_000_000n], // a run that ends earlier takes its stamp with it
+    ]) {
+      const s = setup();
+      s.approve(JTI);
+      const { id, view } = await issued(s);
+      const w = s.arkiv.consoleWrite(WALLET_A, issueOf(view));
+      s.arkiv.expiresAt.set(w.run, runBlock);
+      s.pub.written(id, w);
+      assert.equal((await finish(s.pub, id)).ok, true);
+      assert.deepEqual(s.arkiv.stamps[0].spec.expiry, { kind: "atBlock", block: stampBlock }, String(runBlock));
+    }
+  });
+
+  it("a run or listing whose owner or flags the node does not report, or that carries a payload, is not what was issued: nothing stamped", async () => {
+    const cases: Array<[string, "run" | "listing", (a: FakeArkiv, key: string) => void]> = [
+      ["its owner", "run", (a, k) => a.entityEdit.set(k, { owner: null })],
+      ["its flags", "run", (a, k) => a.entityEdit.set(k, { flags: null })],
+      ["its payload", "run", (a, k) => a.payloadOn.add(k)],
+      ["its owner", "listing", (a, k) => a.entityEdit.set(k, { owner: null })],
+      ["its flags", "listing", (a, k) => a.entityEdit.set(k, { flags: null })],
+      ["its payload", "listing", (a, k) => a.payloadOn.add(k)],
+    ];
+    for (const [what, which, edit] of cases) {
+      const s = setup();
+      s.approve(JTI);
+      const { id, view } = await issued(s);
+      const w = s.arkiv.consoleWrite(WALLET_A, issueOf(view));
+      edit(s.arkiv, which === "run" ? w.run : w.listing);
+      s.pub.written(id, w);
+      const v = await finish(s.pub, id);
+      assert.equal(v.failure, "ls_publish_fail", `${which} ${what}`);
+      assert.ok(s.lines.join("\n").includes(`the ${which} on Arkiv is not the one issued (${what})`), s.lines.join("\n"));
+      assert.equal(s.arkiv.stamps.length, 0);
+    }
+  });
+
+  it("a stamp write that errs after its transaction landed: the stamp is looked up before failing and answers; no second stamp", async () => {
+    const s = setup();
+    s.approve(JTI);
+    s.arkiv.failAfterLanding = 1;
+    const v = await publish(s);
+    assert.equal(v.ok, true, JSON.stringify(v));
+    assert.equal(s.arkiv.stamps.length, 1);
+    assert.deepEqual([v.data.stamp, v.data.stamp_tx], [s.arkiv.stamps[0].key, null]);
+    assert.equal(s.store.approvalFor(JTI)?.result?.stamp, s.arkiv.stamps[0].key);
+  });
+
+  it("written again once the approval records the stamp (a node that does not show it yet): answered from the record, never a second stamp", async () => {
+    const s = setup();
+    s.approve(JTI);
+    let release!: () => void;
+    s.arkiv.holdWrites = new Promise<void>((r) => (release = r));
+    const { id, view } = await issued(s);
+    const w = s.arkiv.consoleWrite(WALLET_A, issueOf(view));
+    s.pub.written(id, w);
+    assert.equal((await finish(s.pub, id)).failure, "ls_publish_fail", "the stamp write timed out");
+    release();
+    s.arkiv.holdWrites = null;
+    await waitFor(() => s.store.approvalFor(JTI)?.result?.stamp !== undefined);
+    s.arkiv.lagStampReads = 10;
+    assert.deepEqual(s.pub.written(id, w), { ok: true });
+    await waitFor(() => s.pub.view(id)?.ok === true);
+    assert.equal(s.arkiv.stamps.length, 1, "one stamp");
+    assert.equal(s.pub.view(id)?.data.stamp, s.arkiv.stamps[0].key);
+  });
+
+  it("a relist that replaces a listing is done only once that listing is gone", async () => {
+    const s = setup();
+    s.approve(JTI);
+    const first = await publish(s);
+    assert.equal(first.ok, true);
+    const ACCT = "0.0.5123456";
+    s.store.setPayto(s.rec.book, ACCT, 1);
+    const text = actionText(TITLE, 6170, 10, ACCT);
+    s.approve("jti-relist", s.rec.book, text);
+    const { id, view } = await issued(s, { jti: "jti-relist", action: text, pay_to: ACCT });
+    const issue = issueOf(view);
+    assert.deepEqual([issue.run, issue.run_key, issue.replaces], [null, first.data.run, first.data.listing]);
+    const w = s.arkiv.consoleWrite(WALLET_A, issue, { keepReplaced: true }); // the console left the old listing live
+    s.pub.written(id, w);
+    assert.equal((await finish(s.pub, id)).failure, "ls_publish_fail");
+    assert.match(s.lines.join("\n"), /the listing it replaces is still live/);
+    s.arkiv.listings.find((l) => l.key === first.data.listing)!.live = false; // now it is gone
+    assert.deepEqual(s.pub.written(id, w), { ok: true });
+    await waitFor(() => s.pub.view(id)?.ok === true);
+    assert.equal(s.pub.view(id)?.data.listing, w.listing);
+    assert.equal(s.arkiv.stamps.length, 1, "a relist writes no stamp");
   });
 });

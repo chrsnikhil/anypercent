@@ -43,14 +43,19 @@
  * Focus 5) and stamps those. A `written` again after a failed stamp (or after a new link) checks
  * and stamps again: the records already exist. A repeated `written` answers {ok: true} and stamps
  * nothing new. A done job's result is kept on the approval, so a retry after success answers the
- * same keys and stamp. One stamp per log: a stamp that landed meanwhile for this log answers instead.
+ * same keys and stamp. One stamp per log: a stamp the approval already records for this run, or one
+ * that landed meanwhile for this log, answers instead; a stamp write that errs is looked up (it may
+ * have landed before its receipt was lost) before the job fails, so a retry never writes a second.
  *
  * The console's entities, checked (spec: The flow, step 4): each is live, carries its schema's tag,
- * is owned by its creator and has the issued flags; every attribute is exactly the issued one
+ * is owned by its creator (an owner or flags the node does not report count as a mismatch) and has
+ * the issued flags, no payload and no content type; every attribute is exactly the issued one
  * (types and values as the SDK reads them back) with nothing added, except `log_enc`, which must
  * decrypt under the ghost key to this job's log (a retry issues a fresh nonce); the listing's `run`
- * names the run, and both come from the same wallet. The stamp copies the run's columns, names that
- * wallet as `console` and expires at the run's own expiry block.
+ * names the run, and both come from the same wallet. A relist that replaces a listing is done only
+ * once that listing is gone. The stamp copies the run's columns, names that wallet as `console` and
+ * expires with the run, never after the run's issued expiry (the earlier of the run's own expiry
+ * block and the issued date's block).
  *
  * Logged: book, game, time, keys, tx and the failure's reason. Never the jti, the log, a key or a
  * secret.
@@ -76,11 +81,13 @@ import type { PublishResult, Store } from "../store.js";
 import { shortWallet } from "../consoles.js";
 import {
   ArkivError,
+  expiryBlock,
   splitValues,
   stampValues,
   type ArkivPort,
   type CreateSpec,
   type EntityRow,
+  type ExpirySpec,
   type ListingValues,
   type RunValues,
   type StampRow,
@@ -687,14 +694,27 @@ export class Publisher {
     }
     const off = this.mismatch("listing", LISTING_SCHEMA, listE, i.listing, { run: i.runKey ?? r.run }, b);
     if (off) return no("ls_publish_fail", `the listing on Arkiv is not the one issued (${off})`);
+    if (i.replaces) {
+      // A relist deletes the listing it replaces in the same transaction: until it is gone, two
+      // listings of the run (with different pay_to) would both be live.
+      let old: EntityRow | null;
+      try {
+        old = await this.opts.arkiv.getEntity(i.replaces);
+      } catch (err) {
+        return no("ls_publish_fail", `Arkiv: ${err instanceof ArkivError ? err.message : "read failed"}`);
+      }
+      if (old) return no("ls_publish_fail", `the listing it replaces is still live (${i.replaces}): the relist deletes it in the same transaction`);
+    }
     return { ok: true, run: runE };
   }
 
   /** The first thing on an entity that is not what was issued, or null. */
   private mismatch(kind: EntityKind, schema: string, e: EntityRow, spec: CreateSpec<object>, extra: Record<string, unknown>, b: Body): string | null {
     if (e.schema !== schema) return "its schema";
-    if (e.owner && e.owner !== e.creator) return "its owner";
-    if (e.flags && (e.flags.readonly !== spec.flags.readonly || e.flags.permissionlessExtension !== spec.flags.permissionlessExtension)) return "its flags";
+    // An owner or flags the node did not report are not what was issued: never stamped on trust.
+    if (!e.owner || e.owner !== e.creator) return "its owner";
+    if (!e.flags || e.flags.readonly !== spec.flags.readonly || e.flags.permissionlessExtension !== spec.flags.permissionlessExtension) return "its flags";
+    if (e.payload) return "its payload";
     const want = toSdkValues(kind, { ...(spec.values as Record<string, unknown>), ...extra }) as Record<string, TypedValue>;
     for (const name of new Set([...Object.keys(want), ...Object.keys(e.values)])) {
       const w = want[name];
@@ -722,6 +742,14 @@ export class Publisher {
       const result: PublishResult = { run: i.runKey!, listing: r.listing, tx: r.tx, stamp: i.stamp!.key, stamp_tx: prior?.stamp === i.stamp!.key ? (prior.stamp_tx ?? null) : null };
       store.setApprovalResult(b.jti, result);
       return this.done(job, result, " (relisted; the run keeps its stamp)", i.replay);
+    }
+
+    // A stamp this approval already records for this run (it landed after a timeout, or its receipt
+    // was lost): it answers, whether or not the node shows it yet. Never a second stamp.
+    if (prior?.stamp && prior.run === r.run) {
+      const result: PublishResult = { run: r.run, listing: r.listing, tx: r.tx ?? prior.tx, stamp: prior.stamp, stamp_tx: prior.stamp_tx ?? null };
+      store.setApprovalResult(b.jti, result);
+      return this.done(job, result, " (the stamp this approval already records)", i.replay);
     }
 
     // One stamp per log: one that landed meanwhile (another approval of this log) answers instead.
@@ -756,8 +784,7 @@ export class Publisher {
     const spec: CreateSpec<StampValues> = {
       values: stampValues(i.run.values, r.run, runE!.creator!, typeof fh === "number" && Number.isSafeInteger(fh) && fh >= 0 ? fh : null, i.tool),
       flags: { ...STAMP_FLAGS },
-      // The stamp expires with its run: at the run's own block, else as the run was issued.
-      expiry: runE?.expiresAt ? { kind: "atBlock", block: runE.expiresAt } : i.run.expiry,
+      expiry: await this.stampExpiry(i.run.expiry, runE?.expiresAt ?? null),
     };
     const write = arkiv.writeStamp(spec);
     let timer: NodeJS.Timeout | undefined;
@@ -779,11 +806,48 @@ export class Publisher {
     }
     if ("err" in outcome) {
       const why = outcome.err instanceof ArkivError ? outcome.err.message : "write failed";
+      // The transaction may have gone out before the error (a receipt that never came back): look
+      // for the stamp before failing, so the console's retry answers it rather than stamp again.
+      const landed = await this.landedStamp(b.logH, r.run);
+      if (landed) {
+        const result: PublishResult = { run: r.run, listing: r.listing, tx: r.tx, stamp: landed.key, stamp_tx: null };
+        store.setApprovalResult(b.jti, result);
+        return this.done(job, result, ` (the stamp write said: ${why}; the stamp is on Arkiv)`, i.replay);
+      }
       return this.fail(job, "ls_publish_fail", `stamp write: ${why}`);
     }
     const result = resultOf(outcome.w);
     store.setApprovalResult(b.jti, result);
     return this.done(job, result, "", i.replay);
+  }
+
+  /**
+   * The stamp's expiry: with its run (the run entity's own block), but never after the run's issued
+   * expiry (season end + 30 d), so a console cannot push the checker's stamp out to the chain's
+   * maximum. Without the chain's clock: the issued expiry itself.
+   */
+  private async stampExpiry(issued: ExpirySpec, runBlock: bigint | null): Promise<ExpirySpec> {
+    let cap: bigint;
+    try {
+      cap = expiryBlock(issued, await this.opts.arkiv.blockTiming());
+    } catch {
+      return issued;
+    }
+    return { kind: "atBlock", block: runBlock !== null && runBlock < cap ? runBlock : cap };
+  }
+
+  /** This run's stamp, if the node shows one for this log (asked a few times: it may be a block behind). */
+  private async landedStamp(logH: string, runKey: string): Promise<StampRow | null> {
+    for (let t = 0; t < this.verifyTries; t++) {
+      try {
+        const s = await this.opts.arkiv.stampByLogHash(logH);
+        if (s && s.run.toLowerCase() === runKey) return s;
+      } catch {
+        // asked again below
+      }
+      if (t + 1 < this.verifyTries) await new Promise((ok) => setTimeout(ok, this.verifyGapMs));
+    }
+    return null;
   }
 
   /** The run's lap splits from arcade_splits, or null (logged): splits never fail a publish. */

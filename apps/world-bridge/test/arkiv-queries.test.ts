@@ -26,7 +26,8 @@ describe("the query strings, exactly", () => {
       `arkiv.schema = str('anypercent.run') AND game = str('MDGP') AND season = i32(1) AND $creator = addr(${C}) ORDER BY frames:u64 ASC`,
     );
     assert.equal(Q.q1Board("MDGP", 1, C_LOWER), Q.q1Board("MDGP", 1, C), "the checker is always written EIP-55");
-    assert.equal(Q.Q1_TEMPLATE.replace("${game}", "MDGP").replace("${season}", "1").replace("${checker}", C), Q.q1Board("MDGP", 1, C));
+    assert.equal(Q.Q1_TEMPLATE.replace("${game}", "MDGP").replace("${season}", "1").replace("${creator}", C), Q.q1Board("MDGP", 1, C));
+    assert.equal(Q.Q1_STAMPS_TEMPLATE.replace("${game}", "MDGP").replace("${season}", "1").replace("${checker}", C), Q.q1Stamps("MDGP", 1, C));
   });
   it("Q2", () => {
     assert.equal(
@@ -49,6 +50,15 @@ describe("the query strings, exactly", () => {
     assert.equal(Q.q6Listing(K, C), `arkiv.schema = str('anypercent.listing') AND $key = key(${K}) AND $creator = addr(${C})`);
     assert.equal(Q.q6Run(K.toUpperCase().replace("0X", "0x"), C), `arkiv.schema = str('anypercent.run') AND $key = key(${K}) AND $creator = addr(${C})`);
     assert.equal(Q.q7RunByLogHash(H, C), `arkiv.schema = str('anypercent.run') AND log_h = str('${H}') AND $creator = addr(${C})`);
+  });
+  it("the stamp reads: the board, one run's stamp, one book's stamps, the lap leaders; a listing by key with no pin", () => {
+    assert.equal(Q.q1Stamps("MDGP", 1, C), `arkiv.schema = str('anypercent.stamp') AND game = str('MDGP') AND season = i32(1) AND $creator = addr(${C}) ORDER BY frames:u64 ASC`);
+    assert.equal(Q.qStampForRun(K, C), `arkiv.schema = str('anypercent.stamp') AND run = key(${K}) AND $creator = addr(${C})`);
+    assert.equal(Q.q4BookStamps("ANY-6PS", C), `arkiv.schema = str('anypercent.stamp') AND book = str('ANY-6PS') AND $creator = addr(${C}) ORDER BY frames:u64 ASC`);
+    assert.equal(Q.q10LapStamps("MDGP", 1, C, 3), `arkiv.schema = str('anypercent.stamp') AND game = str('MDGP') AND season = i32(1) AND $creator = addr(${C}) ORDER BY s3:u64 ASC`);
+    assert.equal(Q.q6ListingByKey(K), `arkiv.schema = str('anypercent.listing') AND $key = key(${K})`);
+    assert.throws(() => Q.qStampForRun("0x12", C));
+    assert.throws(() => Q.q4BookStamps("ANY-6PS') OR true", C));
   });
   it("Q8 (no pin) and Q9 (HUMAN only)", () => {
     assert.equal(Q.q8AnyWallet("MDGP", 1), "arkiv.schema = str('anypercent.run') AND game = str('MDGP') AND season = i32(1) ORDER BY frames:u64 ASC");
@@ -85,6 +95,14 @@ describe("the strings are what SDK 1.0.1's own builder renders", () => {
   });
   const sel = () => client.select({ $key: true });
 
+  it("the stamp queries through the Stamp schema", async () => {
+    const { Stamp } = await import("../src/arkiv/schema.js");
+    assert.equal(sel().from(Stamp).where(and(eq("game", str("MDGP")), eq("season", i32(1)))).createdBy(C).orderBy(asc("frames")).toString(), Q.q1Stamps("MDGP", 1, C));
+    assert.equal(sel().from(Stamp).where(eq("run", key(K as `0x${string}`))).createdBy(C).toString(), Q.qStampForRun(K, C));
+    assert.equal(sel().from(Stamp).where(eq("book", str("ANY-6PS"))).createdBy(C).orderBy(asc("frames")).toString(), Q.q4BookStamps("ANY-6PS", C));
+    assert.equal(sel().from(Stamp).where(and(eq("game", str("MDGP")), eq("season", i32(1)))).createdBy(C).orderBy(asc("s2")).toString(), Q.q10LapStamps("MDGP", 1, C, 2));
+  });
+
   it("Q1, Q2, Q3, Q9 through the schemas", () => {
     assert.equal(sel().from(Run).where(and(eq("game", str("MDGP")), eq("season", i32(1)))).createdBy(C).orderBy(asc("frames")).toString(), Q.q1Board("MDGP", 1, C));
     assert.equal(sel().from(Listing).where(and(eq("game", str("MDGP")), eq("season", i32(1)))).createdBy(C).orderBy(asc("frames")).toString(), Q.q2Listings("MDGP", 1, C));
@@ -106,25 +124,24 @@ describe("the strings are what SDK 1.0.1's own builder renders", () => {
     assert.equal(sel().from(Run).where(eq("log_h", str(H))).createdBy(C).toString(), Q.q7RunByLogHash(H, C));
     assert.equal(sel().from(Run).where(and(eq("game", str("MDGP")), eq("season", i32(1)))).orderBy(asc("frames")).toString(), Q.q8AnyWallet("MDGP", 1));
     assert.equal(sel().from(Listing).where(eq("run", key(K as `0x${string}`))).createdBy(C).toString(), Q.qListingForRun(K, C));
+    assert.equal(sel().from(Listing).where(eq("$key", key(K as `0x${string}`))).toString(), Q.q6ListingByKey(K));
     assert.equal(addr(C_LOWER).value, C);
   });
 });
 
 describe("the web board", () => {
-  it("public/board.html carries Q1's exact template", () => {
+  it("public/board.html carries Q1's exact template and the stamp query's", () => {
     const html = readFileSync(join(appDir, "public", "board.html"), "utf8");
     assert.ok(html.includes(Q.Q1_TEMPLATE), "board.html must contain Q1 exactly");
+    assert.ok(html.includes(Q.Q1_STAMPS_TEMPLATE), "board.html must contain the stamp query exactly");
   });
-  it("and every other query it runs, in the same words", () => {
+  it("and every other query it runs, in the same words (stamps pinned to the checker, rows to the stamp's console)", () => {
     const html = readFileSync(join(appDir, "public", "board.html"), "utf8");
-    const tpl = (s: string) =>
-      s.replace("'MDGP'", "'${game}'").replace("i32(1)", "i32(${season})").replace(`addr(${C})`, "addr(${checker})");
-    for (const q of [Q.q2Listings("MDGP", 1, C), Q.q8AnyWallet("MDGP", 1), Q.q9Human("MDGP", 1, C)]) {
-      assert.ok(html.includes(tpl(q)), `board.html misses ${tpl(q)}`);
-    }
-    assert.ok(html.includes(tpl(Q.q3JustAhead("MDGP", 1, 6290, C)).replace("u64(6290)", "u64(${frames})")));
-    assert.ok(html.includes(Q.q4BookRuns("ANY-6PS", C).replace("'ANY-6PS'", "'${book}'").replace(`addr(${C})`, "addr(${checker})")));
-    assert.ok(html.includes(Q.q5BookListings("ANY-6PS", C).replace("'ANY-6PS'", "'${book}'").replace(`addr(${C})`, "addr(${checker})")));
+    const tpl = (s: string, pin: string) =>
+      s.replace("'MDGP'", "'${game}'").replace("i32(1)", "i32(${season})").replace(`addr(${C})`, "addr(${" + pin + "})").replace("'ANY-6PS'", "'${book}'");
+    for (const q of [Q.q2Listings("MDGP", 1, C), Q.q4BookRuns("ANY-6PS", C), Q.q5BookListings("ANY-6PS", C)]) assert.ok(html.includes(tpl(q, "creator")), `board.html misses ${tpl(q, "creator")}`);
+    assert.ok(html.includes(tpl(Q.q4BookStamps("ANY-6PS", C), "checker")));
+    assert.ok(html.includes(tpl(Q.q8AnyWallet("MDGP", 1), "checker")));
   });
   it("is one file: no external script, stylesheet or font", () => {
     const html = readFileSync(join(appDir, "public", "board.html"), "utf8");
@@ -274,7 +291,7 @@ describe("the service's real port reads live-shaped rows", () => {
       }
     }
     const port = new Stub({ rpcUrl: "http://127.0.0.1:9", accessKey: "unused-in-tests", checkerAddress: C });
-    const l = await port.liveListingFor(runKey);
+    const l = await port.liveListingFor(runKey, C);
     assert.equal(sent[0], Q.qListingForRun(runKey, C));
     assert.equal(l?.key, K);
     assert.equal(l?.run, runKey);
@@ -318,7 +335,9 @@ describe("the real port reads a console's entity and the checker's stamp (consol
         const call = JSON.parse(raw) as { id: number; method: string; params: string[] };
         asked.push(call);
         res.setHeader("content-type", "application/json");
-        res.end(JSON.stringify({ jsonrpc: "2.0", id: call.id, result: call.params[0] === K ? reply : null }));
+        const withPayload = `0x${"7".repeat(64)}`;
+        const result = call.params[0] === K ? reply : call.params[0] === withPayload ? { ...reply, key: withPayload, payload: "0x1234", contentType: "text/plain" } : null;
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: call.id, result }));
       });
     });
     await new Promise<void>((r) => node.listen(0, "127.0.0.1", r));
@@ -339,6 +358,9 @@ describe("the real port reads a console's entity and the checker's stamp (consol
         assert.equal(typeof got.value === "string" ? got.value.toLowerCase() : got.value, typeof w.value === "string" ? w.value.toLowerCase() : w.value, name);
       }
       assert.equal(await port.getEntity(`0x${"9".repeat(64)}`), null, "no live entity: null");
+      assert.equal(e.payload, false, "an anypercent entity carries no payload");
+      assert.equal((await port.getEntity(`0x${"7".repeat(64)}`))?.payload, true, "a payload or content type the node reports is seen (publish refuses it)");
+      assert.equal(asked.length, 3, "one request per entity");
     } finally {
       await new Promise<void>((r) => node.close(() => r()));
     }

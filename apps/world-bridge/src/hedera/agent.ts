@@ -16,7 +16,7 @@
  *                  not_for_sale | not_house | console_not_linked}
  *
  * The seller is a record book, or a BOT label of the house (BOT-A2): a label listing must name that
- * label, be open tier (`human` false) and pay HEDERA_HOUSE_ID, else not_house. With a `console`, the
+ * label, never be HUMAN (`human` false) and pay HEDERA_HOUSE_ID, else not_house. With a `console`, the
  * console must be bound to the buying book (one console, one person), else console_not_linked;
  * without one (the hedera:agent CLI) the purchase runs as before and says so in the log. A `scout`
  * id that matches a held scout pick of this very purchase puts the scout's model, laps and reason
@@ -24,8 +24,9 @@
  * the purchase as it is, and no model output reaches one.
  *
  * One job, in order:
- *   guard   the buyer book; not its own book; the listing on Arkiv (live, the checker's, the
- *           console's seller, its price); the run (live, the checker's, the same log_h, log_enc);
+ *   guard   the buyer book; not its own book; the listing on Arkiv (live, its run stamped by the
+ *           checker and the listing written by that run's console, the seller, its price); the run
+ *           (live, stamped, the same log_h, log_enc);
  *           pay_to present and able to take USDC (mirror, cached 10 min); the caps (per purchase, per
  *           book per day, per agent per day, the agent's USDC balance, cached 30 s); then a
  *           reservation that counts against the caps at once
@@ -429,7 +430,7 @@ export class Agent {
     }
     if (!listing || listing.game !== b.game) throw new Stop("buy_changed", "the listing is gone", { now_price: "gone" });
     if (listing.book === undefined) {
-      // The house's BOT listing: its label, open tier, paying the house account.
+      // The house's BOT listing: its label, never HUMAN, paying the house account.
       if (listing.label !== b.seller) throw new Stop("buy_changed", "the listing is gone", { now_price: "gone" });
       if (listing.human !== false || !this.opts.houseId || listing.pay_to !== this.opts.houseId) {
         throw suspended("not_house", `a BOT listing must pay the house (it names ${listing.pay_to ?? "no account"})`);

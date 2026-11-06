@@ -3,15 +3,18 @@
  *
  * Writes arkiv/snapshot.json at the repository root: the chain id, the block (and its time, so the
  * web board can still say "until about ..."), the checker, the season, the exact query strings, and
- * the raw rows of Q1 and Q2 for every arcade game. Reads only; no key needed (the checker defaults to
- * ARKIV_CHECKER_KEY's address). Commit it at freeze: testnets get retired, and the web board falls
- * back to it when the RPC does not answer. Never selects ghost bytes.
+ * for every arcade game the raw pages a board is read from: the checker's stamps (Q1 on stamps),
+ * then the runs and listings of every console wallet those stamps name (Q1 and Q2 pinned to that
+ * wallet). The web board joins them exactly as it joins a live read (a run counts when a checker
+ * stamp names it and its creator is the stamp's console). Reads only; no key needed (the checker
+ * defaults to ARKIV_CHECKER_KEY's address). Commit it at freeze: testnets get retired, and the web
+ * board falls back to it when the RPC does not answer. Never selects ghost bytes.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SdkArkiv } from "../src/arkiv/client.js";
 import * as Q from "../src/arkiv/queries.js";
-import { GAME_IDS, LISTING_SCHEMA, RUN_SCHEMA } from "../src/arkiv/schema.js";
+import { GAME_IDS, LISTING_SCHEMA, RUN_SCHEMA, STAMP_SCHEMA } from "../src/arkiv/schema.js";
 import { arkivRpcUrl, PRIVATE_KEY_RE } from "../src/config.js";
 import { arg, clientsFor, die, loadEnv, repoRoot, why } from "./arkiv-common.js";
 
@@ -27,16 +30,14 @@ async function main(): Promise<void> {
   const chainId = await port.chainId();
   const timing = await port.publicClient.getBlockTiming();
 
-  const games: Record<string, { block: string; q1: string; q2: string; runs: unknown[]; listings: unknown[] }> = {};
+  const games: Record<string, { block: string; q_stamps: string; stamps: unknown[]; runs: unknown[]; listings: unknown[] }> = {};
   let total = 0;
   for (const g of GAME_IDS) {
-    const q1 = Q.q1Board(g, ak.season, C);
-    const q2 = Q.q2Listings(g, ak.season, C);
-    const runs = await port.query(q1, Q.selectOf(Q.RUN_BOARD_ATTRS));
-    const listings = await port.query(q2, Q.selectOf(Q.LISTING_ATTRS));
-    games[g] = { block: runs.blockNumber.toString(), q1, q2, runs: runs.data, listings: listings.data };
-    total += runs.data.length;
-    console.log(`${g}: ${runs.data.length} runs, ${listings.data.length} listings (block ${runs.blockNumber})`);
+    const pages = await port.boardPages(g, ak.season);
+    const counted = port.joinPages(pages);
+    games[g] = { block: pages.block.toString(), q_stamps: Q.q1Stamps(g, ak.season, C), stamps: pages.stamps, runs: pages.runs, listings: pages.listings };
+    total += counted.runs.length;
+    console.log(`${g}: ${pages.stamps.length} stamps, ${counted.runs.length} stamped runs, ${counted.listings.length} listings (block ${pages.block})${counted.dropped ? `, ${counted.dropped} dropped` : ""}`);
   }
 
   const snapshot = {
@@ -47,13 +48,14 @@ async function main(): Promise<void> {
     block_duration_s: timing.blockDuration,
     checker: C,
     season: ak.season,
-    schemas: { run: RUN_SCHEMA, listing: LISTING_SCHEMA },
+    schemas: { run: RUN_SCHEMA, listing: LISTING_SCHEMA, stamp: STAMP_SCHEMA },
+    queries: { stamps: Q.Q1_STAMPS_TEMPLATE, runs: Q.Q1_TEMPLATE },
     games,
   };
   const dir = join(repoRoot, "arkiv");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "snapshot.json"), `${JSON.stringify(snapshot, null, 1)}\n`);
-  console.log(`wrote arkiv/snapshot.json: chain ${chainId}, block ${timing.currentBlock}, checker ${C}, ${total} runs`);
+  console.log(`wrote arkiv/snapshot.json: chain ${chainId}, block ${timing.currentBlock}, checker ${C}, ${total} stamped runs`);
 }
 
 main().catch((err: unknown) => die(`arkiv:snapshot: ${why(err, cfg)}`));

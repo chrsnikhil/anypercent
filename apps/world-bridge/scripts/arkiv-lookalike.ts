@@ -2,10 +2,11 @@
  * npm run arkiv:lookalike -- --game MDGP --book ANY-6PS
  *
  * The look-alike demo (spec: Scripts). The STRANGER wallet writes a well-formed anypercent.run row:
- * it copies the board's top row, 600 frames (10 s) faster, under the owner's own book (--book; it
- * must be a book this bridge issued, never another person's). Every column checks out; only
- * `$creator` gives it away. Then it shows the row absent from the pinned board query (Q1) and
- * present, first, without the pin (Q8). The console and the web board must ignore it.
+ * it copies the board's top run, 600 frames (10 s) faster, under the owner's own book (--book; it
+ * must be a book this bridge issued, never another person's). Every column checks out; what gives it
+ * away is that no checker stamp names it (and a stamp could only ever name its creator, the
+ * stranger). Then it shows the row absent from the board (the stamps joined to their runs) and
+ * present, first, without any pin (Q8). The console and the web board must ignore it.
  */
 import { SdkArkiv, type RunValues } from "../src/arkiv/client.js";
 import { fmtTime } from "../src/arkiv/publish.js";
@@ -32,12 +33,11 @@ async function main(): Promise<void> {
   const stranger = new SdkArkiv({ rpcUrl, accessKey: ak.accessKey, checkerKey: ak.strangerKey });
   const C = checker.checker!;
 
-  const board = await checker.query(Q.q1Board(game, ak.season, C), Q.selectOf(Q.RUN_BOARD_ATTRS), 1);
-  const topKey = (board.data[0] as { key?: string } | undefined)?.key;
-  if (!topKey) die(`no ${game} run on the board to copy yet`);
-  const top = await checker.getRun(topKey, true);
-  if (!top) die("the top row did not validate");
-  console.log(`top of the ${game} board: ${top.book ?? top.label} ${fmtTime(Number(top.frames))} (run ${top.key})`);
+  const board = await checker.boardRuns(game, ak.season);
+  if (!board[0]) die(`no stamped ${game} run on the board to copy yet`);
+  const top = await checker.getRun(board[0].key, true);
+  if (!top) die("the top run did not read back");
+  console.log(`top of the ${game} board: ${top.book ?? top.label} ${fmtTime(Number(top.frames))} (run ${top.key}, owned by ${top.owner}, stamp ${top.stamp})`);
 
   const fake: RunValues = {
     game: top.game,
@@ -57,12 +57,12 @@ async function main(): Promise<void> {
   console.log(`stranger ${stranger.checker} wrote a look-alike: ${book} ${fmtTime(fake.frames)} (run ${w.run}, tx ${w.tx})`);
 
   await new Promise((r) => setTimeout(r, 2500));
-  const pinned = await checker.query(Q.q1Board(game, ak.season, C), Q.selectOf(Q.RUN_BOARD_ATTRS));
+  const after = await checker.boardRuns(game, ak.season);
   const any = await checker.query(Q.q8AnyWallet(game, ak.season), Q.selectOf(Q.RUN_BOARD_ATTRS));
   const has = (data: unknown[]) => (data as Array<{ key: string }>).some((e) => e.key.toLowerCase() === w.run);
-  console.log(`Q1 (pinned to the checker): ${has(pinned.data) ? "PRESENT (wrong)" : "absent: the board ignores it"}`);
+  console.log(`the board (checker stamps joined to their runs): ${after.some((r) => r.key === w.run) ? "PRESENT (wrong)" : "absent: no checker stamp names it"}`);
   console.log(`Q8 (no pin): ${has(any.data) ? "present" : "absent"}; first row ${(any.data[0] as { key?: string })?.key ?? "-"}`);
-  console.log(`\nQ1: ${Q.q1Board(game, ak.season, C)}\nQ8: ${Q.q8AnyWallet(game, ak.season)}`);
+  console.log(`\nstamps: ${Q.q1Stamps(game, ak.season, C)}\nQ8:     ${Q.q8AnyWallet(game, ak.season)}`);
 }
 
 main().catch((err: unknown) => die(`arkiv:lookalike: ${why(err, cfg)}`));

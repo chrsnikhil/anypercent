@@ -3,12 +3,13 @@
  * the model only ever sees what passed here, and PB's guards (hedera/agent.ts) still run in full on
  * the purchase. The scout only reads; it never reserves.
  *
- * A candidate is a live listing on Q2 whose run is on Q1 (both the checker's) with:
+ * A candidate is a listing on the board (boardListings) whose run counts (boardRuns: a checker stamp
+ * names it and its console wrote both) with:
  * - the one listed price (ARKIV_GHOST_PRICE_C);
  * - a `pay_to` that can take USDC (the agent's 10-minute mirror cache);
  * - the run's log_h equal to the listing's, and the same time on both;
  * - not the buyer's own book;
- * - for a label listing: a BOT label, open tier, paying the house account (else skipped and counted);
+ * - for a label listing: a BOT label, never HUMAN, paying the house account (else skipped and counted);
  * - faster than YOU overall, or (both with splits) faster than YOU in at least one split.
  */
 import { sellerName, type ListingRow, type RunRow } from "../arkiv/client.js";

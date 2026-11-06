@@ -4,38 +4,46 @@
  *
  * The real implementation (SdkArkiv) uses @arkiv-network/sdk 1.0.1 on Rabdi:
  * - reads are the exact Q-strings of queries.ts over `arkiv_query`, each row validated like every
- *   other raw reader (rows.ts), pinned to the checker;
- * - writes go through the SDK's typed schemas (schema.ts), signed by the checker, on one serial
- *   queue: one wallet, one entity nonce, so a batch's predicted keys hold;
+ *   other raw reader (rows.ts): stamps pinned to the checker, runs and listings pinned to the
+ *   wallet a stamp names, joined by board.ts (a run counts only when a checker stamp names it and
+ *   its creator is the stamp's console);
+ * - writes go through the SDK's typed schemas (schema.ts), each wallet on its own serial queue (one
+ *   wallet, one entity nonce, so a batch's predicted keys hold): the checker writes stamps only,
+ *   the house wallet (HOUSE_ARKIV_KEY) the BOT runs and listings;
  * - the access key rides in the RPC URL's last path segment and never reaches a log line: every
  *   error is reduced to a short reason with the key and anything key-shaped removed.
  *
  * Console-owned records (spec: the console owns its records): a player's run and listing are
  * written by the console's own wallet, never here. The checker writes the stamp (`writeStamp`) once
  * `getEntity` read the console's entities back and they were exactly what publish issued.
- * `writeRunAndListing` and `writeListing` are the checker-signed paths from before; publish no
- * longer calls them.
+ * `writeRunAndListing` is the checker-signed path from before; only `npm run arkiv:smoke` (on the
+ * smoke twins) still calls it.
  */
 import {
   createPublicClient,
   createWalletClient,
   ExpirationTime,
+  key as keyValue,
   NoEntityFoundError,
   type PublicArkivClient,
   type WalletArkivClient,
 } from "@arkiv-network/sdk";
 import { rabdi } from "@arkiv-network/sdk/chains";
-import { http, type Hex } from "viem";
+import { custom, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { joinBoard, listingMismatch, runMismatch, stamped } from "./board.js";
 import {
+  PAGE,
   queryParams,
   qListingForRun,
   q1Board,
+  q1Stamps,
   q2Listings,
-  q6Listing,
+  q6ListingByKey,
   q6Run,
   q7RunByLogHash,
   qStampByLogHash,
+  qStampForRun,
   LISTING_ATTRS,
   RUN_ALL_ATTRS,
   RUN_BOARD_ATTRS,
@@ -48,6 +56,8 @@ import { decodePage, splitsOf, type DecodedRow } from "./rows.js";
 import { LISTING_TYPES, Listing, REAL, Run, RUN_TYPES, SmokeListing, SmokeRun, SmokeStamp, Stamp, STAMP_TYPES, toSdkValues, type SchemaNames } from "./schema.js";
 
 export { toSdkValues };
+
+const WALLET_RE = /^0x[0-9a-f]{40}$/;
 
 export interface RunRow {
   key: string;
@@ -69,6 +79,17 @@ export interface RunRow {
   log_enc?: Uint8Array;
   /** The lap splits in frames when the row carries splits that check out (rows.splitsOf), else absent. */
   splits?: number[];
+}
+
+/**
+ * A run that counts (board.ts): a checker stamp names it and its creator is the stamp's console.
+ * What every board reader hands on (boardRuns, getRun).
+ */
+export interface StampedRun extends RunRow {
+  /** The wallet that owns the run (lowercase): its creator, the console its stamp names. */
+  owner: string;
+  /** The checker's stamp that names it. */
+  stamp: string;
 }
 
 export interface ListingRow {
@@ -239,6 +260,15 @@ export interface EntityRow {
   schema: string | null;
   /** Every other attribute, by name. */
   values: Record<string, TypedValue>;
+  /** True when the node reports a payload or a content type on it (an anypercent entity has neither). */
+  payload: boolean;
+}
+
+/** The chain's clock as `arkiv_getBlockTiming` answers: the current block, its time (s) and the block time (s). */
+export interface BlockTiming {
+  block: bigint;
+  timeS: number;
+  durationS: number;
 }
 
 /** One house pair: a BOT run and its listing (the listing's `run` is filled in by the writer). */
@@ -275,38 +305,63 @@ export interface ArkivPort {
   chainId(): Promise<number>;
   /** An address's balance, in wei of tGLM. */
   balance(address: string): Promise<bigint>;
-  /** Q7: the live run with this log, if any, created by `owner` (default: the checker). */
-  runByLogHash(logH: string, owner?: string): Promise<RunRow | null>;
-  /** The live listing of this run, if any, created by `owner` (default: the checker). */
-  liveListingFor(runKey: string, owner?: string): Promise<ListingRow | null>;
-  /** Q7 on stamps: the checker's live stamp of the run with this log, if any. */
+  /** The chain's clock (turns a date into a block). */
+  blockTiming(): Promise<BlockTiming>;
+  /** Q7: the live run with this log created by `owner` (a console's or the house's wallet), if any; stamped or not. */
+  runByLogHash(logH: string, owner: string): Promise<RunRow | null>;
+  /** The live listing of this run created by `owner` (the run's wallet), if any. */
+  liveListingFor(runKey: string, owner: string): Promise<ListingRow | null>;
+  /** Q7 on stamps: the checker's live stamp of the run with this log, if any. Whether a log is on the board. */
   stampByLogHash(logH: string): Promise<StampRow | null>;
   /** One live entity by key, whoever created it (null: none, deleted or expired). */
   getEntity(key: string): Promise<EntityRow | null>;
   /** One stamp, signed by the checker. */
   writeStamp(spec: CreateSpec<StampValues>): Promise<{ stamp: string; tx: string }>;
-  /** Q6 on runs: one live run the checker wrote, with its ghost bytes when `withLog`. */
-  getRun(runKey: string, withLog: boolean): Promise<RunRow | null>;
-  /** Q6 on listings: one live listing the checker wrote, with `pay_to` and `hcs`. */
+  /** Stamps in ONE transaction, signed by the checker (the house's batch). */
+  writeStamps(specs: CreateSpec<StampValues>[]): Promise<{ stamps: string[]; tx: string }>;
+  /** One live run that counts (board.ts): its checker stamp, created by the stamp's console; with its ghost bytes when `withLog`. */
+  getRun(runKey: string, withLog: boolean): Promise<StampedRun | null>;
+  /** One live listing that counts (board.ts): its run stamped, created by that run's console; with `pay_to` and `hcs`. */
   getListing(listingKey: string): Promise<ListingRow | null>;
-  /** One batch: the run, then its listing (run = the run's predicted key). The smoke script's only. */
+  /** One batch from the checker: the run, then its listing (run = the run's predicted key). The smoke script's only. */
   writeRunAndListing(run: CreateSpec<RunValues>, listing: CreateSpec<ListingValues>): Promise<Written>;
+  /** The house wallet's address (lowercase): it writes the BOT runs and listings. Null without HOUSE_ARKIV_KEY. */
+  readonly house: string | null;
   /**
-   * A listing for a run already on Arkiv. With `replaces`, the same batch deletes that (older) live
-   * listing of the run, so a relist leaves one listing per run.
-   */
-  writeListing(runKey: string, listing: CreateSpec<ListingValues>, replaces?: string): Promise<{ listing: string; tx: string }>;
-  /** A run alone (the open tier). */
-  writeRun(run: CreateSpec<RunValues>): Promise<{ run: string; tx: string }>;
-  /**
-   * House pairs in ONE transaction: [run1, listing1, run2, listing2, ...], each listing naming its
-   * run's predicted key. The caller splits a batch that is refused (house.ts).
+   * House pairs in ONE transaction from the house wallet: [run1, listing1, run2, listing2, ...],
+   * each listing naming its run's predicted key. The caller splits a batch that is refused, then
+   * has the checker stamp the runs (house.ts).
    */
   writeHouse(pairs: HousePair[]): Promise<{ runs: string[]; listings: string[]; tx: string }>;
-  /** Q1: the run board of one game and season (one page, fastest first), with splits and labels. */
-  boardRuns(game: string, season: number): Promise<RunRow[]>;
-  /** Q2: the live listings of one game and season (one page, fastest first). */
+  /** The board of one game and season: the checker's stamps (one page, fastest first) joined to their runs. */
+  boardRuns(game: string, season: number): Promise<StampedRun[]>;
+  /** The listings of that board: each created by its stamped run's console and naming that run. */
   boardListings(game: string, season: number): Promise<ListingRow[]>;
+}
+
+/** The block a date falls in, by the chain's clock (as the SDK resolves `ExpirationTime.atDate`). */
+export function blockAtDate(date: Date, t: BlockTiming): bigint {
+  const ahead = Math.ceil((date.getTime() / 1000 - t.timeS) / Math.max(1, t.durationS));
+  return t.block + BigInt(Math.max(1, ahead));
+}
+
+/** The block an expiry resolves to, by the chain's clock now. */
+export function expiryBlock(e: ExpirySpec, t: BlockTiming): bigint {
+  const d = Math.max(1, t.durationS);
+  const blocks = (seconds: number) => BigInt(Math.ceil(seconds / d));
+  switch (e.kind) {
+    case "atBlock":
+      return e.block;
+    case "days":
+      return t.block + blocks(e.days * 86_400);
+    case "hours":
+      return t.block + blocks(e.hours * 3_600);
+    case "atDate": {
+      const at = blockAtDate(e.date, t);
+      const least = t.block + blocks(e.atLeastDays * 86_400);
+      return at > least ? at : least;
+    }
+  }
 }
 
 /** A read or write that did not complete: Arkiv down, a revert, out of gas, a timeout. */
@@ -405,40 +460,63 @@ export function toExpiration(e: ExpirySpec) {
   }
 }
 
+
 export interface SdkArkivOptions {
   /** ARKIV_RPC with the access key already appended (config.arkivRpcUrl). Never logged. */
   rpcUrl: string;
   /** The access key alone, only so error text can be scrubbed of it. */
   accessKey: string;
-  /** The checker's private key: reads pin its address, writes are signed by it. */
+  /** The checker's private key: stamp reads pin its address, stamps are signed by it. */
   checkerKey?: string;
-  /** Pin reads to this creator instead (read-only use, e.g. the snapshot with no key). */
+  /** Pin stamp reads to this checker instead (read-only use, e.g. the snapshot with no key). */
   checkerAddress?: string;
+  /** HOUSE_ARKIV_KEY: the house wallet, which writes the BOT runs and listings (never the checker's key). */
+  houseKey?: string;
   names?: SchemaNames;
   timeoutMs?: number;
 }
 
+/** One game's board as the node answered it: the raw stamp page, and the raw runs and listings of every stamped console. */
+export interface BoardPages {
+  block: bigint;
+  stamps: unknown[];
+  runs: unknown[];
+  listings: unknown[];
+}
+
 export class SdkArkiv implements ArkivPort {
   readonly checker: string | null;
+  readonly house: string | null;
   private readonly pub: PublicArkivClient;
   private readonly wallet: WalletArkivClient | null;
+  private readonly houseWallet: WalletArkivClient | null;
+  private readonly chain: ReturnType<typeof rabdi>;
   private readonly names: SchemaNames;
   private readonly secrets: string[];
   private queue: Promise<unknown> = Promise.resolve();
+  private houseQueue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly opts: SdkArkivOptions) {
     this.names = opts.names ?? REAL;
-    const chain = rabdi({ accessKey: opts.accessKey });
+    this.chain = rabdi({ accessKey: opts.accessKey });
     const transport = http(opts.rpcUrl, { timeout: opts.timeoutMs ?? 10_000, retryCount: 1 });
-    this.pub = createPublicClient({ chain, transport, pollingInterval: 1000 }) as unknown as PublicArkivClient;
-    this.secrets = [opts.accessKey, encodeURIComponent(opts.accessKey), opts.checkerKey ?? ""].filter(Boolean);
+    this.pub = createPublicClient({ chain: this.chain, transport, pollingInterval: 1000 }) as unknown as PublicArkivClient;
+    this.secrets = [opts.accessKey, encodeURIComponent(opts.accessKey), opts.checkerKey ?? "", opts.houseKey ?? ""].filter(Boolean);
     if (opts.checkerKey) {
       const account = privateKeyToAccount(opts.checkerKey as Hex);
       this.checker = account.address;
-      this.wallet = createWalletClient({ chain, transport, account, pollingInterval: 1000 }) as unknown as WalletArkivClient;
+      this.wallet = createWalletClient({ chain: this.chain, transport, account, pollingInterval: 1000 }) as unknown as WalletArkivClient;
     } else {
       this.checker = opts.checkerAddress ?? null;
       this.wallet = null;
+    }
+    if (opts.houseKey) {
+      const account = privateKeyToAccount(opts.houseKey as Hex);
+      this.house = account.address.toLowerCase();
+      this.houseWallet = createWalletClient({ chain: this.chain, transport, account, pollingInterval: 1000 }) as unknown as WalletArkivClient;
+    } else {
+      this.house = null;
+      this.houseWallet = null;
     }
   }
 
@@ -486,24 +564,31 @@ export class SdkArkiv implements ArkivPort {
     }
   }
 
+  async blockTiming(): Promise<BlockTiming> {
+    try {
+      const t = await this.pub.getBlockTiming();
+      return { block: t.currentBlock, timeS: Number(t.currentBlockTime), durationS: Number(t.blockDuration) || 2 };
+    } catch (err) {
+      throw this.fail(err);
+    }
+  }
+
   private pinned(): string {
     if (!this.checker) throw new ArkivError("no checker configured");
     return this.checker;
   }
 
-  async runByLogHash(logH: string, owner?: string): Promise<RunRow | null> {
-    const by = owner ?? this.pinned();
+  async runByLogHash(logH: string, owner: string): Promise<RunRow | null> {
     const asked = [...RUN_ALL_ATTRS];
-    const res = await this.query(q7RunByLogHash(logH, by, this.names), selectOf(asked), 1);
-    const page = decodePage(res.data, RUN_TYPES, asked, this.names.run, by);
+    const res = await this.query(q7RunByLogHash(logH, owner, this.names), selectOf(asked), 1);
+    const page = decodePage(res.data, RUN_TYPES, asked, this.names.run, owner);
     return page.rows[0] ? runFromRow(page.rows[0]) : null;
   }
 
-  async liveListingFor(runKey: string, owner?: string): Promise<ListingRow | null> {
-    const by = owner ?? this.pinned();
+  async liveListingFor(runKey: string, owner: string): Promise<ListingRow | null> {
     const asked = [...LISTING_ATTRS];
-    const res = await this.query(qListingForRun(runKey, by, this.names), selectOf(asked), 1);
-    const page = decodePage(res.data, LISTING_TYPES, asked, this.names.listing, by);
+    const res = await this.query(qListingForRun(runKey, owner, this.names), selectOf(asked), 1);
+    const page = decodePage(res.data, LISTING_TYPES, asked, this.names.listing, owner);
     return page.rows[0] ? listingFromRow(page.rows[0]) : null;
   }
 
@@ -514,11 +599,28 @@ export class SdkArkiv implements ArkivPort {
     return page.rows[0] ? stampFromRow(page.rows[0]) : null;
   }
 
-  /** `arkiv_getEntity` through the SDK, which types each attribute by the tag the node gives it. */
+  /** The checker's stamp of one run, or null. */
+  async stampForRun(runKey: string): Promise<StampRow | null> {
+    const asked = [...STAMP_ATTRS];
+    const res = await this.query(qStampForRun(runKey, this.pinned(), this.names), selectOf(asked), 1);
+    const page = decodePage(res.data, STAMP_TYPES, asked, this.names.stamp, this.pinned());
+    return page.rows[0] ? stampFromRow(page.rows[0]) : null;
+  }
+
+  /**
+   * `arkiv_getEntity`, decoded by the SDK's own getEntity (each attribute typed by the tag the node
+   * gives it). One request: the raw reply is also looked at for a payload or a content type, which
+   * the SDK's entity leaves out.
+   */
   async getEntity(entityKey: string): Promise<EntityRow | null> {
+    let raw: Record<string, unknown> | null;
     let e: Record<string, unknown>;
     try {
-      e = (await this.pub.getEntity(entityKey as Hex)) as unknown as Record<string, unknown>;
+      raw = (await this.pub.request({ method: "arkiv_getEntity", params: [keyValue(entityKey as Hex).value] } as never)) as Record<string, unknown> | null;
+      if (raw === null || typeof raw !== "object") return null;
+      const answered = raw;
+      const local = createPublicClient({ chain: this.chain, transport: custom({ request: async () => answered }) }) as unknown as PublicArkivClient;
+      e = (await local.getEntity(entityKey as Hex)) as unknown as Record<string, unknown>;
     } catch (err) {
       if (err instanceof NoEntityFoundError) return null;
       throw this.fail(err);
@@ -528,6 +630,7 @@ export class SdkArkiv implements ArkivPort {
     delete attrs[SCHEMA_ATTR];
     const flags = e.$creationFlags as { readonly?: boolean; permissionlessExtension?: boolean } | undefined;
     const lower = (v: unknown) => (typeof v === "string" ? v.toLowerCase() : null);
+    const carries = (v: unknown) => v !== undefined && v !== null && v !== "" && v !== "0x";
     return {
       key: (lower(e.$key) ?? entityKey).toLowerCase(),
       creator: lower(e.$creator),
@@ -536,48 +639,99 @@ export class SdkArkiv implements ArkivPort {
       flags: flags && typeof flags.readonly === "boolean" && typeof flags.permissionlessExtension === "boolean" ? { readonly: flags.readonly, permissionlessExtension: flags.permissionlessExtension } : null,
       schema: tag?.type === "str" && typeof tag.value === "string" ? tag.value : null,
       values: attrs,
+      payload: carries(raw.payload) || carries(raw.contentType) || carries(raw.content_type),
     };
   }
 
   writeStamp(spec: CreateSpec<StampValues>): Promise<{ stamp: string; tx: string }> {
+    return this.writeStamps([spec]).then((w) => ({ stamp: w.stamps[0], tx: w.tx }));
+  }
+
+  writeStamps(specs: CreateSpec<StampValues>[]): Promise<{ stamps: string[]; tx: string }> {
     return this.serial(async () => {
       const wallet = this.needWallet();
       try {
         const res = await wallet.executeBatch({
-          creates: [
-            {
-              schema: this.schemas().stamp,
-              values: toSdkValues("stamp", spec.values as unknown as Record<string, unknown>) as never,
-              expiration: toExpiration(spec.expiry),
-              flags: spec.flags,
-            },
-          ],
+          creates: specs.map((spec) => ({
+            schema: this.schemas().stamp,
+            values: toSdkValues("stamp", spec.values as unknown as Record<string, unknown>) as never,
+            expiration: toExpiration(spec.expiry),
+            flags: spec.flags,
+          })),
         } as never);
-        return { stamp: res.createdEntities[0].toLowerCase(), tx: res.txHash };
+        return { stamps: res.createdEntities.map((k) => k.toLowerCase()), tx: res.txHash };
       } catch (err) {
         throw err instanceof ArkivError ? err : this.fail(err);
       }
     });
   }
 
-  async getRun(runKey: string, withLog: boolean): Promise<RunRow | null> {
+  async getRun(runKey: string, withLog: boolean): Promise<StampedRun | null> {
+    const st = await this.stampForRun(runKey);
+    if (!st || !WALLET_RE.test(st.console)) return null;
     const asked = withLog ? [...RUN_ALL_ATTRS, "log", "log_enc"] : [...RUN_ALL_ATTRS];
-    const res = await this.query(q6Run(runKey, this.pinned(), this.names), selectOf(asked), 1);
-    const page = decodePage(res.data, RUN_TYPES, asked, this.names.run, this.pinned());
-    return page.rows[0] ? runFromRow(page.rows[0]) : null;
+    const res = await this.query(q6Run(runKey, st.console, this.names), selectOf(asked), 1);
+    const page = decodePage(res.data, RUN_TYPES, asked, this.names.run, st.console);
+    const r = page.rows[0] ? runFromRow(page.rows[0]) : null;
+    return r && runMismatch(st, r) === null ? stamped(st, r) : null;
   }
 
   async getListing(listingKey: string): Promise<ListingRow | null> {
     const asked = [...LISTING_ATTRS];
-    const res = await this.query(q6Listing(listingKey, this.pinned(), this.names), selectOf(asked), 1);
-    const page = decodePage(res.data, LISTING_TYPES, asked, this.names.listing, this.pinned());
-    return page.rows[0] ? listingFromRow(page.rows[0]) : null;
+    const res = await this.query(q6ListingByKey(listingKey, this.names), selectOf(asked), 1);
+    const page = decodePage(res.data, LISTING_TYPES, asked, this.names.listing, null);
+    const l = page.rows[0] ? listingFromRow(page.rows[0]) : null;
+    if (!l) return null;
+    const st = await this.stampForRun(l.run);
+    return st && listingMismatch(st, l) === null ? l : null;
   }
 
-  /** Writes run one at a time: one wallet, one entity nonce. */
+  /**
+   * One game's board, raw: the checker's stamps (one page, fastest first), then the runs and the
+   * listings of every console those stamps name (Q1 and Q2 pinned to that wallet). The snapshot
+   * keeps these pages; boardRuns and boardListings join them.
+   */
+  async boardPages(game: string, season: number, want: { runs?: boolean; listings?: boolean } = { runs: true, listings: true }): Promise<BoardPages> {
+    const asked = [...STAMP_ATTRS];
+    const res = await this.query(q1Stamps(game, season, this.pinned(), this.names), selectOf(asked), PAGE);
+    const stamps = decodePage(res.data, STAMP_TYPES, asked, this.names.stamp, this.pinned()).rows.map(stampFromRow);
+    const consoles = [...new Set(stamps.map((s) => s.console))].filter((w) => WALLET_RE.test(w));
+    const pages = await Promise.all(
+      consoles.map(async (w) => ({
+        runs: want.runs ? (await this.query(q1Board(game, season, w, this.names), selectOf(RUN_BOARD_ATTRS), PAGE)).data : [],
+        listings: want.listings ? (await this.query(q2Listings(game, season, w, this.names), selectOf(LISTING_ATTRS), PAGE)).data : [],
+      })),
+    );
+    return { block: res.blockNumber, stamps: res.data, runs: pages.flatMap((p) => p.runs), listings: pages.flatMap((p) => p.listings) };
+  }
+
+  /** The raw pages decoded (stamps pinned to the checker; runs and listings checked against the stamps) and joined. */
+  joinPages(p: BoardPages): ReturnType<typeof joinBoard> {
+    const stamps = decodePage(p.stamps, STAMP_TYPES, STAMP_ATTRS, this.names.stamp, this.pinned()).rows.map(stampFromRow);
+    const runs = decodePage(p.runs, RUN_TYPES, RUN_BOARD_ATTRS, this.names.run, null).rows.map(runFromRow);
+    const listings = decodePage(p.listings, LISTING_TYPES, LISTING_ATTRS, this.names.listing, null).rows.map(listingFromRow);
+    return joinBoard(stamps, runs, listings);
+  }
+
+  async boardRuns(game: string, season: number): Promise<StampedRun[]> {
+    return this.joinPages(await this.boardPages(game, season, { runs: true })).runs;
+  }
+
+  async boardListings(game: string, season: number): Promise<ListingRow[]> {
+    return this.joinPages(await this.boardPages(game, season, { runs: true, listings: true })).listings;
+  }
+
+  /** The checker's writes, one at a time: one wallet, one entity nonce. */
   private serial<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.queue.then(fn, fn);
     this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  /** The house wallet's writes, one at a time, on their own queue (their own nonce). */
+  private houseSerial<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.houseQueue.then(fn, fn);
+    this.houseQueue = run.catch(() => undefined);
     return run;
   }
 
@@ -626,46 +780,13 @@ export class SdkArkiv implements ArkivPort {
     });
   }
 
-  writeListing(runKey: string, listing: CreateSpec<ListingValues>, replaces?: string): Promise<{ listing: string; tx: string }> {
-    return this.serial(async () => {
-      const wallet = this.needWallet();
-      try {
-        const res = await wallet.executeBatch({
-          creates: [
-            {
-              schema: this.schemas().listing,
-              values: toSdkValues("listing", { ...listing.values, run: runKey }) as never,
-              expiration: toExpiration(listing.expiry),
-              flags: listing.flags,
-            },
-          ],
-          ...(replaces ? { deletes: [{ entityKey: replaces as Hex }] } : {}),
-        } as never);
-        return { listing: res.createdEntities[0].toLowerCase(), tx: res.txHash };
-      } catch (err) {
-        throw this.fail(err);
-      }
-    });
-  }
-
-  async boardRuns(game: string, season: number): Promise<RunRow[]> {
-    const asked = [...RUN_BOARD_ATTRS];
-    const res = await this.query(q1Board(game, season, this.pinned(), this.names), selectOf(asked), 100);
-    return decodePage(res.data, RUN_TYPES, asked, this.names.run, this.pinned()).rows.map(runFromRow);
-  }
-
-  async boardListings(game: string, season: number): Promise<ListingRow[]> {
-    const asked = [...LISTING_ATTRS];
-    const res = await this.query(q2Listings(game, season, this.pinned(), this.names), selectOf(asked), 100);
-    return decodePage(res.data, LISTING_TYPES, asked, this.names.listing, this.pinned()).rows.map(listingFromRow);
-  }
-
   writeHouse(pairs: HousePair[]): Promise<{ runs: string[]; listings: string[]; tx: string }> {
-    return this.serial(async () => {
-      const wallet = this.needWallet();
+    return this.houseSerial(async () => {
+      const wallet = this.houseWallet;
+      if (!wallet || !this.house) throw new ArkivError("no house key configured (HOUSE_ARKIV_KEY)");
       const s = this.schemas();
       try {
-        const keys = await this.pub.predictEntityKeys({ owner: this.checker as Hex, count: 2 * pairs.length });
+        const keys = await this.pub.predictEntityKeys({ owner: this.house as Hex, count: 2 * pairs.length });
         const creates = pairs.flatMap((p, i) => {
           const r = keys[2 * i];
           const l = keys[2 * i + 1];
@@ -689,7 +810,7 @@ export class SdkArkiv implements ArkivPort {
         const res = await wallet.executeBatch({ creates } as never);
         const made = res.createdEntities.map((k) => k.toLowerCase());
         if (made.length !== keys.length || made.some((k, i) => k !== keys[i].key.toLowerCase())) {
-          throw new ArkivError("the predicted keys moved (another writer used the checker wallet)");
+          throw new ArkivError("the predicted keys moved (another writer used the house wallet)");
         }
         return { runs: made.filter((_, i) => i % 2 === 0), listings: made.filter((_, i) => i % 2 === 1), tx: res.txHash };
       } catch (err) {
@@ -698,6 +819,10 @@ export class SdkArkiv implements ArkivPort {
     });
   }
 
+  /**
+   * A run alone, signed by this port's own key (not part of ArkivPort): the look-alike demo builds a
+   * port on the STRANGER key to show that a run nobody stamped never reaches a board.
+   */
   writeRun(run: CreateSpec<RunValues>): Promise<{ run: string; tx: string }> {
     return this.serial(async () => {
       const wallet = this.needWallet();

@@ -1,20 +1,23 @@
 /**
- * The house's BOT batches: staging (replay, splits, Q7, duplicates), the exact text World App shows,
- * the owner's approval only, one Arkiv transaction of 2N creates with every column, the HOUSE
- * message, a refused batch split into HOUSE_TX_PAIRS, idempotent retries, and the HTTP routes.
+ * The house's BOT batches: staging (replay, splits, the stamp dedupe, duplicates), the exact text
+ * World App shows, the owner's approval only, one Arkiv transaction of 2N creates from the house
+ * wallet with every column, then one transaction of N stamps from the checker, the HOUSE message, a
+ * refused batch split into HOUSE_TX_PAIRS, idempotent retries, the house off without
+ * HOUSE_ARKIV_KEY, and the HTTP routes.
  */
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, it } from "node:test";
 import { decryptGhost, sha256Hex } from "../src/arkiv/ghost.js";
 import { batchId, houseListing, houseRun, houseText, HouseService, type HouseView } from "../src/arkiv/house.js";
-import { explorerLinks, loadConfig } from "../src/config.js";
+import { STAMP_FLAGS } from "../src/arkiv/schema.js";
+import { explorerLinks, houseProblems, loadConfig } from "../src/config.js";
 import { HCS_MAX_BYTES, houseMessage } from "../src/hedera/messages.js";
 import { nullifierKey, runnerId } from "../src/hmac.js";
-import { buildServer, makeHealth } from "../src/server.js";
+import { buildServer, makeHealth, pivotHealth } from "../src/server.js";
 import { batchLetter, Store } from "../src/store.js";
 import { FakeApprovals } from "./fake-approvals.js";
-import { FakeArkiv, FakeChecker, makeLog } from "./fake-arkiv.js";
+import { CHECKER, FakeArkiv, FakeChecker, HOUSE_WALLET, makeLog, WALLET_A } from "./fake-arkiv.js";
 import { FakeHedera, HOUSE, TOPIC } from "./fake-hedera.js";
 import { FakeSplits } from "./fake-splits.js";
 import { SECRET, tempDir, waitFor } from "./helpers.js";
@@ -38,11 +41,12 @@ afterEach(() => {
 });
 
 let n = 0;
-function setup(o: { txPairs?: number; problems?: string[]; hedera?: boolean } = {}) {
+function setup(o: { txPairs?: number; problems?: string[]; hedera?: boolean; houseWallet?: string | null } = {}) {
   n += 1;
   const store = new Store(tempDir(), SECRET);
   const owner = store.claimBook(nullifierKey(SECRET, "act", `owner-${n}`), "Orb", "0123456789abcdef", 1, "session_o").record;
   const arkiv = new FakeArkiv();
+  if (o.houseWallet !== undefined) arkiv.house = o.houseWallet;
   const checker = new FakeChecker();
   const splits = new FakeSplits();
   const approvals = new FakeApprovals(store);
@@ -157,10 +161,16 @@ describe("POST /house/batch: staging", () => {
     assert.match(await refusal(t.house.stage(t.body())), /^409 replay_refused: log 1: splits tool/);
   });
 
-  it("a log already on the board (Q7) refuses the whole batch", async () => {
+  it("a log already on the board (a checker stamp names a console's run of it) refuses the whole batch", async () => {
     const s = setup();
-    const key = s.arkiv.addRun({ game: "MDGP", title: "MARINE DRIVE GP", season: 1, rules: 4, frames: 6236, log_h: sha256Hex(s.logs[1]), runner: "0".repeat(16), book: "ANY-XYZ", human: true, tool: "t" });
+    const key = s.arkiv.addRun({ game: "MDGP", title: "MARINE DRIVE GP", season: 1, rules: 4, frames: 6236, log_h: sha256Hex(s.logs[1]), runner: "0".repeat(16), book: "ANY-XYZ", human: true, tool: "t" }, WALLET_A);
     assert.equal(await refusal(s.house.stage(s.body())), `409 on_board: log 2 is run ${key}`);
+  });
+
+  it("a run of the log that no stamp names (a look-alike, an old checker row) is not on the board: staging goes on", async () => {
+    const s = setup();
+    s.arkiv.addRun({ game: "MDGP", title: "MARINE DRIVE GP", season: 1, rules: 4, frames: 6236, log_h: sha256Hex(s.logs[1]), runner: "0".repeat(16), book: "ANY-XYZ", human: true, tool: "t" }, CHECKER, { stamp: false });
+    assert.equal((await s.house.stage(s.body())).batch, batchId(s.logs.map(sha256Hex)));
   });
 
   it("a duplicate within the batch refuses it", async () => {
@@ -179,10 +189,29 @@ describe("POST /house/batch: staging", () => {
     const off = setup({ problems: ["HEDERA_HOUSE_ID"] });
     assert.equal(await refusal(off.house.stage(off.body())), "503 house_not_configured: set: HEDERA_HOUSE_ID");
   });
+
+  it("no house wallet (HOUSE_ARKIV_KEY missing): the house is off, with that reason in /health", async () => {
+    const s = setup({ houseWallet: null });
+    assert.equal(await refusal(s.house.stage(s.body())), "503 house_not_configured: set: HOUSE_ARKIV_KEY");
+    const env = { HEDERA_HOUSE_ID: HOUSE, HOUSE_OWNER_BOOK: "ANY-6PS", CHECKER_REPLAY: "/x/{game}/arcade_replay" };
+    const missing = houseProblems(loadConfig(env, "."));
+    assert.ok(missing.includes("HOUSE_ARKIV_KEY"), missing.join(", "));
+    const checkerKey = `0x${"1".repeat(64)}`;
+    const same = houseProblems(loadConfig({ ...env, ARKIV_CHECKER_KEY: checkerKey, HOUSE_ARKIV_KEY: checkerKey }, "."));
+    assert.ok(same.includes("HOUSE_ARKIV_KEY (not the checker's key)"), "the house wallet is never the checker's");
+    const own = houseProblems(loadConfig({ ...env, ARKIV_CHECKER_KEY: checkerKey, HOUSE_ARKIV_KEY: `0x${"2".repeat(64)}` }, "."));
+    assert.ok(!own.some((p) => p.startsWith("HOUSE_ARKIV_KEY")), own.join(", "));
+    const h = pivotHealth({ consoles: null, splits: true, scout: null, house: null, houseProblems: ["HOUSE_ARKIV_KEY"], arkivWrites: true });
+    assert.deepEqual([h.house, h.house_off], [false, "set: HOUSE_ARKIV_KEY"]);
+    const on = pivotHealth({ consoles: null, splits: true, scout: null, house: {}, houseProblems: [], arkivWrites: true });
+    assert.deepEqual([on.house, on.house_off], [true, null]);
+    const noWrites = pivotHealth({ consoles: null, splits: true, scout: null, house: {}, houseProblems: [], arkivWrites: false });
+    assert.deepEqual([noWrites.house, noWrites.house_off], [false, "Arkiv writes are off"]);
+  });
 });
 
-describe("POST /house/publish: the owner's World approval, then one Arkiv batch", () => {
-  it("writes 2N creates in one transaction with every column, after the HOUSE message", async () => {
+describe("POST /house/publish: the owner's World approval, then one Arkiv batch from the house wallet and one of stamps", () => {
+  it("writes 2N creates in one house-wallet transaction with every column, after the HOUSE message, then the checker stamps every run in one more", async () => {
     const s = setup();
     const staged = await s.house.stage(s.body());
     const batch = String(staged.batch);
@@ -194,9 +223,15 @@ describe("POST /house/publish: the owner's World approval, then one Arkiv batch"
     const v = s.house.view(p.id)!;
     assert.equal(v.ok, true, JSON.stringify(v));
 
-    // One transaction, 12 creates.
-    assert.equal(s.arkiv.batches.length, 1);
-    assert.deepEqual([s.arkiv.batches[0].kind, s.arkiv.batches[0].creates], ["house", 12]);
+    // One house-wallet transaction of 12 creates, then one checker transaction of 6 stamps.
+    assert.deepEqual(
+      s.arkiv.batches.map((b) => [b.kind, b.creates, b.creator]),
+      [
+        ["house", 12, HOUSE_WALLET],
+        ["stamp", 6, CHECKER],
+      ],
+    );
+    assert.ok(s.arkiv.runs.every((r) => r.creator === HOUSE_WALLET) && s.arkiv.listings.every((l) => l.creator === HOUSE_WALLET), "the house wallet created every run and listing");
     // The HOUSE message, first, word for word.
     const [m] = s.hcs.of("HOUSE");
     assert.equal(
@@ -215,7 +250,7 @@ describe("POST /house/publish: the owner's World approval, then one Arkiv batch"
           rules: 4,
           frames: LAPS[i].reduce((a, b) => a + b, 0),
           log_h: sha256Hex(s.logs[i]),
-          runner: runnerId(SECRET, `open|${label}`),
+          runner: runnerId(SECRET, `house|${label}`),
           label,
           human: false,
           tool: "arcade_replay sha256:a992006e6280",
@@ -245,13 +280,41 @@ describe("POST /house/publish: the owner's World approval, then one Arkiv batch"
         hcs: `${TOPIC}/${m.seq}`,
       });
       assert.deepEqual(l.spec.expiry, { kind: "days", days: 7 });
+      // One stamp per run, by the checker, naming the house wallet as its console.
+      const st = s.arkiv.stamps[i];
+      assert.deepEqual(st.spec.values, {
+        run: run.key,
+        console: HOUSE_WALLET,
+        game: "MDGP",
+        season: 1,
+        frames: rv.frames,
+        log_h: rv.log_h,
+        label,
+        human: false,
+        s1: LAPS[i][0],
+        s2: LAPS[i][1],
+        s3: LAPS[i][2],
+        split_kind: "lap",
+        final_hash: 576543229,
+        tool: "arcade_replay sha256:a992006e6280",
+      });
+      assert.deepEqual(st.spec.flags, STAMP_FLAGS);
+      assert.deepEqual(st.spec.expiry, run.spec.expiry, "the stamp expires with its run");
     }
+    // Every reader ranks them now: stamped runs of the house wallet.
+    const board = await s.arkiv.boardRuns("MDGP", 1);
+    assert.deepEqual(new Set(board.map((r) => r.key)), new Set(s.arkiv.runs.map((r) => r.key)));
+    assert.ok(board.every((r) => r.owner === HOUSE_WALLET));
+    assert.equal((await s.arkiv.boardListings("MDGP", 1)).length, 6);
+    const ex = (t: string) => `https://rabdi.explorer.arkiv.network/tx/${t}`;
     assert.deepEqual(v.data, {
       batch,
       runs: s.arkiv.runs.map((r) => r.key),
       listings: s.arkiv.listings.map((l) => l.key),
+      stamps: s.arkiv.stamps.map((r) => r.key),
       txs: [s.arkiv.batches[0].tx],
-      explorer: { txs: [`https://rabdi.explorer.arkiv.network/tx/${s.arkiv.batches[0].tx}`] },
+      stamp_txs: [s.arkiv.batches[1].tx],
+      explorer: { txs: [ex(s.arkiv.batches[0].tx)], stamp_txs: [ex(s.arkiv.batches[1].tx)] },
       hcs: { topic: TOPIC, seq: Number(m.seq), tx: m.tx, hashscan: `https://hashscan.io/testnet/transaction/${m.tx.replace("@", "-").replace(/\.(\d{9})$/, "-$1")}` },
     });
     const approvalJti = `jti-${p.approval!.id}`;
@@ -308,7 +371,45 @@ describe("POST /house/publish: the owner's World approval, then one Arkiv batch"
     assert.equal(s.hcs.of("HOUSE").length, 1, "one HOUSE message for the batch");
     const third = await publishDone(s.house, String(batch));
     assert.deepEqual(third.view.data, retry.view.data);
-    assert.equal(s.arkiv.batches.length, 1, "nothing written twice");
+    assert.deepEqual(s.arkiv.batches.map((b) => b.kind), ["house", "stamp"], "nothing written twice");
+  });
+
+  it("the stamps fail after the house rows landed: the retry stamps the rows it finds, writing no row again", async () => {
+    const s = setup();
+    const { batch } = await s.house.stage(s.body());
+    const realStamps = s.arkiv.writeStamps.bind(s.arkiv);
+    let refuse = true;
+    s.arkiv.writeStamps = async (specs) => {
+      if (refuse) throw new (await import("../src/arkiv/client.js")).ArkivError("reverted");
+      return realStamps(specs);
+    };
+    const first = await publishDone(s.house, String(batch));
+    assert.deepEqual([first.view.ok, first.view.failure], [false, "ls_publish_fail"]);
+    assert.deepEqual([s.arkiv.runs.length, s.arkiv.stamps.length], [6, 0]);
+    assert.deepEqual(await s.arkiv.boardRuns("MDGP", 1), [], "unstamped house rows are on no board");
+    refuse = false;
+    const retry = await publishDone(s.house, String(batch));
+    assert.equal(retry.view.ok, true, JSON.stringify(retry.view));
+    assert.equal(retry.approval, null, "no second approval");
+    assert.deepEqual(s.arkiv.batches.map((b) => b.kind), ["house", "stamp"], "the rows once, the stamps once");
+    assert.deepEqual(retry.view.data.runs, s.arkiv.runs.map((r) => r.key));
+    assert.equal((await s.arkiv.boardRuns("MDGP", 1)).length, 6);
+  });
+
+  it("a batch written before by the checker itself (no stamps) is published again from the house wallet, after a new approval", async () => {
+    const s = setup();
+    const { batch } = await s.house.stage(s.body());
+    // As the checker-era service left it: written, its rows the checker's own, never stamped.
+    for (const [i, log] of s.logs.entries()) s.arkiv.addRun({ ...houseRun({ game: "MDGP", season: 1, rules: 4, frames: LAPS[i].reduce((a, b) => a + b, 0), log_h: sha256Hex(log), label: `BOT-A${i + 1}`, runner: "r", tool: "t", log_enc: new Uint8Array(4), splits: LAPS[i] }) }, CHECKER, { stamp: false });
+    s.store.updateHouseBatch(String(batch), { status: "written", result: { runs: s.arkiv.runs.map((r) => r.key), listings: [], txs: [`0x${"e".repeat(64)}`] } });
+    const r = await publishDone(s.house, String(batch));
+    assert.notEqual(r.approval, null, "the owner approves this batch again in World App");
+    assert.equal(r.view.ok, true, JSON.stringify(r.view));
+    assert.deepEqual(s.arkiv.batches.map((b) => b.kind), ["house", "stamp"]);
+    const board = await s.arkiv.boardRuns("MDGP", 1);
+    assert.equal(board.length, 6);
+    assert.ok(board.every((x) => x.owner === HOUSE_WALLET), "the house wallet's rows rank, the checker's old ones do not");
+    assert.ok(!(r.view.data.txs as string[]).includes(`0x${"e".repeat(64)}`), "the old checker transaction is not this batch's any more");
   });
 
   it("a retry after a partial landing counts the batch's own rows and writes the rest", async () => {
@@ -339,7 +440,7 @@ describe("POST /house/publish: the owner's World approval, then one Arkiv batch"
     s.arkiv.maxCreates = 6;
     const r = await publishDone(s.house, String(batch));
     assert.equal(r.view.ok, true, JSON.stringify(r.view));
-    assert.deepEqual(s.arkiv.batches.map((b) => b.creates), [6, 6]);
+    assert.deepEqual(s.arkiv.batches.map((b) => [b.kind, b.creates]), [["house", 6], ["house", 6], ["stamp", 6]]);
     assert.equal((r.view.data.txs as string[]).length, 2);
     assert.deepEqual(s.arkiv.runs.map((x) => x.spec.values.label), ["BOT-A1", "BOT-A2", "BOT-A3", "BOT-A4", "BOT-A5", "BOT-A6"]);
     assert.ok(s.lines.some((l) => /splitting into 3 pairs a transaction/.test(l)));
@@ -350,7 +451,7 @@ describe("POST /house/publish: the owner's World approval, then one Arkiv batch"
     const { batch } = await s.house.stage(s.body());
     s.approvals.hold = true;
     const p = await s.house.publish({ batch });
-    s.arkiv.addRun({ game: "MDGP", title: "MARINE DRIVE GP", season: 1, rules: 4, frames: 6169, log_h: sha256Hex(s.logs[2]), runner: "0".repeat(16), book: "ANY-XYZ", human: true, tool: "t" });
+    s.arkiv.addRun({ game: "MDGP", title: "MARINE DRIVE GP", season: 1, rules: 4, frames: 6169, log_h: sha256Hex(s.logs[2]), runner: "0".repeat(16), book: "ANY-XYZ", human: true, tool: "t" }, WALLET_A);
     s.approvals.hold = false;
     await waitFor(() => s.house.view(p.id)?.stage === "done", 5000);
     assert.equal(s.house.view(p.id)?.failure, "ls_copied");

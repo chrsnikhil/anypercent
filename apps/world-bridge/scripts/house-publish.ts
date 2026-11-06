@@ -7,10 +7,12 @@
  *      none is on the board, and answers the labels (BOT-<letter><n>) and the exact text;
  *   3. prints the table, then POST /house/publish: the house owner (HOUSE_OWNER_BOOK) approves that
  *      exact text in World App (terminal QR); Ctrl-C cancels before anything is written;
- *   4. follows the write (the HOUSE message on HCS, then one Arkiv batch) and prints every run,
- *      listing and transaction with its explorer link.
+ *   4. follows the write (the HOUSE message on HCS, then one Arkiv batch from the house wallet,
+ *      HOUSE_ARKIV_KEY, then one batch of stamps from the checker) and prints every run, listing,
+ *      stamp and transaction with its explorer link.
  *
- * Rows are open tier: never HUMAN, no book, no credential, listings paying the house account.
+ * BOT rows are never HUMAN: no book, no credential, listings paying the house account. They rank
+ * like any console's runs: created by the house wallet, stamped by the checker.
  * Prints ids and links only.
  */
 import { createHash } from "node:crypto";
@@ -59,7 +61,7 @@ for (const e of manifest) {
 }
 
 const health = await call(base, "GET", "/health", undefined, 5000).catch((err: Error) => die(err.message));
-if (health.json.house !== true) die(`The bridge says house: ${String(health.json.house)} (needs HEDERA_HOUSE_ID, HOUSE_OWNER_BOOK, the splits tool and Arkiv writes; see its startup line "pivot: ...").`);
+if (health.json.house !== true) die(`The bridge says house: ${String(health.json.house)}${health.json.house_off ? ` (${health.json.house_off})` : ""} (needs HEDERA_HOUSE_ID, HOUSE_OWNER_BOOK, HOUSE_ARKIV_KEY, the splits tool and Arkiv writes; see its startup line "pivot: ...").`);
 
 console.log(`Staging ${logs.length} ${game} logs from ${dir.replace(appDir, ".")} (the bridge replays each one) ...`);
 const staged = await call(base, "POST", "/house/batch", { game, logs, gen });
@@ -81,7 +83,7 @@ else console.log(`\nbatch ${s.batch} was approved in World App before: writing i
 const done = await follow(base, `/house/publish/${pub.json.id}`, `/house/publish/${pub.json.id}/cancel`, {
   scan: "waiting for the scan",
   approve: "waiting for the approval in World App",
-  write: "approved: the HOUSE message on HCS, then the Arkiv batch",
+  write: "approved: the HOUSE message on HCS, the house wallet's Arkiv batch, then the checker's stamps",
   done: "done",
 });
 if (done.ok !== true) die(`Not published: ${done.failure} (a failed write keeps the approval for this batch: run the same command again to retry)`);
@@ -89,9 +91,11 @@ const d = done.data;
 console.log("");
 if (d.hcs) row("HOUSE on HCS", `#${d.hcs.seq} on ${d.hcs.topic}, tx ${d.hcs.tx}`, d.hcs.hashscan);
 else row("HOUSE on HCS", "not posted (the rows carry no hcs)");
-(d.txs as string[]).forEach((t, i) => row(`Arkiv tx ${i + 1}`, t, d.explorer?.txs?.[i] ?? null));
+(d.txs as string[]).forEach((t, i) => row(`house tx ${i + 1}`, t, d.explorer?.txs?.[i] ?? null));
+((d.stamp_txs ?? []) as string[]).forEach((t, i) => row(`stamp tx ${i + 1}`, t, d.explorer?.stamp_txs?.[i] ?? null));
 const entity = (k: string) => cfg.explorer.entity.replaceAll("{key}", k);
 (d.runs as string[]).forEach((r, i) => {
   row(`${s.rows[i].label} run`, r, entity(r));
   row(`${s.rows[i].label} listing`, d.listings[i], d.listings[i] ? entity(d.listings[i]) : null);
+  if (d.stamps?.[i]) row(`${s.rows[i].label} stamp`, d.stamps[i], entity(d.stamps[i]));
 });

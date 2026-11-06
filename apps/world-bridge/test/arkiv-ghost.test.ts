@@ -6,7 +6,7 @@ import { decryptGhost, encryptGhost, sha256Hex } from "../src/arkiv/ghost.js";
 import { MockPayments } from "../src/arkiv/payments.js";
 import { ArkivService, RouteError } from "../src/arkiv/service.js";
 import { Store } from "../src/store.js";
-import { CHECKER, FakeArkiv, makeLog, STRANGER } from "./fake-arkiv.js";
+import { CHECKER, FakeArkiv, makeLog, STRANGER, WALLET_A } from "./fake-arkiv.js";
 import { SECRET, tempDir } from "./helpers.js";
 
 const GHOST = "cd".repeat(32);
@@ -73,11 +73,13 @@ function service(over: { mock?: boolean; arkiv?: FakeArkiv } = {}) {
   return { svc, arkiv, store, lines };
 }
 
-function listedRun(arkiv: FakeArkiv, log: Uint8Array, over: Record<string, unknown> = {}, creator = CHECKER): string {
+/** A console's listed run (WALLET_A), stamped by the checker unless `stamp` is false. */
+function listedRun(arkiv: FakeArkiv, log: Uint8Array, over: Record<string, unknown> = {}, creator = WALLET_A, stamp = true): string {
   const logH = sha256Hex(log);
   return arkiv.addRun(
     { game: "MDGP", title: "MARINE DRIVE GP", season: 1, rules: 4, frames: 6170, log_h: logH, runner: "0123456789abcdef", book: "ANY-6PS", human: true, credential: "Orb", tool: "t", log_enc: encryptGhost(GHOST, logH, log), ...over },
     creator,
+    { stamp },
   );
 }
 
@@ -124,26 +126,27 @@ describe("POST /arkiv/ghost", () => {
     await refused(svc.ghost({ run: b, receipt: "mock-1a2b3c4d" }), 402, "payment_required");
   });
 
-  it("404 for a run the checker did not create, and for no run at all", async () => {
+  it("404 for a run no checker stamp names, a stamp naming another wallet, and no run at all", async () => {
     const { svc, arkiv } = service();
-    await refused(svc.ghost({ run: listedRun(arkiv, log, {}, STRANGER), receipt: "mock-1a2b3c4d" }), 404, "not_on_board");
+    await refused(svc.ghost({ run: listedRun(arkiv, log, {}, WALLET_A, false), receipt: "mock-1a2b3c4d" }), 404, "not_on_board");
+    const other = listedRun(arkiv, makeLog("MDGP", 4, 6461, 64, 9), {}, STRANGER, false);
+    arkiv.stampRun(other, { console: WALLET_A });
+    await refused(svc.ghost({ run: other, receipt: "mock-1a2b3c4d" }), 404, "not_on_board");
     await refused(svc.ghost({ run: `0x${"9".repeat(64)}`, receipt: "mock-1a2b3c4d" }), 404, "not_on_board");
   });
 
-  it("a plain (open-tier) row is served as is", async () => {
-    const { svc, arkiv } = service({ mock: false });
-    const run = arkiv.addRun({ game: "MDGP", title: "MARINE DRIVE GP", season: 1, rules: 4, frames: 6170, log_h: sha256Hex(log), runner: "aaaaaaaaaaaaaaaa", label: "TEAM", human: false, tool: "t", log });
-    const out = await svc.ghost({ run, receipt: "mock-00000000" });
-    assert.deepEqual(Uint8Array.from(Buffer.from(out.log, "base64")), log);
+  it("a stamped run with no sealed ghost (a plain log) is not served", async () => {
+    const { svc, arkiv, lines } = service();
+    const run = arkiv.addRun({ game: "MDGP", title: "MARINE DRIVE GP", season: 1, rules: 4, frames: 6170, log_h: sha256Hex(log), runner: "aaaaaaaaaaaaaaaa", book: "ANY-6PS", human: true, tool: "t", log });
+    await refused(svc.ghost({ run, receipt: "mock-00000000" }), 404, "not_on_board");
+    assert.match(lines.join("\n"), /has no sealed ghost, not served/);
   });
 
-  it("a log_h mismatch is never served (sealed or plain)", async () => {
+  it("a log_h mismatch is never served", async () => {
     const { svc, arkiv, lines } = service();
     const wrong = "1".repeat(64);
     const sealedUnderWrong = arkiv.addRun({ game: "MDGP", title: "M", season: 1, rules: 4, frames: 1, log_h: wrong, runner: "r", book: "ANY-6PS", human: true, tool: "t", log_enc: encryptGhost(GHOST, wrong, log) });
     await refused(svc.ghost({ run: sealedUnderWrong, receipt: "mock-1a2b3c4d" }), 404, "not_on_board");
-    const plainWrong = arkiv.addRun({ game: "MDGP", title: "M", season: 1, rules: 4, frames: 1, log_h: wrong, runner: "r", label: "X", human: false, tool: "t", log });
-    await refused(svc.ghost({ run: plainWrong, receipt: "mock-1a2b3c4e" }), 404, "not_on_board");
     assert.match(lines.join("\n"), /does not match its log_h, not served/);
   });
 

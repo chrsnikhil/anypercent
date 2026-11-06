@@ -235,8 +235,12 @@ export class Consoles {
 
   // ---- owner ops: link and release, each on one World approval ---------------------------------
 
-  /** POST /console/op. Throws ConsoleOpRefused (400, 404, 409, 503). */
-  async startOp(body: Record<string, unknown>): Promise<{ id: string; action: string; approval: { id: string; qr: string; code: string; expires_s: number } }> {
+  /**
+   * POST /console/op. Throws ConsoleOpRefused (400, 404, 409, 503). Answers `wallet`: the full
+   * address a link's text names in short form (lowercase; null when the console reported none, and
+   * for a release), so the owner can compare it with the console before scanning.
+   */
+  async startOp(body: Record<string, unknown>): Promise<{ id: string; action: string; wallet: string | null; approval: { id: string; qr: string; code: string; expires_s: number } }> {
     const { op, console: tag, book } = body;
     if (op !== "link" && op !== "release") throw new ConsoleOpRefused(400, "bad_body");
     if (typeof tag !== "string" || !CONSOLE_TAG_RE.test(tag)) throw new ConsoleOpRefused(400, "bad_body");
@@ -286,7 +290,7 @@ export class Consoles {
     this.ops.set(o.id, o);
     this.opts.log?.(`console ${tag}: ${op} to ${target}${wallet ? ` with wallet ${shortWallet(wallet)}` : ""} waits for the owner's World approval`);
     this.schedule(o);
-    return { id: o.id, action, approval: { id: started.id, qr: started.qr, code: started.code, expires_s: started.expires_s } };
+    return { id: o.id, action, wallet: wallet ? wallet.toLowerCase() : null, approval: { id: started.id, qr: started.qr, code: started.code, expires_s: started.expires_s } };
   }
 
   opView(id: string): OpView | undefined {
