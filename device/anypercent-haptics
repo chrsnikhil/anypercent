@@ -1,0 +1,5 @@
+#!/bin/sh
+# Started by ALSA for each game (device/asoundrc) with the game's sound on stdin. If the haptics script cannot run,
+# keep reading anyway: a reader that goes away would kill RetroArch with a broken pipe.
+/opt/anypercent/venv/bin/python /opt/anypercent/src/launcher/arca_launcher/haptics.py
+exec cat >/dev/null

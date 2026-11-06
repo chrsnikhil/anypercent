@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Any% browser session: three quick D-pad down presses on the DualSense show the on-screen keyboard (wvkbd),
+three more hide it. Reads the pad's own event node (the input group may), so it sees presses whatever window has
+focus, and keeps looking if the pad disconnects and comes back.
+
+  anypercent-browser-pad WVKBD_PID"""
+import glob
+import os
+import signal
+import struct
+import sys
+import time
+
+PAD_NAME = "DualSense Wireless Controller"       # the gamepad node, not its Touchpad or Motion Sensors
+EV_ABS, ABS_HAT0Y = 3, 17                         # the D-pad's up/down axis: 1 is down
+PRESSES, GAP = 3, 0.7                             # three presses, each within 0.7 s of the one before
+EVENT = struct.Struct("llHHi")                    # struct input_event on 64-bit Linux
+
+
+class Triple:
+    """Counts D-pad down presses; True when the third quick one lands."""
+
+    def __init__(self, presses=PRESSES, gap=GAP):
+        self.presses, self.gap = presses, gap
+        self.count, self.last = 0, None
+
+    def press(self, t):
+        self.count = self.count + 1 if self.last is not None and t - self.last <= self.gap else 1
+        self.last = t
+        if self.count >= self.presses:
+            self.count, self.last = 0, None
+            return True
+        return False
+
+
+def find_pad():
+    for name_file in sorted(glob.glob("/sys/class/input/event*/device/name")):
+        try:
+            if open(name_file).read().strip() == PAD_NAME:
+                return "/dev/input/" + name_file.split("/")[4]
+        except OSError:
+            pass
+    return None
+
+
+def main():
+    kb = int(sys.argv[1])
+    shown, triple = False, Triple()
+    while True:
+        path = find_pad()
+        if not path:
+            time.sleep(2)
+            continue
+        try:
+            with open(path, "rb") as dev:
+                while True:
+                    data = dev.read(EVENT.size)
+                    if len(data) < EVENT.size:
+                        break
+                    _, _, etype, code, value = EVENT.unpack(data)
+                    if etype == EV_ABS and code == ABS_HAT0Y and value == 1 and triple.press(time.monotonic()):
+                        shown = not shown
+                        os.kill(kb, signal.SIGUSR2 if shown else signal.SIGUSR1)    # USR2 shows, USR1 hides
+        except ProcessLookupError:
+            return                                                  # the keyboard is gone: the session ended
+        except OSError:
+            time.sleep(1)                                           # the pad went away: look for it again
+
+
+if __name__ == "__main__":
+    main()

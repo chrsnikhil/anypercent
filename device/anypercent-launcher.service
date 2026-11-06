@@ -1,0 +1,44 @@
+[Unit]
+Description=Any% game launcher on tty1
+# Not After=systemd-user-sessions.service: that waits for network.target (NetworkManager, ~12 s on this Pi).
+# No PAM login session either (pam_nologin would refuse it that early); the video/input/render/audio groups are
+# all the DRM, evdev and ALSA access the launcher and RetroArch need.
+After=plymouth-quit-wait.service systemd-udev-trigger.service
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+
+[Service]
+Type=simple
+User=anypercent
+Group=anypercent
+SupplementaryGroups=video input render audio
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+WorkingDirectory=/opt/anypercent/src/launcher
+Environment=HOME=/home/anypercent
+Environment=SDL_VIDEODRIVER=kmsdrm
+Environment=PYGAME_HIDE_SUPPORT_PROMPT=1
+Environment=PYTHONUNBUFFERED=1
+# The real sponsors, when this file exists: ARCA_WORLD_BRIDGE, ARCA_ARKIV_CHECKER, ARCA_HEDERA (arca_launcher
+# __main__.py). No file: every sponsor stays mocked.
+EnvironmentFile=-/etc/anypercent/launcher.env
+ExecStart=/opt/anypercent/venv/bin/python -m arca_launcher \
+  --library /opt/anypercent/library \
+  --runs /opt/anypercent/runs \
+  --state /home/anypercent/.local/state/anypercent/state.json \
+  --emulator retroarch \
+  --retroarch-core @CORE@ \
+  --retroarch-cfg /home/anypercent/.config/anypercent/retroarch-launch.cfg \
+  --overlay /opt/anypercent/overlays/gamepad.cfg \
+  --haptics anypercent_haptics \
+  --scale 1 --fullscreen
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

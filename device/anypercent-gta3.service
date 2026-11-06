@@ -1,0 +1,33 @@
+[Unit]
+Description=Any% GTA III (re3, the reverse-engineered engine, with the owner's own game files) on tty1
+# Takes the screen from the launcher, and hands it back when the game quits. Not part of the booth lineup.
+# /opt/anypercent/apps/gta3 holds the owner's own GTA III data (installed from their disc; never in the repo)
+# and the re3 binary built from source in the sandbox.
+Conflicts=anypercent-launcher.service getty@tty1.service
+After=anypercent-launcher.service getty@tty1.service seatd.service
+Wants=seatd.service
+
+[Service]
+Type=simple
+User=anypercent
+Group=anypercent
+SupplementaryGroups=video input render audio
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+Environment=HOME=/home/anypercent
+Environment=XDG_RUNTIME_DIR=/run/anypercent-gta3
+Environment=LIBSEAT_BACKEND=seatd
+RuntimeDirectory=anypercent-gta3
+RuntimeDirectoryMode=0700
+ExecStart=/opt/anypercent/src/device/anypercent-gta3
+# how it ended, for the launcher to report a crash (arca_launcher/exits.py; /run/anypercent from tmpfiles)
+ExecStopPost=+/bin/sh -c 'echo "%N $$SERVICE_RESULT $$EXIT_CODE $$EXIT_STATUS" > /run/anypercent/app-exit'
+# back to the launcher whichever way the game ends
+ExecStopPost=+/bin/systemctl --no-block start anypercent-launcher.service
+
+[Install]
+WantedBy=multi-user.target

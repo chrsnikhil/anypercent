@@ -1,0 +1,37 @@
+#!/bin/sh
+# Any%: Chromium, maximised, in labwc (a small Wayland compositor). The DualSense touchpad is the mouse, and the
+# on-screen keyboard (wvkbd) starts hidden: three quick D-pad down presses show it, three more hide it.
+# Started by anypercent-browser.service; closing Chromium ends the session and the launcher comes back.
+# The script exits with Chromium's own status, so the service (and the launcher after it) can tell a crash.
+#   sudo systemctl start anypercent-browser      (URL: $ANYPERCENT_BROWSER_URL, default the public Any% board)
+# A chain link the launcher opens (PB's Triangle, arca_launcher/hw.py open_url) waits in /run/anypercent/browser-url.
+# This script, as the service starts it, takes that file's first line once (the file goes either way) and, when it is
+# a plain https link, opens it instead: the labwc session below inherits it and never reads the file itself.
+# (Not cage: it has no layer-shell, so the keyboard cannot appear in it.)
+set -eu
+URL="${ANYPERCENT_BROWSER_URL:-https://chrsnikhil.github.io/anypercent/}"      # default: the public Any% board
+HERE=/opt/anypercent/src/device
+STATUS="${XDG_RUNTIME_DIR:-/tmp}/app.status"
+LINK=/run/anypercent/browser-url
+if [ "${1:-}" = "--session" ]; then                               # inside labwc
+    wvkbd-mobintl -L 120 -H 120 --hidden &                         # the keyboard, docked at the bottom, 120 px
+    python3 "$HERE/anypercent-browser-pad" $! &                    # three D-pad downs show it, three more hide it
+    st=0
+    chromium --ozone-platform=wayland --start-maximized --no-first-run --noerrdialogs \
+        --disable-features=Translate --password-store=basic --touch-events=enabled \
+        --user-data-dir="$HOME/.config/anypercent-chromium" "$URL" || st=$?
+    echo "$st" > "$STATUS"
+    exec labwc --exit                                             # Chromium closed: end the session
+fi
+if [ -f "$LINK" ]; then                                           # the launcher's link: once, only a plain https one
+    link=$(head -n 1 "$LINK" 2>/dev/null || true)
+    rm -f "$LINK"
+    if printf '%s\n' "$link" | grep -Eq '^https://[A-Za-z0-9._/@:-]+$'; then
+        ANYPERCENT_BROWSER_URL=$link
+        export ANYPERCENT_BROWSER_URL
+    fi
+fi
+rm -f "$STATUS"
+lw=0
+labwc -C "$HERE/labwc" -s "$HERE/anypercent-browser --session" || lw=$?
+exit "$(cat "$STATUS" 2>/dev/null || echo "$lw")"

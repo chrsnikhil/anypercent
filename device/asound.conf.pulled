@@ -1,0 +1,27 @@
+# PULLED 2026-10-04: not installed (smoke seen while boosted). Kept for reference only.
+# Any%: installed as /etc/asound.conf. The headphone jack (card 0) feeds the PAM8403 amp, and the Pi's own
+# volume tops out at +4 dB, too quiet for the small speaker. So every sound goes through a boost-and-limit stage:
+# the Fast Lookahead Limiter (swh-plugins) adds BOOST dB and holds peaks just under clipping, so loud moments
+# get squeezed instead of crackling. Tune with the first number (gain, dB, up to 20); 0 means no boost.
+defaults.pcm.card 0
+defaults.ctl.card 0
+
+pcm.!default {
+    type plug
+    slave.pcm "anypercent_boost"
+}
+
+pcm.anypercent_boost {
+    type ladspa
+    slave.pcm "anypercent_out"
+    path "/usr/lib/ladspa"
+    plugins [ {
+        label fastLookaheadLimiter
+        input { controls [ 8 -1.0 0.1 ] }      # gain dB, ceiling dB, release s
+    } ]
+}
+
+pcm.anypercent_out {
+    type plug
+    slave.pcm "hw:0"                           # not dmix: on the Pi's headphone jack dmix stalls every writer
+}

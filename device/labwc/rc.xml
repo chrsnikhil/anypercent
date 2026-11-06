@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<!-- Any% browser session: labwc as a bare kiosk. No desktop, no panel; Chromium fills the screen above the
+     on-screen keyboard (wvkbd reserves its strip at the bottom through layer-shell). -->
+<labwc_config>
+  <core>
+    <decoration>client</decoration>
+    <gap>0</gap>
+  </core>
+  <windowRules>
+    <windowRule identifier="chromium*" serverDecoration="no">
+      <action name="Maximize"/>
+    </windowRule>
+  </windowRules>
+  <keyboard>
+    <default/>
+  </keyboard>
+  <!-- the DualSense touchpad: two fingers scroll (the page follows the fingers, as on a phone), a tap clicks -->
+  <libinput>
+    <device category="touchpad">
+      <scrollMethod>twofinger</scrollMethod>
+      <naturalScroll>yes</naturalScroll>
+      <tap>yes</tap>
+      <tapButtonMap>lrm</tapButtonMap>
+      <disableWhileTyping>no</disableWhileTyping>
+    </device>
+  </libinput>
+</labwc_config>

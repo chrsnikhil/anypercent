@@ -1,0 +1,24 @@
+#!/usr/sbin/nft -f
+# Any% firewall: loaded by anypercent-firewall.service. Inbound is dropped except what the handheld needs; outbound
+# is untouched (browser, updates, Sepolia). SSH answers only on the owner's iPhone hotspot (172.20.10.0/28), so on
+# venue Wi-Fi nobody else can even reach the login prompt; and over Tailscale from the owner's laptop only
+# (100.71.192.6, WireGuard-authenticated), so the laptop can still reach it when the Pi is on venue Wi-Fi. (A home Wi-Fi rule, 192.168.1.0/24, was added on
+# 2026-10-24 and removed on 2026-11-02 before the venue: a venue network could use 192.168.1.x too.)
+table inet anypercent_fw
+delete table inet anypercent_fw
+
+table inet anypercent_fw {
+    chain input {
+        type filter hook input priority filter; policy drop;
+        iif "lo" accept
+        ct state established,related accept                 # replies to what the Pi opened
+        ct state invalid drop
+        ip saddr 172.20.10.0/28 tcp dport 22 accept         # SSH: the hotspot
+        iifname "tailscale0" ip saddr 100.71.192.6 tcp dport 22 accept   # SSH: the owner's laptop, over Tailscale
+        udp dport 5353 accept                                # mDNS: anypercent.local
+        udp sport 67 udp dport 68 accept                     # DHCP replies
+        udp sport 547 udp dport 546 accept                   # DHCPv6 replies
+        ip protocol icmp accept
+        ip6 nexthdr ipv6-icmp accept                         # IPv6 needs neighbour discovery
+    }
+}

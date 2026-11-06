@@ -1,0 +1,21 @@
+#!/bin/sh
+# Any%: GTA III on re3 (the reverse-engineered engine), in labwc. re3's only front end is GLFW, which needs a
+# display server; labwc gives it Wayland, and GLFW falls back to GLES 2.0, which the Pi 3's GPU provides.
+# The game files are the owner's own (installed from their disc into /opt/anypercent/apps/gta3; never in the repo).
+# Started by anypercent-gta3.service; quitting the game ends the session and the launcher comes back.
+# The script exits with re3's own status, so the service (and the launcher after it) can tell a crash from a quit.
+set -eu
+GAME=/opt/anypercent/apps/gta3
+HERE=/opt/anypercent/src/device
+STATUS="${XDG_RUNTIME_DIR:-/tmp}/app.status"
+if [ "${1:-}" = "--session" ]; then                               # inside labwc
+    cd "$GAME"
+    st=0
+    ./re3 || st=$?
+    echo "$st" > "$STATUS"
+    exec labwc --exit                                             # game quit: end the session
+fi
+rm -f "$STATUS"
+lw=0
+labwc -C "$HERE/labwc" -s "$HERE/anypercent-gta3 --session" || lw=$?
+exit "$(cat "$STATUS" 2>/dev/null || echo "$lw")"

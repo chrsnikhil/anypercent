@@ -1,0 +1,7 @@
+# Any%: the DualSense touchpad is a mouse and a multitouch surface to the kernel. The launcher takes mouse clicks
+# and touches as taps, so the touchpad would tap the real screen. SDL guesses a device's kind from its
+# capabilities when its udev tags are cleared, so make its nodes unreadable to the launcher's user instead.
+# The browser session (labwc, which opens input through seatd as root) can still open them, so there the touchpad
+# works as a mouse; that is why libinput is no longer told to ignore it.
+# ":=" makes these final: Raspberry Pi OS's 99-com.rules would otherwise put the node back in the input group.
+SUBSYSTEM=="input", KERNEL=="event*|mouse*", ATTRS{name}=="*DualSense*Touchpad*", MODE:="0600", GROUP:="root"

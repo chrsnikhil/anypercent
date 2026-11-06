@@ -1,0 +1,11 @@
+[Unit]
+Description=Any% home key: hold the PS button 2 s to get back to the launcher from any game or app (homekey.py)
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/anypercent/src/device/homekey.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

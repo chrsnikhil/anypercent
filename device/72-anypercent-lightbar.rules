@@ -1,0 +1,3 @@
+# Any%: let the launcher colour a DualSense light bar to match its theme. hid-playstation's rgb LED files are
+# root-only; hand them to the input group (the launcher's user is in it).
+SUBSYSTEM=="leds", KERNEL=="*:rgb:indicator", RUN+="/bin/sh -c 'chgrp input /sys%p/brightness /sys%p/multi_intensity && chmod g+w /sys%p/brightness /sys%p/multi_intensity'"

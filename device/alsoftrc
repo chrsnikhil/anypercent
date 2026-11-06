@@ -1,0 +1,12 @@
+# Any%: installed as ~anypercent/.alsoftrc (OpenAL Soft, used by GTA III / re3).
+# mmap is off because the default ALSA output once ran through a boost-and-limit stage, which cannot be
+# memory-mapped (OpenAL stalled: "Wait timeout... buffer size too low?"). That stage was REMOVED on 2026-10-04:
+# its +8 dB overheated the PAM8403 amp. Audio is 0 dB, no software gain; never add any (see install.sh).
+[general]
+drivers = alsa
+period_size = 1024
+periods = 4
+
+[alsa]
+device = default
+mmap = false

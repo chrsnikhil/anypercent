@@ -1,0 +1,31 @@
+[Unit]
+Description=Any% web browser (Chromium, full screen, with an on-screen keyboard) on tty1
+# Takes the screen from the launcher, and hands it back when the browser closes.
+Conflicts=anypercent-launcher.service getty@tty1.service
+After=anypercent-launcher.service getty@tty1.service seatd.service
+Wants=seatd.service
+
+[Service]
+Type=simple
+User=anypercent
+Group=anypercent
+SupplementaryGroups=video input render audio
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+Environment=HOME=/home/anypercent
+Environment=XDG_RUNTIME_DIR=/run/anypercent-browser
+Environment=LIBSEAT_BACKEND=seatd
+RuntimeDirectory=anypercent-browser
+RuntimeDirectoryMode=0700
+ExecStart=/opt/anypercent/src/device/anypercent-browser
+# how it ended, for the launcher to report a crash (arca_launcher/exits.py; /run/anypercent from tmpfiles)
+ExecStopPost=+/bin/sh -c 'echo "%N $$SERVICE_RESULT $$EXIT_CODE $$EXIT_STATUS" > /run/anypercent/app-exit'
+# back to the launcher whichever way the browser ends
+ExecStopPost=+/bin/systemctl --no-block start anypercent-launcher.service
+
+[Install]
+WantedBy=multi-user.target

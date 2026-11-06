@@ -1,0 +1,9 @@
+# Any%: installed as ~anypercent/.asoundrc. Games play through "anypercent_haptics": the sound goes on to the
+# speaker as before, and a copy (WAV) goes to anypercent-haptics, which turns bass hits and sharp sounds into
+# DualSense rumble (launcher/arca_launcher/haptics.py). The launcher picks it with --haptics anypercent_haptics.
+pcm.anypercent_haptics {
+    type file
+    slave.pcm "default"
+    file "|/opt/anypercent/src/device/anypercent-haptics"
+    format "wav"
+}

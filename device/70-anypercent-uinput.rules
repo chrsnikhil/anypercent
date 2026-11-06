@@ -1,0 +1,6 @@
+# Any%: the on-screen controls service (python -m arca_launcher.touchpad, started by the launcher around a game) runs
+# as the launcher's user and creates its virtual keyboard through /dev/uinput, which is root-only by default. Members
+# of "input" can already read every input device; this lets them create one too. static_node: the node exists
+# before the uinput module is loaded, so it gets these permissions from boot.
+# Installed to /etc/udev/rules.d/ by install.sh (which also loads uinput at boot via /etc/modules-load.d).
+KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", GROUP="input", MODE="0660"

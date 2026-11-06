@@ -1,0 +1,13 @@
+[Unit]
+Description=Any% firewall (inbound: SSH from the iPhone hotspot and home Wi-Fi only; see device/firewall.nft)
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /opt/anypercent/src/device/firewall.nft
+ExecStop=/usr/sbin/nft delete table inet anypercent_fw
+
+[Install]
+WantedBy=multi-user.target
