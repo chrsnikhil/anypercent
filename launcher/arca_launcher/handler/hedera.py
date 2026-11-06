@@ -8,7 +8,8 @@ Hedera key, account or URL is on the console: it talks only to the service.
   payment's transaction id, the receipt load_ghost then hands to /arkiv/ghost. A job outlives the flow's 8 s budget:
   while the flow still polls the call (it keeps it on buy_down), the job is asked on, up to its own life, so a payment
   that settles late still lands (buy_late).
-- record: POST /hedera/record (the listing World approved, as publish sends it, without the log), then its stage.
+- record: POST /hedera/record (the listing World approved, as publish sends it, without the log but with its log_h,
+  so the service can refuse a copied run before anything goes on the topic), then its stage.
 - The seller's payout account: pay_to(book) is the book's registered Hedera account as last read (GET
   /hedera/payto/{book}, in the background, kept in state_dir/hedera-payto.json). At approve_scan it is pinned for that
   listing and added to the approve_scan, approve, record and publish payloads, so World App's text, the HCS record
@@ -52,7 +53,7 @@ _ROUTE = {"pay": "/hedera/buy", "record": "/hedera/record"}
 _STAGES = {"pay": ("guard", "pay", "settle", "done"), "record": ("check", "submit", "done")}
 # The handler's own failure names for each step (the spec's failure table). Anything else is the step's down state.
 _FAILURES = {"pay": ("buy_budget", "buy_changed", "buy_suspended", "buy_down"),
-             "record": ("ls_expired", "ls_wrong", "ls_mismatch", "ls_reused", "ls_record_fail")}
+             "record": ("ls_expired", "ls_wrong", "ls_mismatch", "ls_reused", "ls_copied", "ls_record_fail")}
 _DOWN = {"pay": "buy_down", "record": "ls_record_fail"}
 # A settled payment's transaction id as the facilitator's settle answers it: <fee payer>@<seconds>.<nanos>.
 _TX = re.compile(r"[0-9]{1,10}\.[0-9]{1,10}\.[0-9]{1,10}@[0-9]{1,12}\.[0-9]{1,9}")
@@ -280,7 +281,12 @@ class HederaSponsors:
 
     def _start(self, job):
         """The job's start. One that gets no answer is sent once more, the same body (the service dedupes it); a
-        refusal (a non-2xx reply) or a reply off the contract is the step's down state at once."""
+        refusal (a non-2xx reply) or a reply off the contract is the step's down state at once. A record's body gains
+        the run's log_h here, on the worker (it reads the log from disk), for the service's copy check."""
+        if job.step == "record" and "log_h" not in job.body:
+            log_h = self._log_hash(job.body)
+            if log_h is not None:
+                job.body = dict(job.body, log_h=log_h)
         try:
             reply = self._send("POST", _ROUTE[job.step], job.body, START_TIMEOUT_S)
         except urllib.error.HTTPError as e:             # answered, and refused: bad_body, not configured, unavailable
@@ -334,6 +340,18 @@ class HederaSponsors:
             self._finish(job, Result(ok=False, failure="ls_record_fail"))
         elif reply is not None and reply["stage"] == "done":
             self._finish(job, _outcome(job.step, reply))
+
+    def _log_hash(self, body):
+        """The run's log_h from the Arkiv adapter (inner), or None when it has none (then the record goes without)."""
+        hash_of = getattr(self._inner, "run_log_hash", None)
+        if hash_of is None:
+            return None
+        try:
+            log_h = hash_of(body["game"], body["frames"])
+        except Exception:
+            log.exception("Hedera record: hashing the run's log")
+            return None
+        return log_h if isinstance(log_h, str) and _HASH.fullmatch(log_h) else None
 
     def _finish(self, job, result):
         with self._lock:

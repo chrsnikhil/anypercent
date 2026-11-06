@@ -18,7 +18,10 @@ the JS object `S`) with controller-ruled amendments layered on top:
 - two more came with real World: `id_dup_unnamed`, the flow's `id_dup` when World App refused a
   second sign-up before the bridge could name the book (nothing to sign in to), and `ls_confirm`,
   the flow's `ls_approve` when the listing OK runs on World ID (IDKit), whose phone shows no code
-  to check: tap Confirm, as for the record book.
+  to check: tap Confirm, as for the record book;
+- and one with the first live copy: `ls_copied`, a run whose exact log is already on the board
+  under another record book (the service's own copy check, at record or at publish), so the
+  console never calls a copied run a wrong ID.
 
 This module is pure data (plus `copy_texts`/`PLACEHOLDERS`, small helpers over that data): no
 pygame, no sponsor calls, no clock. Task 6 (`flow.py`) walks `on`; Task 9 draws `card` by its
@@ -396,11 +399,21 @@ STATES: dict[str, State] = {
         name="ls_wrong", mood="worried", kind="no",
         card={"t": "no", "h": "Wrong {world} ID",
               "rows": ("Approved by a {world} ID that does not own *{book}*",),
-              "what": (("Listed", "nothing"), ("Refused by", "{world} itself"),
+              "what": (("Listed", "nothing"), ("Owner", "the ID that made {book}"),
                         ("Rule", "only the owner lists its runs"))},
-        say="That phone's {world} ID does not own record book *{book}*, so {world} refused it. "
-            "Only the owner can list these runs.",
+        say="That approval came from a {world} ID that does not own record book *{book}*, so I "
+            "did not list anything. Only the owner can list these runs.",
         steps=_LS, at=1, fail=True, on={"cross": "ls_scan", "circle": "home"},
+    ),
+    "ls_copied": State(
+        name="ls_copied", mood="serious", kind="no",
+        card={"t": "no", "h": "Already on the board",
+              "rows": ("This exact run is listed under another record book",),
+              "what": (("Listed", "nothing"), ("Rule", "copies do not count"),
+                        ("Next", "list a run of your own"))},
+        say="This exact run is already on the board under another record book, so I did not list "
+            "it. Copies do not count: race it yourself, then list that run.",
+        steps=_LS, at=2, fail=True, on={"cross": "hub", "circle": "home"},
     ),
     "ls_mismatch": State(
         name="ls_mismatch", mood="serious", kind="warn",

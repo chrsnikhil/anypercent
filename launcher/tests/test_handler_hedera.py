@@ -29,7 +29,7 @@ RUN, LISTING, LOG_H = "0x" + "12ab" * 16, "0x" + "34cd" * 16, "ab" * 32
 ACTION = "List MARINE DRIVE GP 1:42.83 ghost for 0.10 USDC on the public board"
 ACTION_TO = "List MARINE DRIVE GP 1:42.83 ghost for 0.10 USDC to 0.0.5123456 on the public board"   # the spec's own
 BUY_FAILURES = ("buy_budget", "buy_changed", "buy_suspended", "buy_down")
-RECORD_FAILURES = ("ls_expired", "ls_wrong", "ls_mismatch", "ls_reused", "ls_record_fail")
+RECORD_FAILURES = ("ls_expired", "ls_wrong", "ls_mismatch", "ls_reused", "ls_copied", "ls_record_fail")
 PAID = {"receipt": TX, "hashscan": "https://hashscan.io/testnet/transaction/" + TX, "late": False}
 RECORDED = {"topic": "0.0.7001234", "seq": 41, "tx": "0.0.6001234@1762412300.000000001",
             "hashscan": "https://hashscan.io/testnet/transaction/1762412301.000000002/message"}
@@ -385,6 +385,28 @@ def test_record_sends_the_approved_listing_and_follows_its_stages(tmp_path):
     assert call.poll() == Result(ok=True, data=RECORDED)
 
 
+def test_record_names_the_runs_log_by_its_hash_for_the_copy_check(tmp_path, monkeypatch):
+    rig = Rig(tmp_path)
+    log = acl("v8q")
+    rig.arkiv.best("MDGP", log, 6170)
+    hashed = []
+    real = rig.arkiv.sponsors.run_log_hash
+    monkeypatch.setattr(rig.arkiv.sponsors, "run_log_hash", lambda *a: hashed.append(a) or real(*a))
+    call = rig.sponsors.begin("record", dict(LIST_PAYLOAD, pay_to=SELLER))
+    assert hashed == [] and rig.hedera.requests == []               # begin never reads the disk: the worker does
+    rig.sponsors.work()
+    assert hashed == [("MDGP", 6170)]
+    assert rig.hedera.posts() == [("/hedera/record", dict(RECORD_BODY, log_h=sha(log)))]
+    assert call.poll() is None
+
+
+def test_a_run_whose_log_is_not_here_is_recorded_without_a_hash(tmp_path):
+    rig = Rig(tmp_path)
+    rig.arkiv.best("MDGP", acl("v8q"), 6290)                         # a best, but not this time
+    _record(rig)
+    assert rig.hedera.posts() == [("/hedera/record", RECORD_BODY)]
+
+
 @pytest.mark.parametrize("failure", RECORD_FAILURES)
 def test_each_record_failure_is_the_handlers_own(tmp_path, failure):
     rig = Rig(tmp_path)
@@ -549,7 +571,7 @@ def test_the_account_is_pinned_at_approve_scan_and_named_alike_in_all_four_paylo
     _record(rig, LIST_PAYLOAD)
     rig.sponsors.begin("publish", LIST_PAYLOAD)
     rig.arkiv.sponsors.work()
-    assert rig.hedera.posts("/hedera/record") == [("/hedera/record", RECORD_BODY)]
+    assert rig.hedera.posts("/hedera/record") == [("/hedera/record", dict(RECORD_BODY, log_h=sha(acl("6ps"))))]
     (path, body), = rig.service.posts()
     assert path == "/arkiv/publish" and body["action"] == ACTION_TO and body["pay_to"] == SELLER
     assert [(step, payload["pay_to"]) for step, payload in seen] == [("approve_scan", SELLER), ("approve", SELLER),
@@ -762,7 +784,7 @@ def test_a_listing_is_recorded_then_listed_naming_the_same_account(tmp_path):
     rig.bridge.move("done", ok=True, data={"jti": "3f9c0a1b2c3d4e5f"})   # an Agent Pass grant: straight to done
     rig.wait(flow, 600)
     assert flow.state.name == "ls_record"
-    assert rig.hedera.posts("/hedera/record") == [("/hedera/record", RECORD_BODY)]
+    assert rig.hedera.posts("/hedera/record") == [("/hedera/record", dict(RECORD_BODY, log_h=sha(acl("6ps"))))]
     rig.hedera.move("done", ok=True, data=RECORDED)
     rig.wait(flow, 600)
     assert flow.state.name == "ls_arkiv"
@@ -783,6 +805,22 @@ def test_a_record_failure_lands_on_its_screen(tmp_path, failure):
     rig.hedera.move("done", ok=False, failure=failure)
     rig.wait(flow, 600)
     assert flow.state.name == failure and flow.ledger.listings == []
+
+
+def test_a_copied_run_is_refused_at_the_record_and_never_published(tmp_path):
+    rig = Rig(tmp_path)
+    rig.arkiv.best("MDGP", acl("6ps"), 6170)                         # another window's save: the same log
+    flow = rig.flow(book="ANY-V8Q", best_frames=6170, run_time="1:42.83")
+    flow._jti = "3f9c0a1b2c3d4e5f"
+    flow.start("ls_record")
+    rig.wait(flow, 100)
+    assert rig.hedera.posts("/hedera/record")[0][1]["log_h"] == sha(acl("6ps"))
+    rig.hedera.move("done", ok=False, failure="ls_copied")
+    rig.wait(flow, 600)
+    assert flow.state.name == "ls_copied" and flow.ledger.listings == []
+    assert rig.service.posts() == []                                 # no publish follows
+    flow.press("cross")
+    assert flow.state.name == "hub"
 
 
 def test_a_slow_record_times_out_and_cross_records_it_on_the_same_approval(tmp_path):

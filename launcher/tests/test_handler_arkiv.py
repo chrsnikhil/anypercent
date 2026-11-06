@@ -27,7 +27,7 @@ from test_handler_world import StubBridge
 CHECKER = "0x5b38da6a701c568545dcfcb03fcb875f56beddc4"
 STRANGER = "0xab8483f64d9c6d1ecf9b849ae677dd3315835cb2"
 SEASON = 1
-PUBLISH_FAILURES = ("ls_expired", "ls_wrong", "ls_mismatch", "ls_reused", "ls_publish_fail")
+PUBLISH_FAILURES = ("ls_expired", "ls_wrong", "ls_mismatch", "ls_reused", "ls_copied", "ls_publish_fail")
 
 
 class FakeClock:

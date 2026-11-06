@@ -52,7 +52,7 @@ _OUTCOMES = {
     "approve": [("Deny", "ls_denied", False), ("Expire", "ls_expired", False),
                 ("Another {world} ID", "ls_wrong", False), ("Codes differ", "ls_mismatch", False),
                 ("Reused approval", "ls_reused", False)],
-    "record": [("{third} slow", "ls_record_fail", False)],
+    "record": [("{third} slow", "ls_record_fail", False), ("Copied run", "ls_copied", False)],
     "approve_scan": [("{world} down", "ls_world_down", False)],
 }
 

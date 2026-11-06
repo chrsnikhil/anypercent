@@ -266,7 +266,7 @@ def test_outcomes_match_the_brief_per_step():
         Outcome("Another World ID", "ls_wrong"), Outcome("Codes differ", "ls_mismatch"),
         Outcome("Reused approval", "ls_reused"),
     ]
-    assert sponsors.outcomes("record") == [Outcome("Hedera slow", "ls_record_fail")]
+    assert sponsors.outcomes("record") == [Outcome("Hedera slow", "ls_record_fail"), Outcome("Copied run", "ls_copied")]
     assert sponsors.outcomes("approve_scan") == [Outcome("World down", "ls_world_down")]
     for step in ("status", "idkit_scan", "idkit_verify", "publish", "sales", "load_ghost"):
         assert sponsors.outcomes(step) == [], step

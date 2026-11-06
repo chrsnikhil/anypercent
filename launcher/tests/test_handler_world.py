@@ -866,7 +866,7 @@ def test_square_offers_no_fake_world_answers(tmp_path):
     assert rig.state == "ls_cancel"
     assert rig.flow.mock_rows() == []                                   # no "Phone approves anyway" for a real phone
     rig.flow.start("ls_record")                                         # Hedera's step: still mocked
-    assert [o.failure for o in rig.flow.mock_rows()] == ["ls_record_fail"]
+    assert [o.failure for o in rig.flow.mock_rows()] == ["ls_record_fail", "ls_copied"]
     rig.flow.start("hub")
     assert rig.flow.hub_rows[-1] == "Start over (mock)"
 

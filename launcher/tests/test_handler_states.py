@@ -17,8 +17,9 @@ from arca_launcher.handler_glue import MOCK_WALLET
 # never had to pick between (three after a bought ghost, two more after your own best), a
 # fresh-visitor board, the three down-sponsor timeouts Ruling 8 split out of
 # `buy_down`/`ls_record_fail`, and `buy_late` (a payment that landed after all). Plus
-# `id_dup_unnamed` (a duplicate World App refused before the bridge could name its book) and
-# `ls_confirm` (a listing OK asked through World ID, where the phone never shows a code).
+# `id_dup_unnamed` (a duplicate World App refused before the bridge could name its book),
+# `ls_confirm` (a listing OK asked through World ID, where the phone never shows a code) and
+# `ls_copied` (a run whose exact log is already on the board under another record book).
 _PROTOTYPE_STATES = {
     "s_boot", "id_scan", "id_confirm", "id_verifying", "id_done", "id_rejected", "id_expired",
     "id_dup", "id_signed", "id_nocred", "id_cancel", "id_offline",
@@ -32,7 +33,7 @@ _NEW_STATES = {
     "hub", "need_book", "no_board", "no_run", "nobody_ahead", "race_lost", "race_unfinished",
     "race_unverified", "book_view", "listings_view", "start_over",
     "board_new", "buy_check_fail", "buy_load_fail", "ls_publish_fail",
-    "buy_late", "own_result", "own_again", "id_dup_unnamed", "ls_confirm",
+    "buy_late", "own_result", "own_again", "id_dup_unnamed", "ls_confirm", "ls_copied",
 }
 
 # Sample values for every non-sponsor-name placeholder the table uses, so copy can be filled
@@ -68,7 +69,7 @@ def _filled(text: str) -> str:
 
 def test_every_prototype_state_is_here():
     assert _PROTOTYPE_STATES | _NEW_STATES == set(STATES)
-    assert len(STATES) == 61
+    assert len(STATES) == 62
 
 
 def test_start_matches_the_brief():
@@ -181,6 +182,32 @@ def test_denial_events_carry_no_on_entry():
     for name, state in STATES.items():
         used = banned_events & set(state.on)
         assert not used, f"{name}.on has prototype event(s) {used}, should be ok/timeout"
+
+
+def test_a_copied_run_says_so_and_blames_no_sponsor():
+    # The service's copy check refused it (this exact log is on the board under another book):
+    # nobody's ID was wrong and no sponsor refused anything, so the copy names none of them.
+    state = STATES["ls_copied"]
+    assert state.card["h"] == "Already on the board"
+    assert state.card["rows"] == ("This exact run is listed under another record book",)
+    assert state.card["what"] == (("Listed", "nothing"), ("Rule", "copies do not count"),
+                                  ("Next", "list a run of your own"))
+    assert (state.kind, state.fail, state.steps, state.at) == ("no", True, ("Scan", "Approve", "Record", "Listed"), 2)
+    assert state.on == {"cross": "hub", "circle": "home"}       # a fresh code would only be refused again
+    for text in copy_texts(state):
+        for name in ("{world}", "{board}", "{third}", "{record_rail}", "refused"):
+            assert name not in text, (text, name)
+
+
+def test_a_wrong_id_is_never_put_on_world():
+    # ls_wrong is this service's own check of the approval against the record book (the book's bound
+    # session, or the book it was approved for), never a refusal by World itself.
+    state = STATES["ls_wrong"]
+    filled = [_filled(text) for text in copy_texts(state)]
+    assert not any("itself" in text for text in filled), filled
+    assert "Refused by" not in dict(state.card["what"])
+    assert "{world} refused" not in state.say
+    assert ("Listed", "nothing") in state.card["what"]
 
 
 def test_ls_cancel_keeps_its_call_for_a_late_approve():

@@ -50,7 +50,7 @@ LOG_MIN, LOG_MAX = 32, 64 * 1024      # a run log's size, as the service takes i
 
 _OWN = ("check_listing", "publish", "sales")   # and load_ghost, when its payload names a real target (target_run)
 _DOWN = {"check_listing": "buy_check_fail", "load_ghost": "buy_load_fail", "publish": "ls_publish_fail"}
-_PUBLISH_FAILURES = ("ls_expired", "ls_wrong", "ls_mismatch", "ls_reused", "ls_publish_fail")
+_PUBLISH_FAILURES = ("ls_expired", "ls_wrong", "ls_mismatch", "ls_reused", "ls_copied", "ls_publish_fail")
 _STAGES = ("check", "write", "done")
 _GAME = re.compile(r"[A-Z0-9]{4}")
 _KEY = re.compile(r"0x[0-9a-f]{64}")
@@ -495,6 +495,19 @@ class ArkivSponsors:
         if not LOG_MIN <= len(data) <= LOG_MAX:
             return None
         return dict(body, log=base64.b64encode(data).decode("ascii"))
+
+    def run_log_hash(self, game, frames):
+        """sha256 (hex) of this console's log of game's run of frames, as publish would send it; None if it is not here.
+        It reads the disk: only a worker thread calls it (the Hedera record's copy check), never a frame."""
+        path = self._run_log(game, frames)
+        if path is None:
+            return None
+        try:
+            with open(path, "rb") as f:
+                data = f.read(LOG_MAX + 1)
+        except OSError:
+            return None
+        return hashlib.sha256(data).hexdigest() if LOG_MIN <= len(data) <= LOG_MAX else None
 
     def _run_log(self, game, frames):
         """runs_dir/best/<ID>.acl when that best is this time, else the queued run of this time; None if neither."""
