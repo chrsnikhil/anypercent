@@ -105,8 +105,13 @@ private:
     bn::vector<bn::sprite_ptr, 8> _clock;         // the race clock, one sprite per character
     bn::vector<bn::sprite_ptr, 6> _gap_digits;    // the gap to the ghost, one sprite per character
     int _gap_digit_frame[6] = {-1, -1, -1, -1, -1, -1};
-    int _gap_k = 0;                               // the ghost's step matched to the player's position (0: none yet)
-    int _gap = 0;                                 // frames the player is behind the ghost there (negative: ahead)
+    int _reach_base = 0;                          // the step ghost_reach[0] is on: the ghost's first (0: not yet)
+    int _reach_n = 0;                             // ghost_reach entries worked out so far
+    int _reach_pt = 0;                            // the ghost's centre-line point at the last entry
+    int32_t _reach_arc = 0;                       // ... its arc position there (1/16 px)
+    int32_t _reach_progress = 0;                  // ... and its progress, laps included (it may have gone back)
+    int _gap_s0 = 0;                              // the step the race started on (0: not racing yet)
+    int _gap = 0;                                 // frames the player is behind the ghost (negative: ahead)
     bool _gap_on = false;                         // a gap is shown
     int _gap_key = -1;                            // the shown gap: tenths * 2 + behind (-1: none)
 
@@ -143,7 +148,8 @@ private:
     void _draw_text(int scene, bool busy);  // busy: this frame already did slow sprite work
     void _say(int x, int y, const bn::string_view& text);
     bool _draw_big(int scene);               // true: rebuilt the big sprites this frame
-    void _track_gap(int scene);              // the gap to the ghost: which ghost step matches the player
+    void _build_reach(const ac_ghost_pt* ghost);   // how far round the track the ghost had got, step by step
+    void _track_gap(int scene);              // the gap to the ghost: when it got as far as the player is now
     void _draw_gap(int scene);               // ... and its digits under the place badge
     void _set_fade(int level);
     bool _project(int px8, int py8, int& sx, int& sy, int& z8) const;

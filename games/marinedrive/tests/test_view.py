@@ -203,6 +203,37 @@ def test_the_gap_to_a_ghost_behind_counts_for_you(rom, lib, game_id):
     assert_gap(rom, lib, game_id, -30)           # half a second behind: -0.5, even with the ghost off screen
 
 
+def test_the_gap_holds_when_the_ghost_stops_and_reverses(rom, lib, game_id):
+    """A ghost of the route that, 10 s into the race, stands still for STOP steps, then drives back along its own line
+    for BACK steps and on again (as BOT-A2, ghostgen's v2, does on lap 1 with its B-held stall): from there it is
+    STOP + 2 * BACK steps behind the player on the route, on every lap after. The gap is measured along the track, so
+    it reads 0 before the stop and -LOST after it, never the climbing red number a nearest-position match got stuck
+    on where the ghost turned back (+33.5 at 0:54 against BOT-A2 while really 0.9 s ahead)."""
+    at, stop, back = 180 + 600, 30, 45
+    lost = stop + 2 * back
+    keys = load_keys("full_run.keys")
+    track = T.pc_player(lib, keys)
+    s0 = next(i for i in range(len(keys)) if play_flag(lib, keys[:i + 1]))     # track[s0]: the first in-play step
+    path = (track[s0:s0 + at] + [track[s0 + at - 1]] * stop + track[s0 + at - 1 - back:s0 + at - 1][::-1]
+            + track[s0 + at - back:])
+    save = T.save_with(game_id, ghost=S.ghost_bytes(game_id, 0, 4, [(x, y, 0, PLAY) for x, y in path[::4]]))
+    rows = T.run_rom(rom, keys, watch=("g_md_gap", "g_dbg_steps"), save_in=save)["watch"]
+    boot = next(i for i, r in enumerate(rows) if r[1])   # frames the ROM boots before its first step reads keys[boot]
+    before, after = [], []
+    for gap, steps in rows:
+        if gap == NO_GAP:
+            continue
+        gap = gap - (1 << 32) if gap & 0x80000000 else gap
+        j = steps + boot - (s0 + 1)              # the player's steps since play started, as the ghost's path counts
+        if j < at - 8:
+            before.append(gap)
+        elif j > at + 8:
+            after.append(gap)
+    assert len(before) > 400 and len(after) > 4000, (len(before), len(after))
+    off = [g for g in before if abs(g) > 3] + [g for g in after if abs(g + lost) > 3]
+    assert not off, "gap 0 then %+d expected; %d frames off, e.g. %s" % (-lost, len(off), off[:8])
+
+
 def test_the_gap_is_red_behind_and_green_ahead(rom, lib, game_id):
     n = 1500                                     # mid lap 1
     bare = shot(rom, load_keys("full_run.keys")[:n], "gap_none").crop(GAP_BOX)     # over the dusk sky: no ghost

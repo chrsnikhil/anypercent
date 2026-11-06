@@ -4,6 +4,7 @@
 #include "bn_blending.h"
 #include "bn_core.h"
 #include "bn_color.h"
+#include "bn_common.h"
 #include "bn_sprite_palette_item.h"
 #include "bn_string.h"
 
@@ -60,11 +61,18 @@ namespace
 
     constexpr bn::color SEA(5, 13, 21);
 
-    // The gap to the ghost: the ghost's step nearest the player's position is tracked from frame to frame (it moves
-    // on about one step a frame, so a climb from the last match finds it in a few looks); the gap is how many frames
-    // later than the ghost the player reached that spot. Shown from GAP_FROM race frames, right-aligned under the
+    // The gap to the ghost: how many frames later than the ghost the player got as far round the track as they are
+    // now. The ghost's progress round the track (as the rules' kart.progress, laps included) is worked out once a
+    // run, from its first in-play step on, every GAP_SAMPLE steps into ghost_reach, GAP_BUILD entries a frame during
+    // the countdown, kept as the furthest it had got by then; the race looks the player's progress up in it. Measured
+    // along the track, never by the nearest ghost position, so a ghost that stops, spins or reverses (or passes the
+    // same spot a lap later) cannot hold the match back. Shown from GAP_FROM race frames, right-aligned under the
     // place badge, red while behind and green while ahead, redrawn at most every GAP_REDRAW frames.
-    constexpr int GAP_WINDOW = 4;                    // steps a frame the match may climb: past a boosting kart's pace
+    constexpr int GAP_SAMPLE = 4;                    // steps between entries: the ghost's own sample period (GAME_INFO)
+    constexpr int GAP_ENTRIES = (16384 - 16) / 6;    // a ghost's most samples: its 16 KB section (ac_save.h), 6 B each
+    constexpr int GAP_BUILD = 24;                    // entries a frame: the countdown's 180 frames build them all
+    constexpr int GAP_SETTLE = 8;                    // frames after the first in-play step before building: that frame
+                                                     // swaps the how-to card for the race and is busy enough
     constexpr int GAP_FROM = 30;
     constexpr int GAP_REDRAW = 4;
     constexpr int GAP_RIGHT = 112;
@@ -80,6 +88,79 @@ namespace
     {
         int i = ch == '.' ? 10 : ch == '+' ? 11 : ch == '-' ? 12 : ch - '0';
         return (behind ? GAP_RED_FRAME : GAP_GREEN_FRAME) + i;
+    }
+
+    // ghost_reach[i]: the furthest progress (1/16 px) the ghost had made GAP_SAMPLE * i steps after its first in-play
+    // step. It never falls, so the step on which the ghost first got somewhere is a binary search away.
+    BN_DATA_EWRAM_BSS int32_t ghost_reach[GAP_ENTRIES];
+
+    // The ghost's place on the centre line, worked out as rules/kart.c follows a kart (nearest_point, track_follow,
+    // arc16) but from its whole-pixel position: the view's own copy, so the rules stay as they are.
+    int32_t track_d2(int px, int py, int i)
+    {
+        int32_t dx = px - md_points[i][0];
+        int32_t dy = py - md_points[i][1];
+        return dx * dx + dy * dy;
+    }
+
+    int track_wrap(int i)                            // i within a lap of the track's ends: no division (no divider)
+    {
+        return i < 0 ? i + TRACK_POINTS : i >= TRACK_POINTS ? i - TRACK_POINTS : i;
+    }
+
+    int track_nearest(int px, int py)
+    {
+        int best = 0;
+        int32_t bd = track_d2(px, py, 0);
+        for(int i = 1; i < TRACK_POINTS; ++i)
+        {
+            int32_t d = track_d2(px, py, i);
+            if(d < bd)
+            {
+                bd = d;
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    int track_follow(int last, int px, int py)
+    {
+        int best = last;
+        int32_t bd = track_d2(px, py, last);
+        for(int d = -TRACK_SEARCH; d <= TRACK_SEARCH; ++d)
+        {
+            int i = track_wrap(last + d);
+            int32_t dd = track_d2(px, py, i);
+            if(dd < bd)
+            {
+                bd = dd;
+                best = i;
+            }
+        }
+        return bd > TRACK_CORRIDOR * TRACK_CORRIDOR ? last : best;
+    }
+
+    int32_t track_arc16(int pt, int px, int py)
+    {
+        int a = track_wrap(pt - 1);
+        int b = track_wrap(pt + 1);
+        int32_t tx = md_points[b][0] - md_points[a][0];
+        int32_t ty = md_points[b][1] - md_points[a][1];
+        int32_t len = int32_t(ac_isqrt(uint32_t(tx * tx + ty * ty)));
+        int32_t dx = int32_t(px - md_points[pt][0]) * 16;
+        int32_t dy = int32_t(py - md_points[pt][1]) * 16;
+        int32_t along = len ? (dx * tx + dy * ty) / len : 0;
+        int32_t half = TRACK_POINT_STEP * 8;
+        if(along > half)
+        {
+            along = half;
+        }
+        if(along < -half)
+        {
+            along = -half;
+        }
+        return int32_t(pt) * TRACK_POINT_STEP * 16 + along;
     }
 
     // The ghost's palette: the player's kart sheet recoloured by brightness (index 0, transparent, kept) from a navy
@@ -965,11 +1046,71 @@ void view::_draw_text(int scene, bool busy)
     }
 }
 
+void view::_build_reach(const ac_ghost_pt* ghost)
+{
+    if(_reach_n >= GAP_ENTRIES)
+    {
+        return;
+    }
+    int s = int(arcade::steps());
+    if(_reach_base == 0)
+    {
+        if(! ghost)
+        {
+            return;                                  // no ghost, or play has not started: the ghost has no step yet
+        }
+        _reach_base = s;
+    }
+    if(s < _reach_base + GAP_SETTLE)
+    {
+        return;
+    }
+
+    // the first entry has a frame of its own: it searches the whole centre line for the ghost on the grid
+    int build = _reach_n ? GAP_BUILD : 1;
+    for(int n = 0; n < build && _reach_n < GAP_ENTRIES; ++n)
+    {
+        ac_ghost_pt g;
+        if(! arcade::ghost_at(uint32_t(_reach_base + _reach_n * GAP_SAMPLE), g))
+        {
+            _reach_n = GAP_ENTRIES;                  // never past its first step; the table stops rather than guess
+            return;
+        }
+        int32_t arc;
+        if(_reach_n == 0)
+        {
+            _reach_pt = track_nearest(g.x, g.y);
+            arc = track_arc16(_reach_pt, g.x, g.y);
+            // on the grid behind the line, as race_init starts every kart: a lap short of it
+            _reach_progress = arc >= TRACK_LEN * 8 ? arc - TRACK_LEN * 16 : arc;
+        }
+        else
+        {
+            // GAP_SAMPLE steps move a kart at most 2 points: the rules' search either side of the last one finds it
+            _reach_pt = track_follow(_reach_pt, g.x, g.y);
+            arc = track_arc16(_reach_pt, g.x, g.y);
+            int32_t d = arc - _reach_arc;
+            if(d >= TRACK_LEN * 8)
+            {
+                d -= TRACK_LEN * 16;                 // back over the line
+            }
+            else if(d < -TRACK_LEN * 8)
+            {
+                d += TRACK_LEN * 16;                 // on over the line: a lap more
+            }
+            _reach_progress += d;
+        }
+        _reach_arc = arc;
+        ghost_reach[_reach_n] = _reach_n ? bn::max(_reach_progress, ghost_reach[_reach_n - 1]) : _reach_progress;
+        ++_reach_n;
+    }
+}
+
 void view::_track_gap(int scene)
 {
-    if(scene == SC_TITLE || scene == SC_HOWTO || scene == SC_COUNTDOWN || ! arcade::has_ghost())
+    if(scene == SC_TITLE || scene == SC_HOWTO || scene == SC_COUNTDOWN || _reach_n == 0)
     {
-        _gap_k = 0;
+        _gap_s0 = 0;
         _gap_on = false;
         return;
     }
@@ -979,51 +1120,40 @@ void view::_track_gap(int scene)
     }
 
     int s = int(arcade::steps());
-    md_kart p = kart(0);
-    int px = int(p.x >> 16);
-    int py = int(p.y >> 16);
-    if(_gap_k == 0)
+    if(_gap_s0 == 0)
     {
-        _gap_k = s;                                  // the race starts with the ghost's: both countdowns are as long
+        _gap_s0 = s;                                 // the race starts with the ghost's: both countdowns are as long
     }
 
-    // from the step after the last match, climb while a neighbour is nearer: forward first, else back, at most
-    // GAP_WINDOW steps (each look is an interpolated ghost_at, slow enough to count). A tie stays put, so a ghost
-    // that has stopped past its finish never drags the match backwards.
-    auto dist = [px, py](int k, int& d)
+    // the first entry by which the ghost had got as far as the player is now, then the step between it and the one
+    // before; further than the ghost ever got (or than the table has reached), the last gap stays
+    int32_t at = kart(0).progress;
+    int lo = 0;
+    int hi = _reach_n;
+    while(lo < hi)
     {
-        ac_ghost_pt g;
-        if(k <= 0 || ! arcade::ghost_at(uint32_t(k), g))
+        int mid = (lo + hi) / 2;
+        if(ghost_reach[mid] < at)
         {
-            return false;
+            lo = mid + 1;
         }
-        int dx = int(g.x) - px;
-        int dy = int(g.y) - py;
-        d = dx * dx + dy * dy;
-        return true;
-    };
-    int k = _gap_k + 1;
-    int d;
-    if(dist(k, d))
-    {
-        for(int dir = 1; dir >= -1; dir -= 2)
+        else
         {
-            int moved = 0;
-            int nd;
-            while(moved < GAP_WINDOW && dist(k + dir, nd) && nd < d)
-            {
-                k += dir;
-                d = nd;
-                ++moved;
-            }
-            if(moved)
-            {
-                break;                               // climbed one way: the other is uphill
-            }
+            hi = mid;
         }
-        _gap_k = k;
     }
-    _gap = s - _gap_k;
+    if(lo == _reach_n)
+    {
+        return;
+    }
+    int reached = _reach_base;
+    if(lo > 0)
+    {
+        int32_t a = ghost_reach[lo - 1];
+        int32_t b = ghost_reach[lo];
+        reached += (lo - 1) * GAP_SAMPLE + int((at - a) * GAP_SAMPLE / (b - a));
+    }
+    _gap = s - bn::max(reached, _gap_s0);           // the ghost too was on the grid until the green light
     _gap_on = rules_race_frames() >= GAP_FROM;
 }
 
@@ -1137,6 +1267,7 @@ void view::update(const ac_ghost_pt* ghost)
     _draw_props(scene != SC_HOWTO && scene != SC_RESULTS && scene != SC_PAUSE, scene != SC_TITLE);
     bool built = _draw_big(scene);
     _draw_text(scene, built);
+    _build_reach(ghost);
     _track_gap(scene);
     _draw_gap(scene);
     _scene = scene;
