@@ -1,0 +1,146 @@
+
+==============================================================================
+A. INVENTORY -- every part exported, printed parts are closed solids
+==============================================================================
+  PASS  31 parts present; 15 printed parts watertight
+
+==============================================================================
+B. INTERFERENCE -- every pair of parts, exact boolean volume
+==============================================================================
+  ok    asm_front_shell x asm_screws_plates: 25.65 mm3 designed (M3 self-tapping into the plate posts)
+  ok    asm_front_shell x asm_inserts: 46.06 mm3 designed (heat-set knurl melting into the pilot)
+  ok    asm_bay_tray x asm_bank: 27.58 mm3 designed (bank retention detents)
+  ok    asm_plate_dpad x asm_screw_pivot: 5.80 mm3 designed (D-pad pivot self-tapping into its plate)
+  ok    asm_screws_frame x asm_inserts: 53.36 mm3 designed (M3 thread engaging the insert)
+  PASS  no part overlaps another except where designed
+
+==============================================================================
+C. FASTENERS -- frame screws into the 8 inserts
+==============================================================================
+            boss head room wall@head  pilot  frame offset engage tip gap  skin
+  (   7.3,   7.3)      0.45      4.92   2.04   1.64  0.000   5.00    0.50  5.10
+  (  54.0,   6.5)      0.45      4.12   2.04   1.64  0.000   5.00    0.50  4.30
+  ( 150.0,   6.5)      0.45      4.12   2.04   1.64  0.000   5.00    0.50  4.30
+  ( 194.7,   7.3)      0.45      4.92   2.04   1.64  0.000   5.00    0.50  5.10
+  (   6.5,  28.0)      0.45      4.12   2.04   1.64  0.000   5.00    0.50  4.30
+  ( 195.5,  45.0)      0.45      4.12   2.04   1.64  0.000   5.00    0.50  4.30
+  ( 195.5,  70.0)      0.45      4.12   2.04   1.64  0.000   5.00    0.50  4.30
+  ( 194.7, 116.7)      0.45      4.92   2.04   1.64  0.000   5.00    0.50  5.10
+  plate screws: head bearing z 11.40, tip z 3.40, 5.60 of thread in each post, 3.40 of face below the tip
+  PASS  all 8 frame screws and 6 plate screws seat, engage and clear
+
+==============================================================================
+D. INSERTION -- every part swept along its assembly direction
+==============================================================================
+  ok    step 'Drop in the buttons': cap_a goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Drop in the buttons': cap_b goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Drop in the buttons': cap_x goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Drop in the buttons': cap_y goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Drop in the buttons': cap_pills goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Drop in the buttons': cap_dpad goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Switch plates': plate_face+plate_dpad+plate_pills+switches_plates goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Shoulder buttons': shoulders goes in along [0, -1, 0] with nothing in the way
+  ok    step 'Shoulder buttons': pins goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Shoulder buttons': switches_shoulder goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Display': display goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Display': spacers goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Speaker': speaker goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Raspberry Pi': pi+heatsinks goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Bay tray': bay_tray goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Rear frame': rear_frame+pico+pam+magnets_frame goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Sponsor panel': panel_world_body+panel_world_logo+magnets_panel goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Power bank': bank goes in along [0, -1, 0] with nothing in the way
+  ok    Pi board edge rides over the wall clips (19 contact points: it snaps, as designed)
+  ok    bank rides over the tray detents (1588 contact points: it snaps, as designed)
+  ok    control: display dropped in AFTER the Pi -> caught (10161 hits)
+  ok    control: tray dropped in AFTER the frame -> caught (24082 hits)
+  ok    control: rear frame shifted 1 mm sideways -> caught (396.4 mm3 into the shell)
+  PASS  every part goes in along its assembly direction; both snaps engage; 3 wrong-order controls caught
+
+==============================================================================
+E. TOOL ACCESS
+==============================================================================
+  PASS  iron reaches all 8 bosses; a driver reaches every screw when it is driven
+
+==============================================================================
+F. CONTROLS -- travel, stops and the D-pad pivot, measured off the meshes
+==============================================================================
+  face 0   pre-travel  0.15  flange float  0.80  -> switch is the rear stop
+  face 1   pre-travel  0.15  flange float  0.80  -> switch is the rear stop
+  face 2   pre-travel  0.15  flange float  0.80  -> switch is the rear stop
+  face 3   pre-travel  0.15  flange float  0.80  -> switch is the rear stop
+  pill -1  pre-travel  0.15  flange float  0.80  -> switch is the rear stop
+  pill +1  pre-travel  0.15  flange float  0.80  -> switch is the rear stop
+  D-pad: pivot gap 0.30, plunger pre-travel 0.15, click needs 0.40 at the switch
+         centre press moves every plunger 0.30  -> no click
+         arm press reaches 0.48 at that switch -> clicks
+         diagonal press reaches 0.43 at both  -> clicks both
+         working pivot gap: 0.25 .. 0.35 (diagonals need >= 0.28); the screw adjusts it
+  shoulders: slot free travel 0.70, switch needs 0.40 -> switch bottoms first
+  PASS  every button reaches its click before any printed stop; D-pad pivot in range
+
+==============================================================================
+G. INTEGRITY -- nothing cut through where it must not be
+==============================================================================
+  PASS  6 magnet pockets intact, 8 bosses uncut, outer skin unbroken
+
+==============================================================================
+H. CLEARANCES -- tightest gap between neighbouring parts (sampled)
+==============================================================================
+  info  bay_tray / rear_frame: 0.00 mm (designed contact or location fit)
+  info  front_shell / display: 0.00 mm (designed contact or location fit)
+  info  front_shell / panel_world_body: 0.00 mm (designed contact or location fit)
+  info  front_shell / pi: 0.00 mm (designed contact or location fit)
+  info  front_shell / plate_dpad: 0.00 mm (designed contact or location fit)
+  info  front_shell / rear_frame: 0.00 mm (designed contact or location fit)
+  info  front_shell / speaker: 0.00 mm (designed contact or location fit)
+  info  front_shell / switches_shoulder: 0.00 mm (designed contact or location fit)
+  info  panel_world_body / magnets_panel: 0.00 mm (designed contact or location fit)
+  info  pi / heatsinks: 0.00 mm (designed contact or location fit)
+  info  plate_dpad / screws_plates: 0.00 mm (designed contact or location fit)
+  info  plate_dpad / switches_plates: 0.00 mm (designed contact or location fit)
+  info  plate_face / screws_plates: 0.00 mm (designed contact or location fit)
+  info  plate_face / switches_plates: 0.00 mm (designed contact or location fit)
+  info  plate_pills / screws_plates: 0.00 mm (designed contact or location fit)
+  info  plate_pills / switches_plates: 0.00 mm (designed contact or location fit)
+  info  rear_frame / inserts: 0.00 mm (designed contact or location fit)
+  info  rear_frame / magnets_frame: 0.00 mm (designed contact or location fit)
+  info  rear_frame / pam: 0.00 mm (designed contact or location fit)
+  info  rear_frame / panel_world_body: 0.00 mm (designed contact or location fit)
+  info  rear_frame / pico: 0.00 mm (designed contact or location fit)
+  info  spacers / display: 0.00 mm (designed contact or location fit)
+  info  rear_frame / screws_frame: 0.01 mm (designed contact or location fit)
+  info  front_shell / cap_a: 0.01 mm (designed contact or location fit)
+  info  front_shell / cap_b: 0.01 mm (designed contact or location fit)
+  info  front_shell / cap_dpad: 0.01 mm (designed contact or location fit)
+  info  front_shell / cap_pills: 0.01 mm (designed contact or location fit)
+  info  front_shell / plate_pills: 0.05 mm (designed contact or location fit)
+  info  front_shell / pins: 0.10 mm (designed contact or location fit)
+  info  front_shell / cap_x: 0.13 mm (designed contact or location fit)
+  info  shoulders / switches_shoulder: 0.15 mm (designed contact or location fit)
+  info  cap_a / switches_plates: 0.15 mm (designed contact or location fit)
+  info  cap_b / switches_plates: 0.15 mm (designed contact or location fit)
+  info  cap_dpad / switches_plates: 0.15 mm (designed contact or location fit)
+  info  cap_pills / switches_plates: 0.15 mm (designed contact or location fit)
+  info  cap_x / switches_plates: 0.15 mm (designed contact or location fit)
+  info  cap_y / switches_plates: 0.15 mm (designed contact or location fit)
+  info  shoulders / pins: 0.19 mm (designed contact or location fit)
+  info  front_shell / cap_y: 0.20 mm (designed contact or location fit)
+  info  front_shell / bay_tray: 0.20 mm (designed contact or location fit)
+  info  front_shell / plate_face: 0.20 mm (designed contact or location fit)
+  info  bay_tray / spacers: 0.20 mm (designed contact or location fit)
+  info  cap_dpad / screw_pivot: 0.30 mm (designed contact or location fit)
+  PASS  no unexpected gap under 0.3 mm
+
+==============================================================================
+I. PORTS -- a typical plug of each kind reaches its socket
+==============================================================================
+  ok    HDMI: 21 x 11 overmould seats fully
+  ok    micro-USB: 11 x 8 overmould seats fully
+  ok    3.5 mm: 7 x 7 overmould seats fully
+  ok    USB-A: 16 x 8 overmould seats fully
+  PASS  HDMI, micro-USB, 3.5 mm and USB-A plugs all seat
+
+==============================================================================
+SUMMARY: 0 FAIL, 0 WARN   (211 s)
+==============================================================================

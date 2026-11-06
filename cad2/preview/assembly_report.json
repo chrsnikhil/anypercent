@@ -1,0 +1,179 @@
+{
+ "fail": 0,
+ "warn": 0,
+ "sections": [
+  "A",
+  "B",
+  "C",
+  "D",
+  "E",
+  "F",
+  "G",
+  "H",
+  "I"
+ ],
+ "results": [
+  {
+   "section": "A",
+   "level": "PASS",
+   "msg": "31 parts present; 15 printed parts watertight",
+   "step": null
+  },
+  {
+   "section": "B",
+   "level": "PASS",
+   "msg": "no part overlaps another except where designed",
+   "step": null
+  },
+  {
+   "section": "C",
+   "level": "PASS",
+   "msg": "all 8 frame screws and 6 plate screws seat, engage and clear",
+   "step": null
+  },
+  {
+   "section": "D",
+   "level": "PASS",
+   "msg": "every part goes in along its assembly direction; both snaps engage; 3 wrong-order controls caught",
+   "step": null
+  },
+  {
+   "section": "E",
+   "level": "PASS",
+   "msg": "iron reaches all 8 bosses; a driver reaches every screw when it is driven",
+   "step": null
+  },
+  {
+   "section": "F",
+   "level": "PASS",
+   "msg": "every button reaches its click before any printed stop; D-pad pivot in range",
+   "step": null
+  },
+  {
+   "section": "G",
+   "level": "PASS",
+   "msg": "6 magnet pockets intact, 8 bosses uncut, outer skin unbroken",
+   "step": null
+  },
+  {
+   "section": "H",
+   "level": "PASS",
+   "msg": "no unexpected gap under 0.3 mm",
+   "step": null
+  },
+  {
+   "section": "I",
+   "level": "PASS",
+   "msg": "HDMI, micro-USB, 3.5 mm and USB-A plugs all seat",
+   "step": null
+  }
+ ],
+ "steps": {
+  "inserts": {
+   "fail": 0,
+   "checks": 8,
+   "messages": [],
+   "kinds": {
+    "tool": 8
+   }
+  },
+  "caps": {
+   "fail": 0,
+   "checks": 6,
+   "messages": [],
+   "kinds": {
+    "path": 6
+   }
+  },
+  "plates": {
+   "fail": 0,
+   "checks": 14,
+   "messages": [],
+   "kinds": {
+    "fastener": 6,
+    "path": 1,
+    "tool": 6,
+    "function": 1
+   }
+  },
+  "pivot": {
+   "fail": 0,
+   "checks": 2,
+   "messages": [],
+   "kinds": {
+    "tool": 1,
+    "function": 1
+   }
+  },
+  "shoulders": {
+   "fail": 0,
+   "checks": 4,
+   "messages": [],
+   "kinds": {
+    "path": 3,
+    "function": 1
+   }
+  },
+  "display": {
+   "fail": 0,
+   "checks": 2,
+   "messages": [],
+   "kinds": {
+    "path": 2
+   }
+  },
+  "speaker": {
+   "fail": 0,
+   "checks": 1,
+   "messages": [],
+   "kinds": {
+    "path": 1
+   }
+  },
+  "pi": {
+   "fail": 0,
+   "checks": 2,
+   "messages": [],
+   "kinds": {
+    "path": 1,
+    "snap": 1
+   }
+  },
+  "tray": {
+   "fail": 0,
+   "checks": 1,
+   "messages": [],
+   "kinds": {
+    "path": 1
+   }
+  },
+  "frame": {
+   "fail": 0,
+   "checks": 17,
+   "messages": [],
+   "kinds": {
+    "fastener": 8,
+    "path": 1,
+    "tool": 8
+   }
+  },
+  "panel": {
+   "fail": 0,
+   "checks": 1,
+   "messages": [],
+   "kinds": {
+    "path": 1
+   }
+  },
+  "bank": {
+   "fail": 0,
+   "checks": 2,
+   "messages": [],
+   "kinds": {
+    "path": 1,
+    "snap": 1
+   }
+  }
+ },
+ "when": "2026-09-25 20:25"
+}

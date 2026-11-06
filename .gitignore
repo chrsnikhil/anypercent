@@ -30,6 +30,12 @@
 !/cad2/
 /cad2/vendor/
 /cad2/viewer_cache/
+# Meshes converted from the vendors' own 3D models (Waveshare's 5 inch DSI, Raspberry Pi's Pico R3), which ship
+# with no license file: components/build_components.py rebuilds them from the downloads it names.
+/cad2/components/display_waveshare_5in_dsi.stl
+/cad2/components/pico.stl
+/cad2/stl_assembly/asm_display.stl
+/cad2/stl_assembly/asm_pico.stl
 /cad2/logos/**
 !/cad2/logos/**/
 !/cad2/logos/**/*.py

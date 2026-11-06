@@ -1,0 +1,7 @@
+
+img { display:block; max-width: 78%; max-height: 95mm; margin: 4mm auto; border: 1px solid #d8dce0; border-radius: 3px; }
+h1, h2 { break-after: avoid; page-break-after: avoid; }
+p:has(> img) { break-inside: avoid; }
+
+table { break-inside: avoid; page-break-inside: avoid; }
+h1 + p, h2 + p { break-after: avoid; page-break-after: avoid; }

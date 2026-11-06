@@ -1,0 +1,261 @@
+switch actuator 5.0 mm, bank 100.0 x 68.0 x 19.0, heatsink 6.0 mm  (from enclosure.scad)
+    388 solids -> 1 volume (6 replaced by hulls), watertight=True
+  display_waveshare_5in_dsi        1426 kB   x  -60.50..  60.50  y  -42.35..  36.11  z  -0.00.. 14.68
+    17 solids -> 1 volume (0 replaced by hulls), watertight=True
+  pico                             1013 kB   x   -0.00..  21.00  y   -0.00..  52.30  z  -0.00..  3.73
+  pi3bplus                          140 kB   x   -2.50..  86.98  y   -0.01..  58.52  z  -1.80.. 17.60
+  pi3bplus_pcb                       51 kB   x   -0.01..  85.01  y   -0.01..  56.01  z  -0.01..  1.61
+  pi3bplus_parts                     83 kB   x   -2.50..  86.98  y    1.04..  58.52  z  -1.80.. 17.60
+  heatsink_soc                        5 kB   x   -0.00..  14.00  y   -0.00..  14.00  z  -0.00..  6.00
+  heatsink_lan                        3 kB   x   -0.00..   9.00  y   -0.00..   9.00  z  -0.00..  5.00
+  tactile_6x6                        15 kB   x   -3.60..   3.60  y   -3.00..   3.00  z  -3.50..  5.00
+  screw_m3x8                        151 kB   x   -2.87..   2.88  y   -2.88..   2.88  z  -8.00..  1.68
+  insert_m3                          80 kB   x   -2.20..   2.20  y   -2.20..   2.20  z  -0.00..  5.00
+  magnet_6x3                         20 kB   x   -3.00..   3.01  y   -3.01..   3.01  z  -0.01..  3.01
+  power_bank                        224 kB   x   -0.02.. 100.02  y   -0.02..  68.02  z  -0.05.. 19.02
+  speaker_fit0502                   809 kB   x   -0.00..  70.00  y   -0.00..  33.00  z  -0.02.. 16.00
+  pam8403_mini                        9 kB   x   -0.00..  21.00  y   -0.00..  18.00  z  -0.00..  2.70
+=== front_shell
+    stl bytes: K
+=== bay_tray
+    stl bytes: K
+=== rear_frame
+    stl bytes: K
+=== panel_world
+    stl bytes: K
+=== panel_arkiv
+    stl bytes: K
+=== panel_arc
+    stl bytes: K
+=== buttons
+    stl bytes: K
+=== switch_plates
+    stl bytes: K
+=== display_spacers
+    stl bytes: K
+=== sd_hatch
+    stl bytes: K
+=== fit_check_jig
+    stl bytes: K
+=== done
+   asm_spacers  351537 bytes
+   asm_bay_tray  495243 bytes
+   asm_panel_arkiv_logo  99975 bytes
+   asm_panel_arkiv_body  718252 bytes
+   asm_cap_a  167858 bytes
+   asm_cap_b  168304 bytes
+   asm_cap_x  168304 bytes
+   asm_cap_y  168126 bytes
+   asm_cap_dpad  666216 bytes
+   asm_shoulders  56201 bytes
+   asm_pins  20777 bytes
+   asm_cap_pills  133241 bytes
+   asm_panel_arc_body  803626 bytes
+   asm_rear_frame  1362847 bytes
+   asm_panel_arc_logo  622876 bytes
+   asm_plate_face  345205 bytes
+   asm_pi_board  182841 bytes
+   asm_plate_dpad  360138 bytes
+   asm_pi  474408 bytes
+   asm_pi_parts  273277 bytes
+   asm_heatsinks  23883 bytes
+   asm_plate_pills  267406 bytes
+   asm_pam  28665 bytes
+   asm_bank  860174 bytes
+   asm_switches_shoulder  105980 bytes
+   asm_speaker  2950828 bytes
+   asm_switches_plates  517398 bytes
+   asm_display  5184742 bytes
+   asm_pico  3436931 bytes
+   asm_screw_pivot  535001 bytes
+   asm_magnets_frame  448621 bytes
+   asm_magnets_panel  448621 bytes
+   asm_inserts  2249953 bytes
+   asm_screws_plates  3198448 bytes
+   asm_screws_frame  4317149 bytes
+   asm_front_shell  2846228 bytes
+   asm_panel_world_body  719485 bytes
+   asm_panel_world_logo  4721591 bytes
+=== done
+   buttons_pale
+   buttons_slate
+   buttons_orange
+   panel_arkiv_body
+   panel_arkiv_logo
+   buttons_charcoal
+   panel_arc_body
+   panel_arc_logo
+   panel_world_body
+   panel_world_logo
+part                 tris  watertight  open edges  bodies  volume cm3   bounding box (mm)      bed
+--------------------------------------------------------------------------------------------------
+front_shell         16540        True           0       1       123.6    202.0 x 124.0 x  44.4   OK
+bay_tray             2874        True           0       1        20.8    133.9 x  82.4 x  21.4   OK
+rear_frame           7968        True           0       1        98.2    196.8 x 118.8 x  25.7   OK
+panel_world         30852        True           0       1        98.8    202.0 x 124.0 x   4.8   OK
+panel_arkiv          4720        True           0       1        98.8    202.0 x 124.0 x   4.8   OK
+panel_arc            8144        True           0       1        98.5    202.0 x 124.0 x   4.8   OK
+buttons              8020        True           0       9         6.3    107.8 x 130.4 x   7.6   OK
+switch_plates        5730        True           0       3         9.3     75.8 x  60.8 x   7.5   OK
+display_spacers      2016        True           0       4         2.4     60.0 x  12.0 x   6.2   OK
+sd_hatch              272        True           0       1         0.7     32.6 x  13.6 x   2.4   OK
+fit_check_jig       43248        True           0       1        41.7    202.0 x 124.0 x   8.5   OK
+
+bed: 220 x 220 x 250 mm
+ALL PARTS MANIFOLD AND ON THE BED
+C:\Users\chrsn\AppData\Local\Programs\Python\Python312\Lib\site-packages\trimesh\triangles.py:302: RuntimeWarning: divide by zero encountered in divide
+  center_mass = integrated[1:4] / volume
+C:\Users\chrsn\AppData\Local\Programs\Python\Python312\Lib\site-packages\trimesh\triangles.py:302: RuntimeWarning: invalid value encountered in divide
+  center_mass = integrated[1:4] / volume
+
+==============================================================================
+A. INVENTORY -- every part exported, printed parts are closed solids
+==============================================================================
+  PASS  31 parts present; 15 printed parts watertight
+
+==============================================================================
+B. INTERFERENCE -- every pair of parts, exact boolean volume
+==============================================================================
+  FAIL  asm_front_shell x asm_pi: 45.360 mm3 at x 6.2..40.3 y 34.4..116.1 z 13.8..15.6
+  ok    asm_front_shell x asm_screws_plates: 25.65 mm3 designed (M3 self-tapping into the plate posts)
+  ok    asm_front_shell x asm_inserts: 46.06 mm3 designed (heat-set knurl melting into the pilot)
+  ok    asm_bay_tray x asm_bank: 27.58 mm3 designed (bank retention detents)
+  ok    asm_plate_dpad x asm_screw_pivot: 5.80 mm3 designed (D-pad pivot self-tapping into its plate)
+  ok    asm_screws_frame x asm_inserts: 53.36 mm3 designed (M3 thread engaging the insert)
+
+==============================================================================
+C. FASTENERS -- frame screws into the 8 inserts
+==============================================================================
+            boss head room wall@head  pilot  frame offset engage tip gap  skin
+  (   7.3,   7.3)      0.45      4.92   2.04   1.64  0.000   5.00    0.50  5.10
+  (  54.0,   6.5)      0.45      4.12   2.04   1.64  0.000   5.00    0.50  4.30
+  ( 150.0,   6.5)      0.45      4.12   2.04   1.64  0.000   5.00    0.50  4.30
+  ( 194.7,   7.3)      0.45      4.92   2.04   1.64  0.000   5.00    0.50  5.10
+  (   6.5,  28.0)      0.45      4.12   2.04   1.64  0.000   5.00    0.50  4.30
+  ( 195.5,  45.0)      0.45      4.12   2.04   1.64  0.000   5.00    0.50  4.30
+  ( 195.5,  70.0)      0.45      4.12   2.04   1.64  0.000   5.00    0.50  4.30
+  ( 194.7, 116.7)      0.45      4.92   2.04   1.64  0.000   5.00    0.50  5.10
+  plate screws: head bearing z 11.40, tip z 3.40, 5.60 of thread in each post, 3.40 of face below the tip
+  PASS  all 8 frame screws and 6 plate screws seat, engage and clear
+
+==============================================================================
+D. INSERTION -- every part swept along its assembly direction
+==============================================================================
+  ok    step 'Drop in the buttons': cap_a goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Drop in the buttons': cap_b goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Drop in the buttons': cap_x goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Drop in the buttons': cap_y goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Drop in the buttons': cap_pills goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Drop in the buttons': cap_dpad goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Switch plates': plate_face+plate_dpad+plate_pills+switches_plates goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Shoulder buttons': shoulders goes in along [0, -1, 0] with nothing in the way
+  ok    step 'Shoulder buttons': pins goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Shoulder buttons': switches_shoulder goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Display': display goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Display': spacers goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Speaker': speaker goes in along [0, 0, -1] with nothing in the way
+  FAIL  step 'Raspberry Pi': pi+heatsinks is blocked on the way in by front_shell (36 hits, x 38.2..40.3 y 104.2..116.1 z 13.8..15.6)
+  ok    step 'Bay tray': bay_tray goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Rear frame': rear_frame+pico+pam+magnets_frame goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Sponsor panel': panel_world_body+panel_world_logo+magnets_panel goes in along [0, 0, -1] with nothing in the way
+  ok    step 'Power bank': bank goes in along [0, -1, 0] with nothing in the way
+  ok    Pi board edge rides over the wall clips (31 contact points: it snaps, as designed)
+  ok    bank rides over the tray detents (1521 contact points: it snaps, as designed)
+  ok    control: display dropped in AFTER the Pi -> caught (10138 hits)
+  ok    control: tray dropped in AFTER the frame -> caught (24173 hits)
+  ok    control: rear frame shifted 1 mm sideways -> caught (396.4 mm3 into the shell)
+
+==============================================================================
+E. TOOL ACCESS
+==============================================================================
+  PASS  iron reaches all 8 bosses; a driver reaches every screw when it is driven
+
+==============================================================================
+F. CONTROLS -- travel, stops and the D-pad pivot, measured off the meshes
+==============================================================================
+  face 0   pre-travel  0.15  flange float  0.80  -> switch is the rear stop
+  face 1   pre-travel  0.15  flange float  0.80  -> switch is the rear stop
+  face 2   pre-travel  0.15  flange float  0.80  -> switch is the rear stop
+  face 3   pre-travel  0.15  flange float  0.80  -> switch is the rear stop
+  pill -1  pre-travel  0.15  flange float  0.80  -> switch is the rear stop
+  pill +1  pre-travel  0.15  flange float  0.80  -> switch is the rear stop
+  D-pad: pivot gap 0.30, plunger pre-travel 0.15, click needs 0.40 at the switch
+         centre press moves every plunger 0.30  -> no click
+         arm press reaches 0.48 at that switch -> clicks
+         diagonal press reaches 0.43 at both  -> clicks both
+         working pivot gap: 0.25 .. 0.35 (diagonals need >= 0.28); the screw adjusts it
+  shoulders: slot free travel 0.70, switch needs 0.40 -> switch bottoms first
+  PASS  every button reaches its click before any printed stop; D-pad pivot in range
+
+==============================================================================
+G. INTEGRITY -- nothing cut through where it must not be
+==============================================================================
+  PASS  6 magnet pockets intact, 8 bosses uncut, outer skin unbroken
+
+==============================================================================
+H. CLEARANCES -- tightest gap between neighbouring parts (sampled)
+==============================================================================
+  info  bay_tray / rear_frame: 0.00 mm (designed contact or location fit)
+  info  front_shell / display: 0.00 mm (designed contact or location fit)
+  info  front_shell / panel_world_body: 0.00 mm (designed contact or location fit)
+  info  front_shell / pi: 0.00 mm (designed contact or location fit)
+  info  front_shell / plate_face: 0.00 mm (designed contact or location fit)
+  info  front_shell / rear_frame: 0.00 mm (designed contact or location fit)
+  info  front_shell / speaker: 0.00 mm (designed contact or location fit)
+  info  panel_world_body / magnets_panel: 0.00 mm (designed contact or location fit)
+  info  pi / heatsinks: 0.00 mm (designed contact or location fit)
+  info  plate_dpad / screws_plates: 0.00 mm (designed contact or location fit)
+  info  plate_dpad / switches_plates: 0.00 mm (designed contact or location fit)
+  info  plate_face / screws_plates: 0.00 mm (designed contact or location fit)
+  info  plate_face / switches_plates: 0.00 mm (designed contact or location fit)
+  info  plate_pills / screws_plates: 0.00 mm (designed contact or location fit)
+  info  plate_pills / switches_plates: 0.00 mm (designed contact or location fit)
+  info  rear_frame / inserts: 0.00 mm (designed contact or location fit)
+  info  rear_frame / magnets_frame: 0.00 mm (designed contact or location fit)
+  info  rear_frame / pam: 0.00 mm (designed contact or location fit)
+  info  rear_frame / panel_world_body: 0.00 mm (designed contact or location fit)
+  info  rear_frame / pico: 0.00 mm (designed contact or location fit)
+  info  spacers / display: 0.00 mm (designed contact or location fit)
+  info  rear_frame / screws_frame: 0.01 mm (designed contact or location fit)
+  info  front_shell / cap_a: 0.01 mm (designed contact or location fit)
+  info  front_shell / cap_b: 0.01 mm (designed contact or location fit)
+  info  front_shell / cap_dpad: 0.01 mm (designed contact or location fit)
+  info  front_shell / cap_pills: 0.01 mm (designed contact or location fit)
+  info  front_shell / cap_x: 0.01 mm (designed contact or location fit)
+  info  front_shell / cap_y: 0.01 mm (designed contact or location fit)
+  info  front_shell / plate_pills: 0.03 mm (designed contact or location fit)
+  info  front_shell / pins: 0.11 mm (designed contact or location fit)
+  info  shoulders / switches_shoulder: 0.15 mm (designed contact or location fit)
+  info  front_shell / switches_shoulder: 0.15 mm (designed contact or location fit)
+  info  cap_a / switches_plates: 0.15 mm (designed contact or location fit)
+  info  cap_b / switches_plates: 0.15 mm (designed contact or location fit)
+  info  cap_dpad / switches_plates: 0.15 mm (designed contact or location fit)
+  info  cap_pills / switches_plates: 0.15 mm (designed contact or location fit)
+  info  cap_x / switches_plates: 0.15 mm (designed contact or location fit)
+  info  cap_y / switches_plates: 0.15 mm (designed contact or location fit)
+  info  shoulders / pins: 0.19 mm (designed contact or location fit)
+  info  front_shell / bay_tray: 0.20 mm (designed contact or location fit)
+  info  front_shell / plate_dpad: 0.20 mm (designed contact or location fit)
+  info  bay_tray / spacers: 0.20 mm (designed contact or location fit)
+  info  rear_frame / pi: 0.23 mm (designed contact or location fit)
+  info  cap_dpad / screw_pivot: 0.30 mm (designed contact or location fit)
+  PASS  no unexpected gap under 0.3 mm
+
+==============================================================================
+I. PORTS -- a typical plug of each kind reaches its socket
+==============================================================================
+  ok    HDMI: 21 x 11 overmould seats fully
+  ok    micro-USB: 11 x 8 overmould seats fully
+  ok    3.5 mm: 7 x 7 overmould seats fully
+  ok    USB-A: 16 x 8 overmould seats fully
+  PASS  HDMI, micro-USB, 3.5 mm and USB-A plugs all seat
+
+==============================================================================
+SUMMARY: 2 FAIL, 0 WARN   (212 s)
+==============================================================================
+  FAIL  [B] asm_front_shell x asm_pi: 45.360 mm3 at x 6.2..40.3 y 34.4..116.1 z 13.8..15.6
+  FAIL  [D] step 'Raspberry Pi': pi+heatsinks is blocked on the way in by front_shell (36 hits, x 38.2..40.3 y 104.2..116.1 z 13.8..15.6)
+
+real	14m12.895s
+user	0m4.123s
+sys	0m4.733s

@@ -1,0 +1,327 @@
+{
+  "note": "Single source of truth for the assembly order. check_assembly.py sweeps every part along 'dir' (the direction it MOVES into place) over 'dist' mm against everything installed before it; the STL viewer's step-by-step mode plays the same steps. 'rigid' groups move as one body (pre-assembled off the device). Shell face-down on the bench throughout: -z is 'down into the shell'.",
+  "base": [
+    "asm_front_shell"
+  ],
+  "steps": [
+    {
+      "id": "inserts",
+      "title": "Heat-set the 8 inserts",
+      "text": "Shell face-down on the bench. Put an M3 insert on each of the 8 bosses and press it in with a soldering iron (about 220 C for PLA, 245 C for PETG) until it sits flush with the boss top. Let each cool before the next.",
+      "parts": [
+        {
+          "file": "asm_inserts",
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 25,
+          "sweep": false,
+          "tool": "iron"
+        }
+      ],
+      "hardware": "8 x M3 heat-set insert"
+    },
+    {
+      "id": "caps",
+      "title": "Drop in the buttons",
+      "text": "Drop each cap into its ring, front first. The ABXY diamond takes orange A and B and slate X and Y (the viewer shows which ring is which). START/SELECT go in the two pill rings below the screen, the cross-shaped D-pad in the cross ring. They just rest there for now.",
+      "parts": [
+        {
+          "file": "asm_cap_a",
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 30
+        },
+        {
+          "file": "asm_cap_b",
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 30
+        },
+        {
+          "file": "asm_cap_x",
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 30
+        },
+        {
+          "file": "asm_cap_y",
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 30
+        },
+        {
+          "file": "asm_cap_pills",
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 30
+        },
+        {
+          "file": "asm_cap_dpad",
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 30
+        }
+      ]
+    },
+    {
+      "id": "plates",
+      "title": "Switch plates",
+      "text": "Press a tactile switch into every pocket of the three plates with your thumb, plunger toward the plate's flat face, legs into the leg slots: the crush ribs hold it, no glue (superglue jams tactile switches). Solder the wires now (bend the legs flat if they are long). Lay each plate over its caps so the sleeves drop over the two posts, and drive 2 x M3x8 into each: 6 screws.",
+      "parts": [
+        {
+          "files": [
+            "asm_plate_face",
+            "asm_plate_dpad",
+            "asm_plate_pills",
+            "asm_switches_plates"
+          ],
+          "rigid": true,
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 30
+        },
+        {
+          "file": "asm_screws_plates",
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 30,
+          "sweep": false,
+          "tool": "driver"
+        }
+      ],
+      "hardware": "10 x tactile switch, 6 x M3x8"
+    },
+    {
+      "id": "pivot",
+      "title": "D-pad pivot screw",
+      "text": "Drive one M3x8 into the centre of the D-pad plate until it just touches the rocker. Press the middle of the D-pad: nothing may click. Press each arm: each must click. Too many clicks in the middle, screw in; an arm that will not click, back out a quarter turn.",
+      "parts": [
+        {
+          "file": "asm_screw_pivot",
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 30,
+          "sweep": false,
+          "tool": "driver"
+        }
+      ],
+      "hardware": "1 x M3x8"
+    },
+    {
+      "id": "shoulders",
+      "title": "Shoulder buttons",
+      "text": "From OUTSIDE, push each shoulder paddle into its slot in the top edge, slotted end first. From the back, drop a 10.5 mm piece of 1.75 mm filament down the hole in each block so it passes through the paddle's slot. Drop a switch into each block's pocket, plunger facing the paddle, and a bead of hot glue on its back corners (never superglue: it wicks in and jams the switch).",
+      "parts": [
+        {
+          "file": "asm_shoulders",
+          "dir": [
+            0,
+            -1,
+            0
+          ],
+          "dist": 25
+        },
+        {
+          "file": "asm_pins",
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 25
+        },
+        {
+          "file": "asm_switches_shoulder",
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 25
+        }
+      ],
+      "hardware": "2 x tactile switch, 2 x 10.5 mm of 1.75 filament"
+    },
+    {
+      "id": "display",
+      "title": "Display",
+      "text": "Do NOT fit the display's brass standoffs. Lay the display glass-down into its pocket with its flex tail toward START/SELECT and its DSI connector toward the D-pad side. Put the 4 spacer pucks on its board at the 4 marked spots.",
+      "parts": [
+        {
+          "file": "asm_display",
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 30
+        },
+        {
+          "file": "asm_spacers",
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 30
+        }
+      ]
+    },
+    {
+      "id": "speaker",
+      "title": "Speaker",
+      "text": "Speaker drivers facing the grille, lead toward the top, onto its 4 posts. Fix with 4 x M3 screws long enough for its mounting holes, or with foam tape on the post tops.",
+      "parts": [
+        {
+          "file": "asm_speaker",
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 30
+        }
+      ]
+    },
+    {
+      "id": "pi",
+      "title": "Raspberry Pi",
+      "text": "Stick the heatsinks on the Pi first and plug the DSI ribbon into it. Lower the Pi components-up onto its two posts, HDMI toward the wall with the HDMI hole and USB toward the top edge. The two clips on that wall snap over the board edge.",
+      "parts": [
+        {
+          "files": [
+            "asm_pi",
+            "asm_heatsinks"
+          ],
+          "rigid": true,
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 30,
+          "snap": "pi_clips"
+        }
+      ]
+    },
+    {
+      "id": "tray",
+      "title": "Bay tray",
+      "text": "Lower the bay tray so its two ears drop over the two right-hand bosses. It rests on the spacer pucks and holds the display down.",
+      "parts": [
+        {
+          "file": "asm_bay_tray",
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 30
+        }
+      ]
+    },
+    {
+      "id": "frame",
+      "title": "Rear frame",
+      "text": "Press 6 magnets into the frame's outer pockets (mark the polarity, the panel's must attract). Tape the Pico and the PAM8403 inside their fences on the frame's inner face and finish the wiring. Lower the frame in and drive 8 x M3x8 into the inserts.",
+      "parts": [
+        {
+          "files": [
+            "asm_rear_frame",
+            "asm_pico",
+            "asm_pam",
+            "asm_magnets_frame"
+          ],
+          "rigid": true,
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 40
+        },
+        {
+          "file": "asm_screws_frame",
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 30,
+          "sweep": false,
+          "tool": "driver"
+        }
+      ],
+      "hardware": "6 x magnet, 8 x M3x8"
+    },
+    {
+      "id": "panel",
+      "title": "Sponsor panel",
+      "text": "Press 6 magnets into the panel's inner pockets, polarity opposite to the frame. The panel snaps on and off; swap panels per sponsor.",
+      "parts": [
+        {
+          "files": [
+            "asm_panel_world_body",
+            "asm_panel_world_logo",
+            "asm_magnets_panel"
+          ],
+          "rigid": true,
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "dist": 40
+        }
+      ],
+      "hardware": "6 x magnet per panel"
+    },
+    {
+      "id": "bank",
+      "title": "Power bank",
+      "text": "Slide the power bank in through the top edge, Type-C port first, until the detents click. Pull it out by the finger notch.",
+      "parts": [
+        {
+          "file": "asm_bank",
+          "dir": [
+            0,
+            -1,
+            0
+          ],
+          "dist": 80,
+          "snap": "detents"
+        }
+      ]
+    }
+  ]
+}

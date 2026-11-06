@@ -1,0 +1,41 @@
+   asm_spacers  351537 bytes
+   asm_bay_tray  498641 bytes
+   asm_panel_arkiv_logo  99975 bytes
+   asm_panel_arkiv_body  718252 bytes
+   asm_cap_a  167858 bytes
+   asm_cap_b  168307 bytes
+   asm_cap_x  168305 bytes
+   asm_cap_y  168126 bytes
+   asm_cap_pills  133241 bytes
+   asm_shoulders  56201 bytes
+   asm_pins  20777 bytes
+   asm_plate_face  345205 bytes
+   asm_plate_dpad  360138 bytes
+   asm_plate_pills  267406 bytes
+   asm_cap_dpad  666216 bytes
+   asm_pi  455546 bytes
+   asm_heatsinks  23193 bytes
+   asm_bank  860633 bytes
+   asm_panel_arc_body  803626 bytes
+   asm_display  5184742 bytes
+   asm_pam  28845 bytes
+   asm_speaker  2950828 bytes
+   asm_switches_shoulder  105980 bytes
+   asm_pico  3549801 bytes
+   asm_switches_plates  517398 bytes
+   asm_screw_pivot  535001 bytes
+   asm_panel_arc_logo  622876 bytes
+   asm_magnets_frame  448621 bytes
+   asm_magnets_panel  448621 bytes
+   asm_rear_frame  1472102 bytes
+   asm_inserts  2269537 bytes
+   asm_screws_plates  3198448 bytes
+   asm_screws_frame  4326941 bytes
+   asm_front_shell  2867338 bytes
+   asm_panel_world_body  719485 bytes
+   asm_panel_world_logo  4721591 bytes
+=== done
+
+real	2m54.043s
+user	0m2.179s
+sys	0m2.562s
