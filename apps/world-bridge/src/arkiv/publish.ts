@@ -4,7 +4,9 @@
  *
  *   check   the approval, the book, the log header, the replay, the approved text, the dedupe (Q7)
  *   write   the approval is bound to this log and the transaction is out
- *   done    {run, listing, tx}, or one of the handler's own failure names
+ *   done    {run, listing, tx, replay}, or one of the handler's own failure names; replay is
+ *           {frames, final_hash} of this job's own replay (final_hash as the tool printed it, null
+ *           when it printed none), absent when the approval's record answered without a replay
  *
  * Failures (service side; the launcher adds "service unreachable" itself):
  *   ls_expired       approval unknown to this bridge, or older than 24 h and unspent
@@ -108,6 +110,12 @@ interface Body {
   logH: string;
   rules: number;
   headerGame: string;
+}
+
+/** What the checker's replay of this job's log gave: its time, and the game's hash after the last step. */
+interface Replayed {
+  frames: number;
+  finalHash: number | undefined;
 }
 
 interface Job {
@@ -260,10 +268,21 @@ export class Publisher {
     this.opts.log?.(`arkiv publish ${this.what(job.body)}: ${failure} (${why})`);
   }
 
-  private done(job: Job, result: { run: string; listing: string; tx: string | null }, note = ""): void {
+  /**
+   * The job's done view. `replay` is what this job's own replay gave (the console shows it as the run's check): the
+   * frames and the tool's final hash as it printed it (null when it printed none). A job answered from the
+   * approval's record never replayed, so it has none.
+   */
+  private done(job: Job, result: { run: string; listing: string; tx: string | null }, note = "", replay?: Replayed): void {
     const ex = this.opts.explorer;
     const explorer = ex ? { explorer: { tx: ex.tx(result.tx), run: ex.entity(result.run), listing: ex.entity(result.listing) } } : {};
-    job.view = { stage: "done", ok: true, failure: null, data: { run: result.run, listing: result.listing, tx: result.tx, ...explorer } };
+    const replayed = replay ? { replay: { frames: replay.frames, final_hash: replay.finalHash ?? null } } : {};
+    job.view = {
+      stage: "done",
+      ok: true,
+      failure: null,
+      data: { run: result.run, listing: result.listing, tx: result.tx, ...explorer, ...replayed },
+    };
     this.opts.log?.(
       `arkiv publish ${this.what(job.body)}: run ${result.run} listing ${result.listing}${result.tx ? ` tx ${result.tx}` : ""}${note}`,
     );
@@ -329,6 +348,7 @@ export class Publisher {
       return this.fail(job, "ls_publish_fail", "could not hash the replay tool");
     }
     const splits = await this.splitsFor(b, frames, finalHash);
+    const replay: Replayed = { frames, finalHash };
 
     const run: CreateSpec<RunValues> = {
       values: {
@@ -387,7 +407,7 @@ export class Publisher {
       if (existing && live && (live.pay_to ?? null) === (b.pay_to ?? null)) {
         const result = { run: existing.key, listing: live.key, tx: store.resultForLog(b.logH)?.tx ?? null };
         store.setApprovalResult(b.jti, result);
-        return this.done(job, result, " (already on the board)");
+        return this.done(job, result, " (already on the board)", replay);
       }
 
       // 9. Write: one batch (or the listing alone for a run already on the board; a live listing
@@ -418,7 +438,7 @@ export class Publisher {
       }
       store.setApprovalResult(b.jti, outcome.w);
       // 10. Done.
-      return this.done(job, outcome.w);
+      return this.done(job, outcome.w, "", replay);
     });
   }
 

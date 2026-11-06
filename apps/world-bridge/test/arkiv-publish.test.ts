@@ -94,7 +94,7 @@ describe("publish: happy path", () => {
     const v = await publish(s);
     assert.equal(v.ok, true, JSON.stringify(v));
     assert.equal(v.failure, null);
-    assert.deepEqual(Object.keys(v.data).sort(), ["listing", "run", "tx"]);
+    assert.deepEqual(Object.keys(v.data).sort(), ["listing", "replay", "run", "tx"]);
     assert.equal(s.arkiv.batches.length, 1);
     assert.equal(s.arkiv.batches[0].kind, "run+listing");
     assert.equal(v.data.tx, s.arkiv.batches[0].tx);
@@ -162,6 +162,20 @@ describe("publish: happy path", () => {
     const all = s.lines.join("\n");
     assert.match(all, new RegExp(`arkiv publish ${s.rec.book} MDGP 1:42\\.83: run ${String(v.data.run)} listing ${String(v.data.listing)}`));
     for (const bad of ["3f9c0a1b2c3d4e5f", s.body().log as string, GHOST, SECRET]) assert.ok(!all.includes(bad), "leaked");
+  });
+
+  it("the done view says what this job's replay gave: the frames and the final hash as the tool printed it", async () => {
+    const s = setup();
+    s.approve("3f9c0a1b2c3d4e5f");
+    const v = await publish(s);
+    assert.equal(s.checker.calls, 1);
+    assert.deepEqual(v.data.replay, { frames: 6170, final_hash: 576543229 });
+    assert.equal(typeof (v.data.replay as { final_hash: unknown }).final_hash, "number", "sent as it is, not as hex");
+
+    const t = setup();
+    t.checker.result = { final_hash: undefined }; // a tool that printed no final hash
+    t.approve("3f9c0a1b2c3d4e5f");
+    assert.deepEqual((await publish(t)).data.replay, { frames: 6170, final_hash: null });
   });
 
   it("stages: check while replaying, write while the transaction is out, then done", async () => {
@@ -350,7 +364,11 @@ describe("publish: retries", () => {
     const v1 = await publish(s);
     s.clock.ms += 3_600_001;
     const v2 = await publish(s);
-    assert.deepEqual(v2, v1);
+    const { replay, ...keys } = v1.data;
+    assert.ok(replay, "the first job replayed the log");
+    // Answered from the approval's record, not replayed again: no replay in its view.
+    assert.deepEqual(v2, { ...v1, data: keys });
+    assert.equal(s.checker.calls, 1);
     assert.equal(s.arkiv.batches.length, 1);
   });
 
@@ -363,6 +381,8 @@ describe("publish: retries", () => {
     assert.equal(v2.ok, true);
     assert.equal(v2.data.run, v1.data.run);
     assert.equal(v2.data.listing, v1.data.listing);
+    assert.deepEqual(v2.data.replay, { frames: 6170, final_hash: 576543229 }, "this job replayed the log too");
+    assert.equal(s.checker.calls, 2);
     assert.equal(s.arkiv.batches.length, 1);
   });
 

@@ -173,7 +173,7 @@ describe("POST /arkiv/publish and GET /arkiv/publish/{id}", () => {
     }
     assert.deepEqual(Object.keys(v).sort(), ["data", "failure", "ok", "stage"]);
     assert.equal(v.ok, true);
-    assert.deepEqual(Object.keys(v.data).sort(), ["listing", "run", "tx"]);
+    assert.deepEqual(Object.keys(v.data).sort(), ["listing", "replay", "run", "tx"]);
     assert.match(v.data.run, /^0x[0-9a-f]{64}$/);
     assert.equal((await call("POST", "/arkiv/publish", body())).json.id, s.json.id);
   });
