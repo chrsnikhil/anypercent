@@ -1,0 +1,10 @@
+Every zip in this folder is an asset pack created and distributed by Kenney (www.kenney.nl), unchanged, as
+downloaded from kenney.nl. Each one carries Kenney's own License.txt inside it.
+
+License: Creative Commons Zero, CC0
+http://creativecommons.org/publicdomain/zero/1.0/
+
+"You can use this content for personal, educational, and commercial purposes.
+Support by crediting 'Kenney' or 'www.kenney.nl' (this is not a requirement)" (Kenney's License.txt)
+
+The games credit the packs they use in their own CREDITS.md.
