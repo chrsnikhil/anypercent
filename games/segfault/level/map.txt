@@ -1,0 +1,63 @@
+; SEGFAULT level: 48 x 48 cells, x to the right, y down. The first non-comment line is the start angle
+; (1024 steps a turn, 0 = east, 256 = south, 768 = north); then 48 rows of 48 cells.
+; Legend:
+;   .  floor              #  server rack wall     c  cable wall        o  office wall     w  whiteboard wall
+;   D  sliding door (B)   L  locked door: opens (B) only with the keycard
+;   A  Arkiv shelf: B heals +25 once (health station)
+;   K  World orb keycard reader (B)               X  Chainlink terminal: the exit (B, needs the keycard)
+;   P  pushable wall (B): slides away to the secret room      s  secret room floor (the trophy)
+;   b  a bug (on floor)   @  the player's start (on floor)
+; Rooms: the start office (SW); north up a corridor (the secret room hides behind its west wall) to server hall 1,
+; a serpentine of rack rows, whose north door leads to the keycard vault (far north-west); east to server hall 2,
+; rack islands; north to the office hallway, its meeting rooms and the cooling room (north-east); down the east
+; corridor to the junction (SE), where the locked door opens the wing with the exit terminal. Hall 2's south door
+; is a shortcut to the junction. Ammo is unlimited (the blaster is a debugger).
+768
+ccccccccccccccccccccooowooooccooowoowooccccccccc
+cccccccccccccccccccco......occo.......occccccccc
+cc...............ccco......occo....b..occccccccc
+cc...............ccco..b...occo.......occccccccc
+cc...#...#...#...ccco......occo.......occccccccc
+cc...#...#...#...cccooooDoooooooooDooooooooooooc
+cc...............ccco.................b.....b.oc
+cK.....b.........cccoooooooo.oooooooooooooo.oooc
+cc...............ccccccccccc.ccccccccccccccDcccc
+cc...#...#...#...ccccccccccc.ccccccccccc.......c
+cc...#...#...#...ccccccccccc.ccccccccccc.....b.c
+cc............b..ccccccccccc.ccccccccccc.......w
+cc...............ccccc######D#######cccc.b.....c
+cc...............ccccc#............#cccc.......c
+ccccccccc.cccccccccccc#....b.......#cccc.......c
+ccccccccc.cccccccccccc#..##..##....#cccccccDcccc
+ccccccccc.cccccccccccc#..##..##....#ccccccc.cccc
+c########D#########ccc#..##..##....#ccccccc.cccc
+c#................#ccc#.........b..#ccccccc.cccc
+c#.......b........D...D............#ccccccc.cccc
+c##############...#ccc#..##..##....#ccccccc.cccc
+c#....b...........#ccc#..##..##....#ccccccc.cccc
+cA.............b..#ccc#..##..##....Accccccc.cccc
+c#...##############ccc#.b......b...#ccccccc.cccc
+c#..........b.....#ccc#............#ccccccc.cccc
+c#................#ccc#..##..##....#cccccccbcccc
+c##############...#ccc#..##..##....#ccccccc.cccc
+c#.b.......b......#ccc#..##..##....#ccccccc.cccc
+c#................#ccc#..........b.#ccccccc.cccc
+c####D#############ccc#....b.......#ccccccc.cccc
+ccAcc.cccccccccccccccc#............#ccccccc.cccc
+csssc.cccccccccccccccc######D#######ccccccc.cccc
+csssc.cccccccccccccccccccccc.cccccccccccccc.cccc
+csssP.cccccccccccccccccccccc.cccccccccccccc.cccc
+csssc.cccccccccccccccccccccc.cccccccc..........c
+csssc.cccccccccccccccccccccc...................c
+ccccc.ccccccccccccccccccccccccccccccc...b......c
+cooooDooooocccccccccccccccccccccccccc..........c
+co........occcccccccccccccccccooooocoooooLoooooo
+co........occccccccccccccccccco................o
+cA........occccccccccccccccccco.............b..o
+co........wccccccccccccccccccco##############..o
+co...@....occcccccccccccccccccA.......b........o
+cw........occccccccccccccccccco..##############o
+co........occccccccccccccccccco..b.............o
+co........occccccccccccccccccco................X
+coooooowooocccccccccccccccccccoooooooooooooooooo
+cccccccccccccccccccccccccccccccccccccccccccccccc
