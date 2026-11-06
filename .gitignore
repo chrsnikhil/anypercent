@@ -71,7 +71,8 @@
 /video/briefing/public/fonts/
 /video/briefing/prep/make_mw3_audio.py
 
-# 2. Games: the clip renderer and the reskins of other people's games keep their scripts only.
+# 2. Games: ETHGlobal's own logo file stays out (SHIP IT!'s pixel version of it is in its graphics, see CREDITS.md);
+# the clip renderer and the reskins of other people's games keep their scripts only.
 /games/clips/**
 !/games/clips/**/
 !/games/clips/**/*.py
@@ -80,6 +81,7 @@
 /games/reskin/**
 !/games/reskin/**/
 !/games/reskin/**/*.py
+/game/art/source/ethglobal-mumbai-logo.png
 
 # 3. Never, anywhere.
 **/.superpowers/
