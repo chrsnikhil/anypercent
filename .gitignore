@@ -1,10 +1,13 @@
-# Only the code is tracked. Everything else in this folder (CAD, print files, renders, video, art, music renders,
-# ROM builds, device secrets) stays out, even after a careless `git add -A`.
+# An allowlist: at the top level only the trees named here are tracked, and the never-list at the end applies inside
+# every one of them, even after a careless `git add -A`. Built ROMs and the films are release assets, not files here.
 
-# 1. At the top level: nothing, except these trees.
+# 1. At the top level: nothing, except these.
 /*
 !/.gitignore
+!/.gitattributes
 !/README.md
+
+# The software: the launcher, the arcade kit, the games, the laptop service.
 !/launcher/
 !/arcade/
 !/games/
@@ -12,52 +15,68 @@
 !/apps/
 /apps/*
 !/apps/world-bridge/
-# The Arkiv track's files: its notes and the board snapshot only (never keys or .env values).
+
+# The sponsor tracks' notes (transaction ids, schemas, the board snapshot; never keys or .env values).
 !/arkiv/
 /arkiv/*
 !/arkiv/*.md
 !/arkiv/snapshot.json
-# The Hedera track's files: its notes only (transaction ids and links; never keys or .env values).
 !/hedera/
 /hedera/*
 !/hedera/*.md
 
-# 2. In the games and the arcade kit: source code and build files only (no art, sound, ROMs or generated frames).
-/arcade/**
-/games/**
-/game/**
-!/arcade/**/
-!/games/**/
-!/game/**/
-!/arcade/**/*.c
-!/arcade/**/*.h
-!/arcade/**/*.py
-!/arcade/**/*.sh
-!/arcade/**/*.mk
-!/arcade/**/*.ini
-!/arcade/**/Makefile
-!/games/**/*.c
-!/games/**/*.h
-!/games/**/*.cpp
-!/games/**/*.hpp
-!/games/**/*.s
-!/games/**/*.py
-!/games/**/*.sh
-!/games/**/*.mk
-!/games/**/*.ini
-!/games/**/Makefile
-!/game/**/*.c
-!/game/**/*.h
-!/game/**/*.cpp
-!/game/**/*.hpp
-!/game/**/*.s
-!/game/**/*.py
-!/game/**/*.sh
-!/game/**/*.mk
-!/game/**/*.ini
-!/game/**/Makefile
+# The hardware: CAD, print files, renders, the HTML viewers and their build scripts.
+!/cad/
+!/cad2/
+/cad2/vendor/
+/cad2/viewer_cache/
+/cad2/logos/**
+!/cad2/logos/**/
+!/cad2/logos/**/*.py
+!/prints/
+!/render/
+!/assets/
+!/Any% *.html
+!/viewer.html
+!/viewer_template.html
+!/stl_viewer.html
+!/stl_viewer_template.html
+!/build_viewer.ps1
+!/build_stl_viewer.ps1
+
+# The device (the Pi's setup, services and tools) and the laptop build sandbox's scripts.
+!/device/
+!/sandbox/
+/sandbox/patches/
+
+# The docs (not the cloned third-party repos or the sponsors' brand kits and saved pages).
+!/docs/
+/docs/vendor/
+/docs/sponsors/
+
+# The films' sources: no renders, review rounds, film copies or third-party fonts (the films are release assets).
+!/video/
+/video/final/*.mp4
+/video/final/rounds/
+/video/briefing/public/final/acts/
+/video/briefing/public/final/audio/
+/video/briefing/public/final/c3d/
+/video/briefing/public/final/race/
+/video/briefing/public/fonts/
+/video/briefing/prep/make_mw3_audio.py
+
+# 2. Games: the clip renderer and the reskins of other people's games keep their scripts only.
+/games/clips/**
+!/games/clips/**/
+!/games/clips/**/*.py
+!/games/clips/**/*.c
+!/games/clips/**/*.sh
+/games/reskin/**
+!/games/reskin/**/
+!/games/reskin/**/*.py
 
 # 3. Never, anywhere.
+**/.superpowers/
 **/__pycache__/
 **/.pytest_cache/
 **/node_modules/
@@ -69,15 +88,15 @@
 !**/.env.example
 *.key
 *.pem
+*.p12
+*.pfx
 *.gba
 *.gb
 *.gbc
 *.elf
 *.sav
 *.o
-/games/_kenney/
-/games/clips/
-/games/reskin/
-/games/music/previews/
 /launcher/dev/screens/
 /apps/world-bridge/data/
+# A recorder log that names the Arkiv RPC with its access key in the URL.
+/video/final/rec/live_wallet_book.json

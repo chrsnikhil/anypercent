@@ -1,0 +1,20 @@
+# Assets are stored byte for byte: no line-ending conversion, no text diffs.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.bmp binary
+*.gif binary
+*.stl binary
+*.3mf binary
+*.glb binary
+*.blend binary
+*.blend1 binary
+*.npz binary
+*.zip binary
+*.pdf binary
+*.mp4 binary
+*.wav binary
+*.vgm binary
+*.bin binary
+*.acl binary
+*.gba binary
