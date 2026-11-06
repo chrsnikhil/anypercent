@@ -39,6 +39,7 @@ import urllib.request
 from arca_launcher.handler.sponsors import HCS_MSG, HOUSE_LABEL, PAY_TO, RunRow
 
 RABDI_RPC = "https://rpc.rabdi.db-chain.testnet.arkiv.network"   # the public endpoint: no key on the console
+RABDI_CHAIN_ID = 7794095      # Rabdi's chain id: the only chain this console's wallet signs for
 RUN_SCHEMA, LISTING_SCHEMA, STAMP_SCHEMA = "anypercent.run", "anypercent.listing", "anypercent.stamp"
 PAGE = 100                    # one page: runners beyond the top 100 runs are not shown
 TIMEOUT_S = 3.0
@@ -541,14 +542,20 @@ def read_run(send, key, checker, stamp=None):
     return dict(run, stamp=stamp["key"])
 
 
+def read_listing_row(send, key):
+    """The live listing with this key as Arkiv holds it, decoded (its creator and owner as given), whether it counts
+    or not; None when it is gone or is not a listing. A relist's check of the listing it is asked to delete."""
+    key = entity_key(key)
+    data, _ = query(send, q6_listing(key), _select(_LISTING_SELECT, owner=True), limit=1)
+    rows, _ = decode_listings(data, None, None)
+    return next((row for row in rows if row["key"] == key), None)
+
+
 def read_listing(send, key, checker):
     """The live listing with this key, decoded, only when it counts: its run is stamped by the checker and counts
     (read_run), and the listing is that run's owner's, with the run's columns. None when it is gone or does not
     count."""
-    key = entity_key(key)
-    data, _ = query(send, q6_listing(key), _select(_LISTING_SELECT, owner=True), limit=1)
-    rows, _ = decode_listings(data, None, None)
-    listing = next((row for row in rows if row["key"] == key), None)
+    listing = read_listing_row(send, key)
     if listing is None:
         return None
     stamp = read_stamp(send, listing["run"], checker)

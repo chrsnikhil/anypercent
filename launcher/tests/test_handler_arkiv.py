@@ -199,6 +199,7 @@ class StubService:
 
     def __init__(self):
         self.requests, self.jobs, self.by_jti, self.ghosts = [], {}, {}, {}
+        self.minted = 0
         self.down = False
         self.error = None
         self.written_error = None
@@ -219,7 +220,10 @@ class StubService:
         if (method, path) == ("GET", "/arkiv/config"):
             return json.loads(json.dumps(self.config))
         if (method, path) == ("POST", "/arkiv/publish"):
-            jid = self.by_jti.setdefault(body["jti"], f"pub{len(self.by_jti) + 1}")
+            if body["jti"] not in self.by_jti:                         # a new job id; a forgotten job gets another
+                self.minted += 1
+                self.by_jti[body["jti"]] = f"pub{self.minted}"
+            jid = self.by_jti[body["jti"]]
             job = self.jobs.get(jid)
             if job is None or not (job["stage"] == "done" and job["ok"]):
                 self.jobs[jid] = {"stage": "check", "ok": None, "failure": None, "data": {}}
@@ -1876,12 +1880,17 @@ def test_the_console_signs_what_was_issued_tells_the_service_and_lists_it_stampe
 
 
 def test_every_look_at_the_sign_stage_repeats_the_issue_and_it_is_signed_once(tmp_path):
+    """The service keeps one job id per approval: a job this console wrote for that comes back at "sign" (the
+    service did not find the records yet, or issued afresh) is told again with the same transaction and keys, never
+    signed again, never left to run out its budget."""
     rig = Rig(tmp_path)
     rig.service.stay_at_sign = True                                     # the service has not moved on yet
     call, _ = _signing(rig)
     for _ in range(6):
         rig.step()
-    assert len(rig.signer.calls) == 1 and len(rig.service.written()) == 1
+    assert len(rig.signer.calls) == 1 and len(rig.service.written()) >= 2
+    assert {json.dumps(body, sort_keys=True) for _, body in rig.service.written()} == {
+        json.dumps({"tx": DONE["tx"], "run": DONE["run"], "listing": DONE["listing"]}, sort_keys=True)}
     assert call.poll() is None
     rig.service.move("done", ok=True, data=DONE)
     rig.step()
@@ -2007,19 +2016,58 @@ def test_a_written_the_service_did_not_hear_is_told_again_and_a_refusal_is_not_l
     rig.step()
     assert call.poll().ok
     rig = Rig(tmp_path / "refused")
-    rig.service.written_error = 409
+    rig.service.written_error = 400
     call, _ = _signing(rig)
     rig.step()
     assert call.poll() == Result(ok=False, failure="ls_publish_fail")
 
 
-def test_a_job_the_service_forgot_is_started_again_with_the_same_approval(tmp_path):
-    """The service holds a job an hour: a 404 starts it again with the same jti (the service then finds what this
-    wallet already wrote and stamps it, without a new signature)."""
+def test_a_written_answered_not_now_waits_for_the_next_sign_and_is_told_again_then(tmp_path):
+    """409 on `written`: the job is running again under its id (Cross after an unheard `written`). Not a failure:
+    the console polls on, and tells again only when the job is back at "sign"."""
     rig = Rig(tmp_path)
+    rig.service.written_error = 409
+    call, log = _signing(rig)
+    rig.step()
+    assert call.poll() is None and len(rig.service.written()) == 1
+    rig.service.move("check")
+    for _ in range(4):
+        rig.step()
+    assert call.poll() is None and len(rig.service.written()) == 1      # not told while it runs
+    rig.service.written_error = None
+    rig.service.move("sign", data={"issue": issue(log)})                 # it issued afresh: the same records again
+    rig.step()
+    rig.step()
+    assert len(rig.service.written()) == 2 and len(rig.signer.calls) == 1
+    rig.service.move("done", ok=True, data=DONE)
+    rig.step()
+    assert call.poll() == Result(ok=True, data=DONE)
+
+
+def test_a_failed_done_after_a_not_now_is_told_once_more_then_it_is_a_failure(tmp_path):
+    rig = Rig(tmp_path)
+    rig.service.written_error = 409
     call, _ = _signing(rig)
     rig.step()
-    del rig.service.jobs["pub1"]                                        # pruned
+    rig.service.written_error = None
+    rig.service.move("done", ok=False, failure="ls_publish_fail")
+    rig.step()
+    rig.step()
+    assert call.poll() is None and len(rig.service.written()) == 2      # its records exist: the service may stamp them
+    rig.service.move("done", ok=False, failure="ls_publish_fail")
+    rig.step()
+    assert call.poll() == Result(ok=False, failure="ls_publish_fail") and len(rig.service.written()) == 2
+
+
+def test_a_job_the_service_forgot_is_started_again_with_the_same_approval(tmp_path):
+    """The service holds a job an hour: a 404 starts it again with the same jti under a new id. What this console's
+    wallet wrote stays with the job: the service either finds those records and stamps them (its done has no tx: the
+    console's own fills in), or issues again, and then `written` names them, with no second signature."""
+    rig = Rig(tmp_path)
+    call, log = _signing(rig)
+    rig.step()
+    del rig.service.jobs["pub1"]                                        # pruned: a new job, a new id
+    del rig.service.by_jti["3f9c0a1b2c3d4e5f"]
     rig.step()
     rig.step()
     assert [b["jti"] for p, b in rig.service.posts("/arkiv/publish")] == ["3f9c0a1b2c3d4e5f"] * 2
@@ -2027,6 +2075,18 @@ def test_a_job_the_service_forgot_is_started_again_with_the_same_approval(tmp_pa
     rig.step()
     assert call.poll() == Result(ok=True, data=DONE)                    # the tx this console sent, all the same
     assert len(rig.signer.calls) == 1
+    rig = Rig(tmp_path / "issued")
+    call, log = _signing(rig)
+    rig.step()
+    del rig.service.jobs["pub1"]
+    del rig.service.by_jti["3f9c0a1b2c3d4e5f"]
+    rig.step()
+    rig.step()
+    rig.service.move("sign", data={"issue": issue(log)})                 # the new job issues again
+    rig.step()
+    rig.step()
+    told = {"tx": DONE["tx"], "run": DONE["run"], "listing": DONE["listing"]}
+    assert rig.service.written()[-1] == ("/arkiv/publish/pub2/written", told) and len(rig.signer.calls) == 1
 
 
 def test_a_done_without_this_consoles_tx_still_lists_with_what_it_knows(tmp_path):
@@ -2039,15 +2099,35 @@ def test_a_done_without_this_consoles_tx_still_lists_with_what_it_knows(tmp_path
                                                 "stamp": DONE["stamp"]})
 
 
-def test_a_relist_signs_the_listing_only_and_names_the_stamped_run(tmp_path):
-    rig = Rig(tmp_path)
+def _relist_rig(tmp_path, wallet=WALLET):
+    """A console whose wallet World knows, with its own stamped run of LIST_PAYLOAD's log and that run's listing on
+    the board: (rig, the run, its listing)."""
+    world = WorldSponsors("http://bridge.test:8787", FakeClock(), transport=StubBridge(), background=False,
+                          wallet=wallet)
+    rig = Rig(tmp_path, inner=world)
+    run = rig.node.run("ANY-6PS", 6170, log=acl("6ps"), listed=True)
+    return rig, run, rig.node.listing_of(run)
+
+
+def _relisting(rig, run, replaces):
     call, log = _signing(rig, relist=True)
+    sent = dict(issue(log, relist=True), run_key=run["key"], replaces=replaces)
+    rig.service.move("sign", data={"issue": sent})
     rig.step()
+    return call, sent
+
+
+def test_a_relist_signs_the_listing_only_and_names_the_stamped_run(tmp_path):
+    rig, run, old = _relist_rig(tmp_path)
+    call, sent = _relisting(rig, run, old["key"])
     (signed,) = rig.signer.calls
-    assert signed["run"] is None and signed["run_key"] == DONE["run"] and signed["replaces"] is None
-    assert signed["listing"] == issue(log)["listing"]
+    assert signed["run"] is None and signed["run_key"] == run["key"] and signed["replaces"] == old["key"]
+    assert signed["listing"] == sent["listing"]
     assert rig.service.written() == [("/arkiv/publish/pub1/written",
-                                      {"tx": DONE["tx"], "run": DONE["run"], "listing": DONE["listing"]})]
+                                      {"tx": DONE["tx"], "run": run["key"], "listing": DONE["listing"]})]
+    rig, run, old = _relist_rig(tmp_path / "nothing to replace")
+    _relisting(rig, run, None)
+    assert len(rig.signer.calls) == 1
     rig = Rig(tmp_path / "keyless")
     bad = issue(acl("6ps"), relist=True)
     bad["run_key"] = "0x12"
@@ -2085,3 +2165,78 @@ def test_an_issue_with_no_chain_or_no_listing_is_never_signed(tmp_path, change):
     rig.service.move("sign", data={"issue": dict(issue(log), **change)})
     rig.step()
     assert call.poll() == Result(ok=False, failure="ls_publish_fail") and rig.signer.calls == []
+
+
+@pytest.mark.parametrize("what", ["a stranger's listing", "a listing of another run", "a listing of another log",
+                                  "a listing given away", "not a listing", "a run stamped to another wallet",
+                                  "a run with no stamp", "a run of another log", "the wallet not known", "arkiv down"])
+def test_a_relist_never_deletes_or_relists_what_is_not_this_wallets(tmp_path, what):
+    """Spec Goal 5: a relist deletes `replaces` in the console's own transaction, so before signing the console reads
+    it and the run from Arkiv: the run must be stamped as this wallet's run of this log, and `replaces` this wallet's
+    listing of that run. The service can never make this wallet delete a record of its choosing."""
+    rig, run, old = _relist_rig(tmp_path, wallet=None if what == "the wallet not known" else WALLET)
+    replaces = old["key"]
+    if what == "a stranger's listing":
+        replaces = rig.node.listing_of(rig.node.run("ANY-6PS", 6100, listed=True, creator=STRANGER))["key"]
+    elif what == "a listing of another run":
+        replaces = rig.node.listing_of(rig.node.run("ANY-6PS", 6300, listed=True))["key"]
+    elif what == "a listing of another log":
+        for a in old["attributes"]:
+            if a["name"] == "log_h":
+                a["value"] = sha(b"another log")
+    elif what == "a listing given away":
+        old["owner"] = STRANGER
+    elif what == "not a listing":
+        replaces = run["key"]                                            # its own run: never deleted
+    elif what == "a run stamped to another wallet":
+        for a in rig.node.stamp_of(run)["attributes"]:
+            if a["name"] == "console":
+                a["value"] = STRANGER
+    elif what == "a run with no stamp":
+        rig.node.stamps.clear()
+    elif what == "a run of another log":
+        run = rig.node.run("ANY-6PS", 6180, log=acl("someone else's"))   # this wallet's, stamped, another log
+    call, log = _signing(rig, relist=True)
+    sent = dict(issue(log, relist=True), run_key=run["key"], replaces=replaces)
+    rig.service.move("sign", data={"issue": sent})
+    rig.node.down = what == "arkiv down"
+    rig.step()
+    assert call.poll() == Result(ok=False, failure="ls_publish_fail"), what
+    assert rig.signer.calls == []
+
+
+RABDI_HOST = "rpc.rabdi.db-chain.testnet.arkiv.network"
+
+
+@pytest.mark.parametrize("change", [{"chain_id": 1}, {"chain_id": 7794096}, {"rpc": "http://" + RABDI_HOST},
+                                    {"rpc": "https://evil.example/rpc"}, {"rpc": f"https://{RABDI_HOST}.evil.example"},
+                                    {"rpc": "not a url"}])
+def test_the_console_signs_only_for_rabdi_on_the_configured_rpc_host(tmp_path, change):
+    rig = Rig(tmp_path)
+    call, log = _signing(rig)
+    rig.service.move("sign", data={"issue": dict(issue(log), **change)})
+    rig.step()
+    assert call.poll() == Result(ok=False, failure="ls_publish_fail") and rig.signer.calls == []
+    rig = Rig(tmp_path / "keyed")
+    call, log = _signing(rig)
+    keyed = dict(issue(log), rpc=rpc.RABDI_RPC + "/some/path?key=x")     # the same host: taken
+    rig.service.move("sign", data={"issue": keyed})
+    rig.step()
+    assert len(rig.signer.calls) == 1 and rig.signer.calls[0]["rpc"] == keyed["rpc"]
+
+
+def test_the_signer_never_gets_more_time_than_the_publish_has_left(tmp_path):
+    rig = Rig(tmp_path)
+    call, _ = _signing(rig)
+    rig.clock.ms += TIMEOUT_MS["publish"] - 50000                       # 50 s of the budget left
+    rig.step()
+    assert rig.signer.calls[0]["timeout_s"] == pytest.approx(50 - arkiv.POLL_MS / 1000)
+    rig = Rig(tmp_path / "late")
+    call, _ = _signing(rig)
+    rig.clock.ms += TIMEOUT_MS["publish"] - arkiv.SIGN_MIN_S * 1000 + 1000     # under 30 s left: not signed
+    rig.step()
+    assert call.poll() == Result(ok=False, failure="ls_publish_fail") and rig.signer.calls == []
+    rig = Rig(tmp_path / "early")
+    call, _ = _signing(rig)
+    rig.step()
+    assert rig.signer.calls[0]["timeout_s"] == arkiv.SIGN_TIMEOUT_S

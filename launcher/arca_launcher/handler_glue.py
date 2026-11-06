@@ -32,7 +32,7 @@ from concurrent.futures import ThreadPoolExecutor
 from . import coach, settings
 from .handler import arkiv_wallet, board, ledger
 from .handler.board import ordinal
-from .handler.flow import CHAIN_STATES, CloseHandler, Flow
+from .handler.flow import CHAIN_STATES, WALLET_UNKNOWN, CloseHandler, Flow
 from .model import Screen
 
 MOCK_WALLET = "0xDE40...0000"        # made up, and shown only while Hedera is mocked: the owner's wallet never is
@@ -245,12 +245,16 @@ class HandlerGlue:
 
     def _console_ctx(self):
         """The console's tag and what it is linked to, for "My record book" (nothing while World is mocked), and its
-        own Arkiv wallet in short form (console_wallet, "0x1a2b…9f3e", once found; wallet_note when a linked console's
-        wallet still needs a new link: its records are not stamped until then)."""
+        own Arkiv wallet in short form (console_wallet, "0x1a2b…9f3e", once found; with Arkiv real and the address not
+        found yet, flow.WALLET_UNKNOWN; wallet_note when a linked console's wallet still needs a new link: its records
+        are not stamped until then)."""
         out = {}
-        wallet = arkiv_wallet.short(getattr(self.app.sponsors, "arkiv_wallet", None))
+        sponsors = self.app.sponsors
+        wallet = arkiv_wallet.short(getattr(sponsors, "arkiv_wallet", None))
         if wallet is not None:
             out["console_wallet"] = wallet
+        elif not sponsors.mocked("board"):
+            out["console_wallet"] = WALLET_UNKNOWN
         binding = self._binding_now()
         if binding is None:
             return out

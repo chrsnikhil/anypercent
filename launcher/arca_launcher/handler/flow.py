@@ -108,6 +108,7 @@ REFUSED_WHY = {"own_book": "that is your own book", "run_changed": "the run chan
                "console_not_linked": "this console is not linked to {book}"}
 REFUSED_ELSE = "the listing did not check out"
 NO_BOOK_LINE = "This console has no record book now. Its runs stay on the board."
+WALLET_UNKNOWN = "not known yet"   # {console_wallet} before this console's Arkiv wallet address is known
 
 
 class Flow:
@@ -220,6 +221,8 @@ class Flow:
         extra = {}
         for name in set(PLACEHOLDER_RE.findall(text)) - _NAME_FIELDS:
             value = self._payee() if name == "payee" else self.ctx.get(name)
+            if name == "console_wallet" and not value:
+                value = WALLET_UNKNOWN                # never "Wallet **" while the address is not known
             extra[name] = "" if value is None else value
         return self.sponsors.names.fill(text, **extra)
 

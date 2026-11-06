@@ -1696,3 +1696,14 @@ def test_the_mock_board_keeps_its_buttons_as_they_were(tmp_path):
     app.frame(16, [A.A])                                         # Cross: the target, as before
     assert flow.state.name == "target"
     app.close()
+
+
+def test_with_arkiv_real_the_wallet_line_is_there_before_the_address_is_found(tmp_path):
+    from arca_launcher.handler.flow import WALLET_UNKNOWN
+    app = bound_app(tmp_path, book="ANY-6PS")
+    app.sponsors.arkiv_wallet = None
+    assert "console_wallet" not in app.handler._console_ctx()           # Arkiv mocked: no wallet at all
+    app.sponsors.mocked = lambda service: service == "third"            # Arkiv real, the address not found yet
+    assert app.handler._console_ctx()["console_wallet"] == WALLET_UNKNOWN
+    app.sponsors.arkiv_wallet = "0x1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b9f3e"
+    assert app.handler._console_ctx()["console_wallet"] == "0x1a2b\u20269f3e"

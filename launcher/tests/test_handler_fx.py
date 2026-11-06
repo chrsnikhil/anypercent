@@ -70,7 +70,10 @@ def test_a_done_steps_tick_pops_without_the_icons_overshoot(fx):
 def test_load_bar_reaches_90_percent_in_the_steps_usual_time_then_creeps_to_its_deadline(fx):
     from arca_launcher.handler.mock import _DELAY_MS
     assert set(fx.EXPECTED_MS) == {"idkit_verify", "check_listing", "pay", "load_ghost", "record", "publish", "scout"}
-    assert all(fx.EXPECTED_MS[step] == _DELAY_MS[step] - 100 for step in fx.EXPECTED_MS if step != "scout")
+    assert all(fx.EXPECTED_MS[step] == _DELAY_MS[step] - 100 for step in fx.EXPECTED_MS
+               if step not in ("scout", "publish"))
+    # publish: the console's own signer, then the checker's stamp; the bar is not at 90% after a second and a half
+    assert fx.EXPECTED_MS["publish"] == 30000 and fx.fill(1300, "publish", 120000) < 0.1
     assert fx.fill(2500, "scout", 12000) == pytest.approx(0.9)                # the scout: no mock, a live guess
     approx = pytest.approx
     assert fx.fill(0, "pay", 8000) == 0 and fx.fill(950, "pay", 8000) == approx(0.45)
@@ -396,7 +399,8 @@ def test_each_load_bar_is_near_90_percent_as_its_mock_call_lands(screen, tmp_pat
     loads = [st for st in STATES.values() if st.card["t"] == "load" and st.call]
     assert {st.name for st in loads} == {"id_verifying", "buy_check", "buy_pay", "buy_load", "ls_record", "ls_arkiv",
                                          "scout"}
-    loads = [st for st in loads if st.call in _DELAY_MS]              # the scout runs only with Hedera real
+    # The scout runs only with Hedera real; publish's usual time is the real one (the console signs, then the stamp).
+    loads = [st for st in loads if st.call in _DELAY_MS and st.call != "publish"]
     from arca_launcher.render.handler_fx import EXPECTED_MS
     assert EXPECTED_MS["scout"] < STATES["scout"].deadline_ms
     images = _spy(monkeypatch, screen.gfx, "image")

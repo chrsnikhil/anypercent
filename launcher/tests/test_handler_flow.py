@@ -1983,3 +1983,15 @@ def test_run_links_never_takes_a_payments_late_receipt_and_comes_back_after_the_
     flow.ctx["board_rows"] = _real_board()                          # the glue builds the board again
     flow.press("circle")
     assert flow.state.name == "board" and _picked(flow) == "BOT-A2"
+
+
+def test_the_wallet_line_reads_not_known_yet_until_the_address_is_found(tmp_path):
+    """ls_unfunded and ls_not_linked name this console's wallet: before its address is known the line says so, never
+    an empty "Wallet **"."""
+    from arca_launcher.handler.flow import WALLET_UNKNOWN
+    from arca_launcher.handler.states import STATES
+    rig = Rig(tmp_path)
+    rows = (STATES["ls_unfunded"].card["rows"][0], STATES["ls_not_linked"].card["rows"][0])
+    assert rig.flow.fill(rows[0]) == f"Wallet *{WALLET_UNKNOWN}*" and "**" not in rig.flow.fill(rows[1])
+    rig.flow.ctx["console_wallet"] = "0x1a2b\u20269f3e"
+    assert rig.flow.fill(rows[0]) == "Wallet *0x1a2b\u20269f3e*"

@@ -66,3 +66,122 @@ def test_the_console_signer_is_sent_without_its_npm_packages():
         assert "launcher/arkiv_signer/" + name in names
     assert not any("node_modules" in n.split("/") for n in names)
     assert "node_modules" in dp.SKIP_DIRS
+
+
+
+class _Channel:
+    def __init__(self, code):
+        self.code = code
+
+    def recv_exit_status(self):
+        return self.code
+
+
+class _Out:
+    """paramiko's stdout as a file: its lines as they come, and its channel."""
+
+    def __init__(self, lines, code=0):
+        self.lines, self.channel = lines, _Channel(code)
+
+    def __iter__(self):
+        return iter(self.lines)
+
+    def read(self):
+        return "".join(self.lines).encode()
+
+
+class _Err:
+    def read(self):
+        return b""
+
+
+class _Client:
+    def __init__(self, lines, code=0):
+        self.lines, self.code, self.calls = lines, code, []
+
+    def exec_command(self, cmd, timeout=None):
+        self.calls.append((cmd, timeout))
+        return None, _Out(self.lines, self.code), _Err()
+
+
+def test_apply_gets_room_for_a_first_install_and_prints_its_progress_as_it_runs(capsys):
+    """The first apply after the console signer arrived runs apt (nodejs, npm) and npm ci: minutes on a Pi 3B+. It
+    must not hit the 300 s SSH timeout, and its progress lines show while it runs."""
+    pi = dp.Pi.__new__(dp.Pi)
+    pi.c = _Client(["signer: installing nodejs and npm with apt\n", "signer: packages installed\n",
+                    "changed: anypercent-launcher.service \n"])
+    out = dp.apply(pi)
+    ((cmd, timeout),) = pi.c.calls
+    assert cmd.endswith("/device/apply.sh") and timeout == dp.APPLY_TIMEOUT_S >= 1800
+    shown = capsys.readouterr().out
+    assert "signer: installing nodejs and npm with apt" in shown and "signer: packages installed" in shown
+    assert dp.changed_units(out) == ["anypercent-launcher.service"]
+    pi.c = _Client(["signer: npm ci\n"], code=1)
+    import pytest
+    with pytest.raises(SystemExit):
+        dp.apply(pi)
+
+
+def _signer_section(tmp_path, apt_fails):
+    """device/apply.sh's signer section, run in bash over a fake /opt/anypercent with stub apt-get, dpkg and npm (no
+    network). apt_fails: how many apt-get calls fail first, as on a held dpkg lock."""
+    import shutil
+    import subprocess
+    import textwrap
+    if shutil.which("bash") is None or shutil.which("flock") is None or os.name == "nt":
+        import pytest
+        pytest.skip("needs bash and flock")
+    root, stubs, tools = tmp_path / "root", tmp_path / "stubs", tmp_path / "tools"
+    signer = root / "src" / "launcher" / "arkiv_signer"
+    signer.mkdir(parents=True)
+    stubs.mkdir()
+    tools.mkdir()
+    for name in ("package.json", "package-lock.json"):
+        (signer / name).write_text(open(os.path.join(LAUNCHER_DIR, "arkiv_signer", name)).read())
+    (stubs / "apt-get").write_text(textwrap.dedent(f"""\
+        #!/bin/bash
+        echo "apt-get $*" >> {tmp_path}/calls
+        n=$(cat {tmp_path}/apt-n 2>/dev/null || echo 0); echo $((n + 1)) > {tmp_path}/apt-n
+        [ "$n" -lt {apt_fails} ] && exit 100
+        if [[ " $* " == *" install "* ]]; then
+            printf '#!/bin/bash\necho v20.19.2\n' > {tools}/node
+            printf '#!/bin/bash\n[ "$1" = -v ] && echo 9.2.0 && exit 0\necho "npm $*" >> {tmp_path}/calls\n'\
+'mkdir -p node_modules/@arkiv-network/sdk\n' > {tools}/npm
+            chmod +x {tools}/node {tools}/npm
+        fi
+        """))
+    (stubs / "dpkg").write_text(f"#!/bin/bash\necho \"dpkg $*\" >> {tmp_path}/calls\n")
+    for stub in stubs.iterdir():
+        stub.chmod(0o755)
+    text = open(os.path.join(REPO, "device", "apply.sh")).read()
+    section = text[text.index("SIGNER=$ROOT"):text.index("\n# units\n")]
+    script = tmp_path / "section.sh"
+    script.write_text(f"ROOT={root}\n" + section)
+    system = tmp_path / "system"                         # what the section needs, and no node or npm of the host's
+    system.mkdir()
+    for name in ("bash", "flock", "sha256sum", "cut", "cat", "cp", "mkdir", "rm", "mv", "ln", "sleep", "chmod"):
+        os.symlink(shutil.which(name), system / name)
+    env = dict(os.environ, PATH=f"{stubs}:{tools}:{system}", APT_RETRY_S="0",
+               SIGNER_LOCK=str(tmp_path / "signer.lock"))
+    done = subprocess.run([shutil.which("bash"), "-euo", "pipefail", str(script)], env=env, capture_output=True,
+                          text=True)
+    calls = (tmp_path / "calls").read_text().splitlines() if (tmp_path / "calls").exists() else []
+    return done, calls, signer
+
+
+def test_the_signer_install_waits_for_dpkg_tries_again_and_says_what_it_does(tmp_path):
+    done, calls, signer = _signer_section(tmp_path, apt_fails=1)
+    assert done.returncode == 0, done.stderr
+    assert "signer: installing nodejs and npm with apt" in done.stdout
+    assert "try 1 of 3" in done.stdout and "signer: packages installed" in done.stdout
+    apt = [c for c in calls if c.startswith("apt-get")]
+    assert len(apt) == 2 and all("DPkg::Lock::Timeout=" in c for c in apt)          # waits on dpkg's lock, then again
+    assert any(c.startswith("dpkg --configure -a") for c in calls)                  # a cut-off install is finished
+    assert [c for c in calls if c.startswith("npm ci")] == ["npm ci --omit=dev --no-audit --no-fund --loglevel=error"]
+    assert (signer / "node_modules").is_symlink()
+
+
+def test_the_signer_install_gives_up_with_a_warning_never_a_failed_apply(tmp_path):
+    done, calls, signer = _signer_section(tmp_path, apt_fails=99)
+    assert done.returncode == 0 and "nodejs and npm not installed" in done.stderr
+    assert not (signer / "node_modules").exists()

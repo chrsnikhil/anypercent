@@ -68,6 +68,8 @@ CACHE_FILE = "arkiv-boards.json"
 CACHE_V = 2                   # 2: stamped runs only (a v1 cache held the checker's own rows)
 LOG_MIN, LOG_MAX = 32, 64 * 1024      # a run log's size, as the service takes it
 SIGN_TIMEOUT_S = 90           # the signer's write: Node's start, the transaction and its receipt
+SIGN_MIN_S = 30               # less of the publish budget left than this: not signed (it would land after the screen
+                              # already said "not listed yet")
 RESTARTS = 2                  # a publish job the service forgot (404) is asked for again this often, same approval
 
 _OWN = ("check_listing", "publish", "sales")   # and load_ghost, when its payload names a real target (target_run)
@@ -103,6 +105,11 @@ class _Job:
         self.body = None          # publish: what the start sent (the console's own facts the issue is checked against)
         self.log_path = None      # publish: the run's log on this console
         self.restarts = 0         # publish: starts sent again after the service forgot the job
+        self.wrote = None         # publish: what this console's wallet wrote for this listing ({tx, run, listing}),
+                                  # kept across a restart under a new job id
+        self.tell = False         # publish: `written` is to be sent (again) with what it wrote
+        self.unheard = False      # publish: the service last answered `written` "not now" (409)
+        self.retold = False       # publish: told again once after a failed done that followed a "not now"
 
     @property
     def live(self):
@@ -142,16 +149,20 @@ class ArkivSponsors:
     mocked. rpc: the Arkiv RPC's URL, or a (method, params, timeout_s) transport; transport: the service's, as
     world.http_transport; replay(arcade_id, log_path) -> the time the game's replay tool gives that log (None: it does
     not finish, or the tool failed); games: the arcade ids whose boards are read at start; signer: what writes the
-    console's records from its wallet (arkiv_sign.Signer, the default), its key file in state_dir."""
+    console's records from its wallet (arkiv_sign.Signer, the default), its key file in state_dir; chain_id: the
+    Arkiv chain the console signs for (Rabdi's); rpc_url: the RPC's URL when rpc is a transport (its host is the only
+    one a publish may send the console's transaction to)."""
 
     mock = True     # Hedera still is: its Square outcome lists and "Start over (mock)" stay
 
     def __init__(self, inner, service_url, rpc, checker, season, runs_dir, state_dir, clock_ms, transport=None,
-                 background=True, replay=None, games=ARCADE_GAMES, signer=None):
+                 background=True, replay=None, games=ARCADE_GAMES, signer=None, chain_id=arkiv_rpc.RABDI_CHAIN_ID,
+                 rpc_url=arkiv_rpc.RABDI_RPC):
         self._inner = inner
         self._signer = signer if signer is not None else Signer()
         self._signed = {}          # the service's publish job id -> what this console's wallet wrote for it
-        self._told = set()         # publish job ids whose `written` the service took
+        self._chain_id = chain_id
+        self._rpc_host = urllib.parse.urlsplit(rpc if isinstance(rpc, str) else rpc_url).hostname
         self._send = transport or http_transport(service_url)
         self._rpc = rpc if callable(rpc) else arkiv_rpc.rpc_transport(rpc)
         self._checker = arkiv_rpc.checker_address(checker)
@@ -530,11 +541,18 @@ class ArkivSponsors:
 
     def _publish(self, job):
         """One round of a publish: the start, then the job's stage every POLL_MS. At "sign" the issued run and listing
-        are checked and written from this console's wallet (once per job id) and `written` tells the service; at
-        "done" the stamped listing, or the failure, is the step's Result. Silent past SILENT_MS: not listed."""
+        are checked and written from this console's wallet (once per listing: what it wrote is kept on the job and
+        under the service's job id) and `written` tells the service; at "done" the stamped listing, or the failure, is
+        the step's Result. Silent past SILENT_MS: not listed.
+
+        The service keeps one job id per approval and runs a failed or waiting job again under it, so the same id can
+        come back at "sign" after this console wrote for it (the service did not find the records yet, or issued
+        afresh): `written` then goes again with the same transaction and keys, never a second signature. A `written`
+        the service answers "not now" (409: the job is running again) waits for the next "sign", or for one failed
+        "done", to be sent again."""
         if not job.started:
             return self._publish_start(job)
-        if job.id in self._signed and job.id not in self._told:
+        if job.tell:
             told = self._tell(job)
             if told is not True:
                 return told
@@ -553,7 +571,11 @@ class ArkivSponsors:
             return self._sign(job, reply["data"].get("issue"))
         if reply["stage"] != "done":
             return None
-        result = _published(reply, self._signed.get(job.id))
+        if reply["ok"] is not True and job.wrote is not None and job.unheard and not job.retold:
+            with self._lock:                            # its records exist: the service may stamp them on `written`
+                job.retold, job.unheard, job.tell = True, False, True
+            return None
+        result = _published(reply, job.wrote)
         if result.ok:
             log.info("Arkiv listed %s: run %s listing %s stamp %s", job.payload.get("run_time"),
                      result.data["run"][:10], result.data["listing"][:10], result.data["stamp"][:10])
@@ -582,31 +604,43 @@ class ArkivSponsors:
             return Result(ok=False, failure="ls_publish_fail")
         with self._lock:
             job.id, job.body, job.log_path = reply["id"], body, path
+            if job.wrote is None:                       # what this wallet wrote under this id before (Cross again)
+                job.wrote = self._signed.get(job.id)
+            else:                                       # a restart: the new id carries what it wrote
+                self._signed[job.id] = job.wrote
             job.next_ms = self._clock_ms() + POLL_MS
         return None
 
     def _sign(self, job, issue):
         """Stage "sign": the issued run and listing, checked against this console's own facts, written in one
-        transaction from its wallet, then `written` to the service. Once per job id: every look at this stage repeats
-        the issue, and a job this console already wrote for is only told again. SignError kind unfunded (no tGLM) is
+        transaction from its wallet, then `written` to the service. Once per listing: a job this console already wrote
+        for is told again (the same transaction and keys), never signed again. SignError kind unfunded (no tGLM) is
         ls_unfunded; any other (no Node, no key, the node, a refusal) is ls_publish_fail. Nothing is signed when the
-        issue is not what this console knows."""
-        if job.id in self._signed:
+        issue is not what this console knows, or with less than SIGN_MIN_S of the publish budget left; the signer
+        never gets more time than is left."""
+        if job.wrote is not None:
+            with self._lock:
+                job.tell = True
             return None
         fault = self._issue_fault(job, issue)
         if fault is not None:
             log.warning("Arkiv publish: the service issued %s; nothing signed", fault)
             return Result(ok=False, failure="ls_publish_fail")
+        left_s = (TIMEOUT_MS["publish"] - (self._clock_ms() - job.start_ms)) / 1000
+        if left_s < SIGN_MIN_S:
+            log.info("Arkiv publish: %.0f s of the budget left, too little to sign; nothing signed", left_s)
+            return Result(ok=False, failure="ls_publish_fail")
         try:
             wrote = self._signer.write(arkiv_wallet.key_file(self._state_dir), issue["rpc"], issue["chain_id"],
-                                       issue["run"], issue["listing"], timeout_s=SIGN_TIMEOUT_S,
+                                       issue["run"], issue["listing"], timeout_s=min(SIGN_TIMEOUT_S, left_s),
                                        run_key=issue["run_key"], replaces=issue["replaces"])
         except SignError as e:
             sent = f", tx {e.tx[:10]} sent" if e.tx else ""
             log.info("Arkiv publish not signed (%s: %s%s)", e.kind, e.detail, sent)
             return Result(ok=False, failure="ls_unfunded" if e.kind == "unfunded" else "ls_publish_fail")
         with self._lock:
-            self._signed[job.id] = {name: wrote[name] for name in ("tx", "run", "listing")}
+            job.wrote = {name: wrote[name] for name in ("tx", "run", "listing")}
+            self._signed[job.id] = job.wrote
             job.next_ms = self._clock_ms()
         log.info("Arkiv publish signed by this console's wallet: tx %s run %s listing %s", wrote["tx"][:10],
                  wrote["run"][:10], wrote["listing"][:10])
@@ -615,22 +649,25 @@ class ArkivSponsors:
 
     def _issue_fault(self, job, issue):
         """What is wrong with the issue (a few words for the log), or None when it is what this console knows: the
-        game, the book (no label), the log_h of its own log, the frames asked (and its own replay's, when it has the
-        tool), the listing's price and payout account as World approved them, the run and the listing the same run, and
-        the run's ghost encrypted (a plain `log` would give the ghost away). A relist names a run key and issues only
-        the listing."""
+        chain (Rabdi's chain id, an https RPC on the configured Arkiv host), the game, the book (no label), the log_h
+        of its own log, the frames asked (and its own replay's, when it has the tool), the listing's price and payout
+        account as World approved them, the run and the listing the same run, and the run's ghost encrypted (a plain
+        `log` would give the ghost away). A relist issues only the listing and names a run key: that run must be this
+        wallet's stamped run of this log, and the listing it replaces (deleted in the same transaction) this wallet's
+        listing of that run (_relist_fault)."""
         body, path = job.body or {}, job.log_path
         if not isinstance(issue, dict) or not body or path is None:
             return "no issue"
-        if not (isinstance(issue.get("rpc"), str) and type(issue.get("chain_id")) is int):
-            return "no chain to write to"
+        fault = self._chain_fault(issue)
+        if fault is not None:
+            return fault
         run, listing = _values(issue.get("run")), _values(issue.get("listing"))
         if listing is None:
             return "no listing"
         if issue.get("run") is None:
             if not _is_key(issue.get("run_key")):
                 return "a relist with no run"
-        elif run is None or issue.get("run_key") is not None:
+        elif run is None or issue.get("run_key") is not None or issue.get("replaces") is not None:
             return "no run"
         try:
             with open(path, "rb") as f:
@@ -654,25 +691,70 @@ class ArkivSponsors:
             replayed = self._replayed(body["game"], path)
             if replayed != body["frames"]:
                 return f"a run this console's replay times at {replayed}, not {body['frames']}"
+        if run is None:
+            return self._relist_fault(issue["run_key"], issue.get("replaces"), log_h)
+        return None
+
+    def _chain_fault(self, issue):
+        """The issue's chain, or what is wrong with it: Rabdi's chain id (the configured one), and an https RPC on the
+        configured Arkiv RPC's host. The console never signs for, or sends its transaction to, any other."""
+        if type(issue.get("chain_id")) is not int or issue["chain_id"] != self._chain_id:
+            return f"another chain ({issue.get('chain_id')!r})"
+        rpc = issue.get("rpc")
+        try:
+            parts = urllib.parse.urlsplit(rpc) if isinstance(rpc, str) else None
+            host = parts.hostname if parts is not None else None
+        except ValueError:
+            parts = host = None
+        if parts is None or parts.scheme != "https" or not host or host != self._rpc_host:
+            return "another RPC than the configured Arkiv one"
+        return None
+
+    def _relist_fault(self, run_key, replaces, log_h):
+        """A relist's run and the listing it deletes, read from Arkiv before anything is signed (spec Goal 5: the
+        server never makes this wallet change or delete a record of its choosing): run_key must be stamped by the
+        checker as this wallet's run of this log; replaces (when it names one) must be this wallet's listing of that
+        run, of this log. What is wrong, or None."""
+        wallet = self.arkiv_wallet
+        if not isinstance(wallet, str):
+            return "a relist while this console's wallet is not known"
+        if replaces is not None and not _is_key(replaces):
+            return "a relist replacing something that is not a key"
+        try:
+            run = arkiv_rpc.read_run(self._rpc, run_key, self._checker)
+            old = arkiv_rpc.read_listing_row(self._rpc, replaces) if replaces is not None else None
+        except (arkiv_rpc.RpcError, ValueError) as e:
+            return f"a relist {type(e).__name__} could not check"
+        if run is None or run["creator"] != wallet or run["log_h"] != log_h:
+            return "a relist of a run that is not this wallet's stamped run of this log"
+        if replaces is not None and (old is None or old["creator"] != wallet or old["owner"] != wallet
+                                     or old["run"] != run_key.lower() or old["log_h"] != log_h):
+            return "a relist deleting a listing that is not this wallet's listing of this run"
         return None
 
     def _tell(self, job):
         """POST /arkiv/publish/{id}/written: the transaction and keys this console's wallet wrote. True once the
-        service took it; a Result when it refused them (ls_publish_fail); the job's restart when it forgot the job;
-        None when it did not answer (told again next round, until SILENT_MS)."""
+        service took it, or answered "not now" (409: the job is running again; the next "sign" or one failed "done"
+        tells it again); a Result when it refused them otherwise (ls_publish_fail); the job's restart when it forgot
+        the job; None when it did not answer (told again next round, until SILENT_MS)."""
         try:
-            self._send("POST", f"/arkiv/publish/{_quote(job.id)}/written", dict(self._signed[job.id]), ASK_TIMEOUT_S)
+            self._send("POST", f"/arkiv/publish/{_quote(job.id)}/written", dict(job.wrote), ASK_TIMEOUT_S)
         except Exception as e:
             status = _status(e)
             if status == 404:
                 return self._restart(job)
+            if status == 409:
+                with self._lock:
+                    job.tell, job.unheard, job.silent_since = False, True, None
+                return True
             if status is not None:
                 log.info("Arkiv publish: the service refused this console's transaction (HTTP %s)", status)
                 return Result(ok=False, failure="ls_publish_fail")
+            with self._lock:
+                job.tell = True
             return self._silent(job)
         with self._lock:
-            self._told.add(job.id)
-            job.silent_since = None
+            job.tell, job.unheard, job.silent_since = False, False, None
         return True
 
     def _silent(self, job):
@@ -689,12 +771,14 @@ class ArkivSponsors:
 
     def _restart(self, job):
         """The service forgot the job (404): the start again with the same approval, at most RESTARTS times. The
-        service finds what this wallet already wrote for the log and stamps it, or issues again."""
+        service finds what this wallet already wrote for the log and stamps it, or issues again (then `written` goes
+        with what this wallet wrote: job.wrote survives the restart)."""
         if job.restarts >= RESTARTS:
             return Result(ok=False, failure="ls_publish_fail")
         with self._lock:
             job.restarts += 1
             job.started, job.id, job.silent_since, job.next_ms = False, None, None, self._clock_ms()
+            job.tell = job.unheard = False
         return None
 
     def _publish_body(self, p):
