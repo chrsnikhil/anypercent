@@ -3,6 +3,14 @@
 A handheld speedrun console where every run is provable. The games record their inputs, and anyone can replay a run's
 log to re-derive its time: the log either replays to the claimed time (VERIFIED) or it doesn't (REJECTED).
 
+A replay answers "is this time real?". It cannot answer two other questions, and Any% is built around them:
+
+- **How many humans are on this board?** One person with 100 wallets looks like 100 runners, and a bot's run is a valid
+  run: there is no run to refuse. The HUMAN tier shows which records have one real human behind them: HUMAN means a
+  record book opened with a World ID Orb proof stands behind the run. It does not mean a human pressed every button.
+- **Did a human approve this money moving?** PB's scout spends on your behalf, and listings bring in testnet USDC. The
+  same human who owns the record book approves in World App, with the exact text.
+
 ## What's here
 
 | Folder | What it is |
@@ -10,7 +18,7 @@ log to re-derive its time: the log either replays to the claimed time (VERIFIED)
 | `launcher/` | The console's launcher (Python, pygame): the game library, PB the coach, and PB the handler, who walks a player through each sponsor step. |
 | `arcade/` | The arcade kit: deterministic C game rules shared by the console games and the PC replay checker. |
 | `games/`, `game/` | The console's own games (Marine Drive GP, Rush Hour, Segfault, Zip, SHIP IT!), their shared code and a template. |
-| `apps/world-bridge/` | The console's laptop service: World (the IDKit record book, one per World ID, and listing approvals), the Arkiv module (the checker that writes the board, the listed-ghost key release, the web board) and the Hedera module (the x402 paywall on listed ghosts, PB's paying agent, the HCS market topic). |
+| `apps/world-bridge/` | The console's laptop service: World (the IDKit record book, one per World ID, listing approvals, one console per person), the Arkiv module (the checker that writes the board with lap splits, the listed-ghost key release, the house's BOT batches, the web board), the Hedera module (the x402 paywall on listed ghosts, PB's paying agent, the HCS market topic) and PB's scout on Groq. |
 | `arkiv/` | The Arkiv track's notes ([schema](arkiv/schema.md), [how we use Arkiv](arkiv/how-you-use-arkiv.md), [why Arkiv](arkiv/why-arkiv.md), [reach](arkiv/reach.md), [friction](arkiv/friction.md)) and the board's snapshot (`snapshot.json`). |
 | `hedera/` | The Hedera track's [transaction list](hedera/transactions.md): every transaction id in the video, with its HashScan link. |
 
@@ -25,6 +33,21 @@ The handler talks to sponsors through one interface (`launcher/arca_launcher/han
   Arkiv and Hedera are all real (see below). Without `--hedera` the launcher keeps the mock adapter (`handler/mock.py`)
   and marks it MOCK on screen.
 
+## World: one console, one person
+
+- One World ID opens one record book (World ID's own one-time nullifier per action).
+- One console, one person: a console is linked to the record book that signed up on it. Another person's sign-up there
+  is refused before anything is sent to World, so their World ID is not used up and no book is made. That refusal is
+  shown from tests and under the console's MOCK pill, never as a live take: the demo has one human.
+- Linking or releasing a console takes the owner's approval in World App, with the exact text
+  (`Link console C-7QZP to record book ANY-6PS: PB on it spends this book's coach budget`;
+  `Release console C-7QZP from record book ANY-6PS`), from the owner's terminal (`npm run console:link`,
+  `console:release`). PB on a console spends only from the book it is linked to.
+- Every money move needs that human's approval in World App: a listing (`List MARINE DRIVE GP 1:46.90 ghost for 0.10
+  USDC to 0.0.9473064 on the public board`) and a house batch of BOT ghosts (below).
+- The console id is a random file in the console's state folder: copying the folder copies the console. The service
+  does not authenticate consoles.
+
 ## Arkiv
 
 The board lives on Arkiv's Rabdi testnet (chain id 7794095). Every time on it was replayed by our checker before it was
@@ -38,6 +61,16 @@ written, and nothing about a runner goes on Arkiv until they approve the listing
   the World bridge also serves it at `/board`.
 - **How it works:** [arkiv/schema.md](arkiv/schema.md) (entities, queries, who can edit, extend or delete, expiry) and
   `apps/world-bridge/README.md` (the service).
+- **Three tiers on the board:** HUMAN (a record book opened with World ID), BOT (`BOT-A2`: made by a program) and OPEN
+  (the team's other runs). The web board counts them ("Humans on this board: 1 record book · BOT: 6") and has a
+  HUMAN-only toggle; the console's board has the same on Square.
+- **BOT ghosts are made by a program:** our MARINE DRIVE GP route bot, slowed down on purpose in chosen laps
+  (`games/marinedrive/dev/ghostgen.py`). Every one is replayed by the same checker as every human run, labelled BOT,
+  never HUMAN, and sold by the house account through the same x402 paywall. They were published with one approval in
+  World App that named the batch, the price and the house account. Anyone can regenerate one from the public generator
+  (same commit and seed: byte-identical) and check its hash against the row without buying it.
+- **Lap splits** are indexed columns on every run row from this build on (`s1`..`s3` for MDGP's laps). "Who has the
+  fastest lap 2?" is one query (Q10: `... ORDER BY s2:u64 ASC`), and PB's scout reads them to choose a ghost.
 
 ### Run the board's query yourself
 
@@ -71,9 +104,11 @@ games/marinedrive/out/arcade_replay run.acl      # "time_frames" equals the row'
 
 ## Hedera
 
-PB, the coach agent, buys the ghost of the runner just ahead of you over x402 and pays that runner's own Hedera account
-directly, in testnet USDC. No human approves the payment: PB's limits are code next to its key. HCS keeps the listing
-the seller approved in World App, PB's intent before it pays, and its receipt after. Testnet only.
+PB, the coach agent, buys a listed ghost over x402 and pays the seller's own Hedera account directly (the house account
+for a BOT ghost), in testnet USDC. No human approves the payment: PB's limits are code next to its key. PB's scout, a
+language model on Groq, picks which listed ghost to buy from the public lap times on Arkiv. HCS keeps the listing the
+seller approved in World App, PB's intent (with the scout's model and reason) before it pays, and its receipt after.
+Testnet only.
 
 ```
  Console (Pi or WSL)                 Laptop: apps/world-bridge (Node 22)                         Hedera testnet
@@ -150,7 +185,22 @@ _Owner: paste the real `PAYMENT-REQUIRED` (decoded) and the settle response from
 | A settled payment (0.10 USDC, PB's agent to ANY-6PS's seller account `0.0.9473064`) | `0.0.9185802@1793930445.643007633` | https://hashscan.io/testnet/transaction/0.0.9185802-1793930445-643007633 |
 | Its INTENT and RECEIPT | #7 and #8 on `0.0.11332437` | https://hashscan.io/testnet/transaction/1793930450.748974293/message, https://hashscan.io/testnet/transaction/1793930457.098249017/message |
 
+| The house account (BOT listings pay it; ECDSA, no alias, associated with USDC) | `0.0.11333910` | https://hashscan.io/testnet/account/0.0.11333910 |
+
 Every transaction id shown in the video is in [hedera/transactions.md](hedera/transactions.md).
+
+### PB's scout (an LLM on Groq that picks; code that pays)
+
+1. Code picks the candidates: live listings at the listed price whose payout account can take USDC, not your own book,
+   a BOT listing only when it pays the house, each faster than you overall or in at least one lap.
+2. `openai/gpt-oss-120b` on Groq gets your lap times and theirs (seconds, ids `c1..cN`; no book, console or key) and
+   answers with strict JSON: which candidate, which lap, one short sentence.
+3. Every number in that sentence is checked against the lap times; anything that does not match gets our own sentence
+   (`You lose 2.85 s in lap 2: BOT-A2 runs it in 33.23 s, you in 36.08 s.`).
+4. If the model fails or is slow (6 s), PB falls back to the ghost just ahead and says so on screen.
+5. PB's guards then run in full on the purchase. The model never decides whether to pay, how much, or to whom, and its
+   output never reaches a guard. INTENT on Hedera records which model picked the ghost and why, before the payment is
+   signed.
 
 ### No Solidity
 
@@ -160,7 +210,10 @@ nothing.
   agent's USDC association is a `TokenAssociateTransaction`.
 - **HCS:** the market topic (`TopicCreateTransaction`, no admin key), its LISTING, INTENT and RECEIPT messages
   (`TopicMessageSubmitTransaction`, one chunk each), and every read of them through the mirror node's REST API.
-- **Accounts:** PB's agent account is an `AccountCreateTransaction` with an ECDSA key and no EVM alias.
+- **Accounts:** PB's agent account and the house account are `AccountCreateTransaction`s with an ECDSA key and no EVM
+  alias.
+- **HCS, the house:** a HOUSE message names each BOT batch its owner approved in World App, word for word, before its
+  rows are written.
 
 ### PB's guards (no human approval, still safe)
 
@@ -168,6 +221,8 @@ nothing.
 |---|---|---|
 | The buyer's record book was issued by this service | its store | no purchase (no budget) |
 | Not the buyer's own book | the listing | no purchase |
+| The console is linked to the buying book (when a console asks) | the service's console binding | no purchase |
+| A BOT listing is not HUMAN and pays the house account | the listing | no purchase, nothing signed |
 | The listing is live, written by our checker, for the console's seller, at the listed price | Arkiv | no purchase (changed) |
 | The run is live, the checker's, with the same log hash and its sealed ghost | Arkiv | no purchase |
 | The listing names a payout account that can take USDC | Arkiv, the mirror node | no purchase |
@@ -182,19 +237,25 @@ nothing.
 
 ### Claims and limits
 
-- PB, your coach agent, buys the ghost of the runner just ahead of you over x402, and pays her own Hedera account
-  directly, in testnet USDC. No human approves the payment.
-- PB's limits are code next to its key, not a model's judgement: 0.10 USDC a ghost, 1.00 a day per record book, and it
-  only pays the account on the checker's Arkiv listing.
-- The seller saw her Hedera account in World App when she approved the listing.
-- Before paying, PB posts its intent to a Hedera topic; after, a receipt once the mirror node shows the transfer. Nobody,
-  including us, can delete or edit that topic's messages.
+- PB, your coach agent, buys a listed ghost over x402 and pays the seller's own Hedera account directly (the house
+  account for a BOT ghost), in testnet USDC. No human approves the payment.
+- PB's scout is a language model on Groq. It reads public lap times from Arkiv and picks which listed ghost to buy. PB's
+  limits are code: the scout never decides whether to pay, how much, or to whom. If the model fails, PB falls back to
+  the ghost just ahead and says so.
+- Every number in the scout's reason comes from the lap times. We check them, and we use our own sentence when they
+  don't match.
+- PB's limits are code next to its key: 0.10 USDC a ghost, 1.00 a day per record book, and it only pays the account on
+  the checker's Arkiv listing.
+- The seller saw their Hedera account in World App when they approved the listing; the house's BOT batch was approved in
+  World App with the batch, the price and the house account named.
+- Before paying, PB posts its intent to a Hedera topic, with the scout's model and reason; after, a receipt once the
+  mirror node shows the transfer. Nobody, including us, can delete or edit that topic's messages.
 - Hedera SDK only: HTS moves the USDC, HCS keeps the record. No Solidity.
 
 Limits: testnet USDC only. There is no escrow: the payment goes straight to the seller, and our service holds the ghost's
-key. PB's choice is the board's runner just ahead, not a model's. The intent is submitted before the payment is signed;
-we do not claim it reached consensus first. World binds the record book, not whose hands played. The laptop service must
-be on for a purchase.
+key. The scout reads split numbers only, never a ghost. The intent is submitted before the payment is signed; we do not
+claim it reached consensus first. World binds the record book, not whose hands played. The laptop service must be on
+for a purchase.
 
 ## License
 

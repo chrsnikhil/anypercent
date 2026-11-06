@@ -28,17 +28,25 @@ Written only after the checker replayed the run's log with the game's own replay
 | `log_h` | str | yes | Lowercase hex SHA-256 of the plain log: dedupe, and the buyer's ghost check |
 | `runner` | str | yes | The World bridge's runner id: 16 hex of an HMAC, never a World nullifier. Open tier: an HMAC of `open\|<label>` |
 | `book` | str, optional | yes | The record book, `ANY-XXX`. Absent on open-tier rows |
-| `label` | str, optional | no | An open-tier row's display name, such as `TEAM` or `BOT-7`. Never a person's name |
+| `label` | str, optional | no | An open-tier row's display name: `TEAM`, or `BOT-A2` for the house's BOT ghosts. Never a person's name |
 | `human` | bool | yes | True only when the run's record book was opened with a World ID proof at our bridge. False on open-tier rows |
 | `credential` | str, optional | no | What World checked when the book was opened (`Orb`). Absent on open-tier rows |
 | `tool` | str | no | The replay tool that checked it: `arcade_replay sha256:<first 12 hex of the binary>` |
 | `log` | bytes, optional | no | The plain `.acl` log, on open-tier rows only: anyone can replay it |
 | `log_enc` | bytes, optional | no | A listed run's log, encrypted: `nonce(12) \|\| AES-256-GCM ciphertext \|\| tag(16)` |
+| `s1`, `s2`, `s3`, `s4` | u64, optional | yes | Split k in frames: MARINE DRIVE GP's lap k. Present for k = 1..n, contiguous from `s1`, adding up to `frames`; the rest absent |
+| `split_kind` | str, optional | no | `"lap"`. Present exactly when `s1` is |
+| `gen` | str, optional | no | BOT rows only: how the log was made, e.g. `ghostgen v2 seed 0 @<commit>` |
 
 - **Flags:** `readonly: true`, `permissionlessExtension: true`.
 - **Expiry:** season end + 30 days (`ExpirationTime.atDate(seasonEnd + 30 d, { atLeast: fromDays(1) })`).
 - **Creator and owner:** the checker.
 - Exactly one of `log` and `log_enc` is present.
+- **Who writes the splits:** the checker, from the game's own `arcade_splits` (built from the same tree as
+  `arcade_replay`, installed beside it): the same replay, then `rules_lap_frames(1..3)`. It writes them only when they
+  are laps that add up to the replayed time and come from the same replay (the same final hash); anything else writes
+  the run without splits, and never fails a write. Rows written before splits still fit, with none. A reader treats
+  splits that do not check out (not contiguous, another kind, a zero, another sum) as absent and keeps the row.
 
 ### `anypercent.listing`: a World-approved offer of one run's ghost
 
@@ -51,8 +59,9 @@ Written only after the checker replayed the run's log with the game's own replay
 | `log_h` | str | yes | Copied; a buyer checks it equals the run's |
 | `price` | dec | yes | USDC, `0.1` |
 | `seller` | str | yes | The seller's runner id |
-| `book` | str | yes | The seller's record book |
-| `human` | bool | yes | Copied |
+| `book` | str, optional | yes | The seller's record book. Absent on the house's listings |
+| `label` | str, optional | no | The house's BOT label (`BOT-A2`). Exactly one of `book` and `label` is present; a reader drops a listing with both or neither |
+| `human` | bool | yes | Copied (always false on a `label` listing) |
 | `pay_to` | str, optional | yes | The seller's Hedera account, `0.0.N`, exactly as World App showed it in the approved listing text ("... for 0.10 USDC to 0.0.N on the public board"). Absent: not for sale |
 | `hcs` | str, optional | no | `<topic id>/<sequence number>` of the `LISTING` message on the Hedera market topic: the approved text, word for word, at consensus time. Absent when Hedera was off |
 
@@ -72,11 +81,29 @@ differs from the run's live listing writes the new listing and deletes the old o
 one listing. A buyer's agent pays only the `pay_to` of a listing row the checker created, never an account named
 anywhere else (see the root README, Hedera).
 
+## Three tiers: HUMAN, BOT, OPEN
+
+| Tier | Rows | What stands behind them |
+|---|---|---|
+| HUMAN | `human` true, a `book`, a `credential` | A record book opened with a World ID proof at our bridge (one per World ID). It does not mean a human pressed every button |
+| BOT | `human` false, `label` `BOT-<batch letter><n>`, no book | A program: the route bot of MARINE DRIVE GP slowed down on purpose in chosen laps (`games/marinedrive/dev/ghostgen.py`) |
+| OPEN | `human` false, any other `label`, no book | The team's own runs (`npm run arkiv:open-run`) |
+
+**BOT rows** come only from a house batch its owner approved in World App, as a named batch, with this text:
+`Publish BOT batch 8477d8: 6 MARINE DRIVE GP ghosts made by a program, 0.10 USDC each to house 0.0.11333910 on the
+public board, never HUMAN` (only `HOUSE_OWNER_BOOK`'s approval counts; one approval, one batch). The checker replays
+every log again, requires its lap splits, and writes the whole batch in one transaction: each BOT run (its ghost
+encrypted in `log_enc`, its splits, `gen`) with its listing (`label`, `pay_to` = the house account `0.0.11333910`,
+`hcs` = the HOUSE message on the Hedera market topic). They are sold through the same x402 paywall as every listed
+ghost. The generator is public and deterministic (same commit and seed: byte-identical logs), so anyone can regenerate
+a listed BOT ghost and check its `log_h` against the row without buying it. A BOT row can never carry HUMAN, a book or a
+credential: the service's row builders take no such fields. `arkiv:open-run` refuses `BOT-` labels.
+
 ## Who can do what
 
 | | `anypercent.run` | `anypercent.listing` |
 |---|---|---|
-| Create | the checker, only after the runner approved the listing in World App (open tier: the team's CLI) | the checker, in the same transaction as its run |
+| Create | the checker, only after the runner approved the listing in World App (BOT rows: after the house owner approved the batch in World App; open tier: the team's CLI) | the checker, in the same transaction as its run |
 | Edit (patch) | nobody, not even the checker (`readonly`) | nobody (`readonly`) |
 | Extend | anyone (`permissionlessExtension`), to a later expiry only | only the owner (the checker), which never does |
 | Delete | the owner (the checker) | the owner (the checker) |
@@ -118,6 +145,10 @@ A board never selects `log` or `log_enc`; only a single ghost read does.
 | Q7 | `arkiv.schema = str('anypercent.run') AND log_h = str('<64 hex>') AND $creator = addr(C)` (limit 1) | The checker's dedupe before a write |
 | Q8 | Q1 without `$creator` (select `creator`) | The look-alike demo |
 | Q9 | `arkiv.schema = str('anypercent.run') AND game = str('MDGP') AND season = i32(S) AND human = true AND $creator = addr(C) ORDER BY frames:u64 ASC` | The web board's "HUMAN only" filter |
+| Q10 | `arkiv.schema = str('anypercent.run') AND game = str('MDGP') AND season = i32(S) AND $creator = addr(C) ORDER BY s2:u64 ASC` | The lap leaders: the fastest lap 2 on the board, one indexed split in one query (`s1`, `s3` for the other laps). The web board's "lap leaders" box; rows without splits never lead a lap |
+
+Every board read selects `s1`..`s4` and `split_kind` on runs and `label` on listings. PB's scout reads Q1 and Q2 to
+compare YOU's laps with the listed ghosts' laps.
 
 `C` is written in its EIP-55 form, `0x3d3260425Cb52F0c6716212274a883337aFa3f63` (all-lowercase works too).
 
@@ -132,5 +163,5 @@ A board never selects `log` or `log_enc`; only a single ghost read does.
 
 ## What stays off Arkiv
 
-World nullifiers, the bridge's HMAC secret, World ID session ids, the ghost key, the approval id, console ids and
-anyone's name. Why each stays off is in [why-arkiv.md](why-arkiv.md).
+World nullifiers, the bridge's HMAC secret, World ID session ids, the ghost key, the approval id, console ids (and
+console tags) and anyone's name. Why each stays off is in [why-arkiv.md](why-arkiv.md).
