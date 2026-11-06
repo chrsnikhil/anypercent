@@ -150,6 +150,9 @@ describe("GET /arkiv/config", () => {
       schemas: { run: "anypercent.run", listing: "anypercent.listing" },
       price: "0.10",
       listing_days: 7,
+      split_columns: ["s1", "s2", "s3", "s4"],
+      explorer_tx: "https://rabdi.explorer.arkiv.network/tx/{tx}",
+      explorer_entity: "https://rabdi.explorer.arkiv.network/entity/{key}",
     });
   });
 });

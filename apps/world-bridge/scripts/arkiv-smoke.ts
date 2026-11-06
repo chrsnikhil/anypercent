@@ -6,6 +6,7 @@
  *   1. chain id and both balances (stops here, naming what to fund, if either wallet is empty);
  *   2. one run+listing batch with predicted keys (and a second, plain open-tier run);
  *   3. Q1-Q7 equivalents: ORDER BY, $creator, bool, key, dec, the $expiresAt:u64 sort, select.count;
+ *      Q10 (ORDER BY s2:u64 on an optional indexed split: where a row without splits sorts);
  *   4. a checker patch is refused (readonly), and so is the stranger's;
  *   5. the stranger can extend the run but not the listing;
  *   6. the stranger's look-alike row is absent from the pinned query and present without the pin;
@@ -20,7 +21,7 @@ import type { Hex } from "viem";
 import { SdkArkiv, type ListingValues, type RunValues } from "../src/arkiv/client.js";
 import { decryptGhost, encryptGhost } from "../src/arkiv/ghost.js";
 import * as Q from "../src/arkiv/queries.js";
-import { decodePage } from "../src/arkiv/rows.js";
+import { decodePage, splitsOf } from "../src/arkiv/rows.js";
 import { LISTING_FLAGS, LISTING_TYPES, RUN_FLAGS, RUN_TYPES, SMOKE, SmokeRun } from "../src/arkiv/schema.js";
 import { arkivRpcUrl } from "../src/config.js";
 import { clientsFor, die, flag, glm, loadEnv, timed, why } from "./arkiv-common.js";
@@ -103,6 +104,7 @@ async function main(): Promise<void> {
     const run1: RunValues = {
       game: "MDGP", title: "SMOKE MDGP", season: 1, rules: 4, frames: 6170, log_h: logHA, runner: "5a5a5a5a5a5a5a5a",
       book: "ANY-SMK", human: true, credential: "Orb", tool: "arcade_replay sha256:000000000000", log_enc: encryptGhost(secret, logHA, logA),
+      s1: 2087, s2: 1995, s3: 2088, split_kind: "lap",
     };
     const listing1: ListingValues = { game: "MDGP", season: 1, frames: 6170, log_h: logHA, price: "0.1", seller: "5a5a5a5a5a5a5a5a", book: "ANY-SMK", human: true };
     const [w, msW] = await timed(() => port.writeRunAndListing({ values: run1, flags: RUN_FLAGS, expiry: hour }, { values: listing1, flags: LISTING_FLAGS, expiry: hour }));
@@ -113,7 +115,7 @@ async function main(): Promise<void> {
     await fee("run+listing batch", w.tx);
     const run2: RunValues = {
       game: "MDGP", title: "SMOKE MDGP", season: 1, rules: 4, frames: 7000, log_h: logHB, runner: "6b6b6b6b6b6b6b6b",
-      label: "BOT-7", human: false, tool: "arcade_replay sha256:000000000000", log: logB,
+      label: "SMOKE", human: false, tool: "arcade_replay sha256:000000000000", log: logB,
     };
     const [w2, msW2] = await timed(() => port.writeRun({ values: run2, flags: RUN_FLAGS, expiry: hour }));
     created.run2 = w2.run;
@@ -149,6 +151,12 @@ async function main(): Promise<void> {
     ok("Q7: log_h = str(...)", keysOf(q7.data)[0] === w.run);
     const q9 = await q("Q9", Q.q9Human("MDGP", 1, C, SMOKE), Q.RUN_BOARD_ATTRS);
     ok("Q9: human = true (bool)", JSON.stringify(keysOf(q9.data)) === JSON.stringify([w.run]));
+    const q10 = await q("Q10", Q.q10LapLeaders("MDGP", 1, C, 2, SMOKE), Q.RUN_BOARD_ATTRS);
+    const order = keysOf(q10.data);
+    ok("Q10: ORDER BY s2:u64 ASC returns both rows", order.length === 2, order.join(", "));
+    const q10rows = decodePage(q10.data, RUN_TYPES, Q.RUN_BOARD_ATTRS, SMOKE.run, C).rows;
+    ok("Q10: the split columns come back and add up", JSON.stringify(splitsOf(q10rows.find((r) => r.key === w.run)?.values ?? {})) === JSON.stringify([2087, 1995, 2088]));
+    console.log(`  note Q10 puts the row without splits ${order[0] === w.run ? "LAST (as the spec expects)" : "FIRST: readers skip rows without splits (they do already)"}`);
     const cnt = await q("count", Q.q1Board("MDGP", 1, C, SMOKE), [], 1, true);
     ok("select.count", cnt.count === 2n, String(cnt.count));
     const decQ = `arkiv.schema = str('${SMOKE.listing}') AND price = dec(0.1) AND $creator = addr(${Q.checksum(C)})`;

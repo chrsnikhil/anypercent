@@ -3,12 +3,25 @@
  * account directly, in testnet USDC, with no approval step (spec: The x402 purchase). The guards are
  * plain code next to the key, outside any model; none of them reads model output.
  *
- *   POST /hedera/buy {book, game, seller, listing, run, log_h, frames, you_frames, price_c}
+ *   POST /hedera/buy {book, game, seller, listing, run, log_h, frames, you_frames, price_c,
+ *                     console?, scout?}
  *     -> {id: "p-3f9c0a1b", expires_s: 240}; a repeat for the same (book, game, seller, run) answers
  *        the same id, or a done job's result
  *   GET  /hedera/buy/{id} -> {stage: "guard"|"pay"|"settle"|"done", ok, failure, data}
- *        ok: data {receipt: "0.0.FEEPAYER@S.N", hashscan, late}
+ *        ok: data {receipt: "0.0.FEEPAYER@S.N", hashscan, late, intent: {seq, tx, hashscan},
+ *                  receipt_msg: {seq, tx, hashscan} | null}; it keeps answering after done, and
+ *                  intent.seq and receipt_msg fill in as their receipts come back
  *        buy_changed: data {now_price: "gone" | "0.25 USDC"}
+ *        buy_suspended: data {why: own_book | run_changed | no_pay_to | cannot_receive | payto_402 |
+ *                  not_for_sale | not_house | console_not_linked}
+ *
+ * The seller is a record book, or a BOT label of the house (BOT-A2): a label listing must name that
+ * label, be open tier (`human` false) and pay HEDERA_HOUSE_ID, else not_house. With a `console`, the
+ * console must be bound to the buying book (one console, one person), else console_not_linked;
+ * without one (the hedera:agent CLI) the purchase runs as before and says so in the log. A `scout`
+ * id that matches a held scout pick of this very purchase puts the scout's model, laps and reason
+ * on INTENT; any other is ignored. The scout only ever chose the ghost: every guard below runs on
+ * the purchase as it is, and no model output reaches one.
  *
  * One job, in order:
  *   guard   the buyer book; not its own book; the listing on Arkiv (live, the checker's, the
@@ -33,16 +46,32 @@
 import { randomBytes } from "node:crypto";
 import { BOOK_RE } from "../approvals.js";
 import type { ArkivPort } from "../arkiv/client.js";
+import { HOUSE_LABEL_RE } from "../config.js";
+import { CONSOLE_ID_RE } from "../consoles.js";
 import { fmtTime, priceText } from "../arkiv/publish.js";
 import { KEY_RE, LOG_H_RE } from "../arkiv/queries.js";
 import { GAME_IDS } from "../arkiv/schema.js";
 import { purchaseKey, type PurchaseRecord, type Store } from "../store.js";
-import { intentMessage, receiptMessage, seqNumber } from "./messages.js";
+import { intentMessage, receiptMessage, seqNumber, type IntentScout } from "./messages.js";
 import { hashscan, shortSdkError, transfersMatch, txAt, txValidStartMs, type HederaPort, type MirrorPort } from "./net.js";
 import { decCents, sha256Hex } from "./resource.js";
 import { atomicText, centsToAtomic, MAX_TIMEOUT_S, type BuiltPayment, type Facilitators, type PaymentBuilder, type PaymentRequired } from "./x402.js";
 
 export type BuyFailure = "buy_budget" | "buy_changed" | "buy_suspended" | "buy_down";
+
+/** Why a guard said buy_suspended (data.why). */
+export type SuspendWhy = "own_book" | "run_changed" | "no_pay_to" | "cannot_receive" | "payto_402" | "not_for_sale" | "not_house" | "console_not_linked";
+
+export const SCOUT_ID_RE = /^s-[0-9a-f]{8}$/;
+
+/** A scout pick held by the scout service, as INTENT records it. */
+export interface HeldScout {
+  buyer: string;
+  game: string;
+  /** The listing the scout picked. */
+  listing: string;
+  intent: Omit<IntentScout, "id">;
+}
 
 export interface BuyView {
   stage: "guard" | "pay" | "settle" | "done";
@@ -69,15 +98,21 @@ export interface BuyBody {
   /** YOU's best, in frames; null when YOU has none. */
   you_frames: number | null;
   price_c: number;
+  /** The console's id (consoles.ts); absent: a terminal purchase. */
+  console?: string;
+  /** The scout pick this purchase follows, if any. */
+  scout?: string;
 }
 
 const isFrames = (v: unknown) => typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 0xffffffff;
 
 export function parseBuyBody(raw: Record<string, unknown>): BuyBody {
   const bad = () => new BuyRefused(400, "bad_body");
-  const { book, game, seller, listing, run, log_h, frames, you_frames, price_c } = raw;
+  const { book, game, seller, listing, run, log_h, frames, you_frames, price_c, console: consoleId, scout } = raw;
   if (typeof book !== "string" || !BOOK_RE.test(book)) throw bad();
-  if (typeof seller !== "string" || !BOOK_RE.test(seller)) throw bad();
+  if (typeof seller !== "string" || !(BOOK_RE.test(seller) || HOUSE_LABEL_RE.test(seller))) throw bad();
+  if (consoleId !== undefined && consoleId !== null && (typeof consoleId !== "string" || !CONSOLE_ID_RE.test(consoleId))) throw bad();
+  if (scout !== undefined && scout !== null && (typeof scout !== "string" || !SCOUT_ID_RE.test(scout))) throw bad();
   if (typeof game !== "string" || !GAME_IDS.includes(game)) throw bad();
   if (typeof listing !== "string" || !KEY_RE.test(listing)) throw bad();
   if (typeof run !== "string" || !KEY_RE.test(run)) throw bad();
@@ -95,6 +130,8 @@ export function parseBuyBody(raw: Record<string, unknown>): BuyBody {
     frames: frames as number,
     you_frames: typeof you_frames === "number" ? you_frames : null,
     price_c,
+    ...(typeof consoleId === "string" ? { console: consoleId } : {}),
+    ...(typeof scout === "string" ? { scout } : {}),
   };
 }
 
@@ -128,6 +165,12 @@ export interface AgentOptions {
   /** X402_FEE_PAYERS (empty: any fee payer the facilitator names). */
   feePayersPin: string[];
   gate: BuyGate;
+  /** HEDERA_HOUSE_ID: the only account a BOT (label) listing may pay ("" = none). */
+  houseId?: string;
+  /** One console, one person: may this console spend from this book? */
+  consoles?: { canSpend(id: string, book: string): { ok: boolean; tag: string | null } } | null;
+  /** The scout's held picks, for INTENT. */
+  scouts?: { held(id: string): HeldScout | undefined } | null;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   log?: (line: string) => void;
@@ -161,6 +204,9 @@ class Stop extends Error {
     super(why);
   }
 }
+
+/** A guard's buy_suspended, with its `why` code in data. */
+const suspended = (code: SuspendWhy, why: string) => new Stop("buy_suspended", why, { why: code });
 
 interface Guarded {
   listingFrames: number;
@@ -221,7 +267,7 @@ export class Agent {
 
     const prior = this.opts.store.purchaseFor(key);
     if (!held && prior?.state === "settled" && prior.receipt) {
-      const job: Job = { id: prior.id, key, body, view: this.okView(prior.receipt, prior.late ?? false), createdMs: nowMs, running: false };
+      const job: Job = { id: prior.id, key, body, view: this.okView(key, prior.receipt, prior.late ?? false), createdMs: nowMs, running: false };
       this.jobs.set(job.id, job);
       this.byKey.set(key, job.id);
       return { id: job.id, expires_s: BUY_EXPIRES_S };
@@ -270,8 +316,19 @@ export class Agent {
     return { stage: "guard", ok: null, failure: null, data: {} };
   }
 
-  private okView(receipt: string, late: boolean): BuyView {
-    return { stage: "done", ok: true, failure: null, data: { receipt, hashscan: hashscan.tx(receipt), late } };
+  /** The done view, with INTENT's and RECEIPT's places on the topic as far as they are known. */
+  private okView(key: string, receipt: string, late: boolean): BuyView {
+    const p = this.opts.store.purchaseFor(key);
+    const intent = p?.intent_tx ? { seq: p.intent_seq ?? null, tx: p.intent_tx, hashscan: hashscan.tx(p.intent_tx) } : null;
+    const receiptMsg = p?.receipt_msg_tx ? { seq: p.receipt_msg_seq ?? null, tx: p.receipt_msg_tx, hashscan: hashscan.tx(p.receipt_msg_tx) } : null;
+    return { stage: "done", ok: true, failure: null, data: { receipt, hashscan: hashscan.tx(receipt), late, intent, receipt_msg: receiptMsg } };
+  }
+
+  /** A message's place came back after done: the view answers it from now on. */
+  private refresh(job: Job): void {
+    if (job.view.stage === "done" && job.view.ok === true) {
+      job.view = this.okView(job.key, String(job.view.data.receipt), job.view.data.late === true);
+    }
   }
 
   private what(b: BuyBody): string {
@@ -290,7 +347,8 @@ export class Agent {
 
   // ---- mirror reads, cached ----------------------------------------------------------------
 
-  private async canReceive(account: string): Promise<boolean> {
+  /** Can this account take USDC (the mirror, cached 10 min)? The scout reads the same cache. */
+  async canReceive(account: string): Promise<boolean> {
     const hit = this.assoc.get(account);
     if (hit && this.now() - hit.at < this.t.assocTtlMs) return hit.ok;
     const ok = await this.opts.mirror.associated(account, this.opts.usdc);
@@ -298,7 +356,8 @@ export class Agent {
     return ok;
   }
 
-  private async agentUsdc(): Promise<bigint | null> {
+  /** The agent's USDC (the mirror, cached 30 s). */
+  async agentUsdc(): Promise<bigint | null> {
     if (this.balance && this.now() - this.balance.at < this.t.balanceTtlMs) return this.balance.value;
     const value = await this.opts.mirror.tokenBalance(this.opts.agentId, this.opts.usdc);
     this.balance = { value, at: this.now() };
@@ -336,7 +395,7 @@ export class Agent {
     const r = this.opts.store.reservePurchase(job.key, rec, caps);
     if (!r.ok) {
       if (r.why === "settled" && r.record.receipt) {
-        job.view = this.okView(r.record.receipt, r.record.late ?? false);
+        job.view = this.okView(job.key, r.record.receipt, r.record.late ?? false);
         this.opts.log?.(`PB ${job.id} ${this.what(b)}: already bought, receipt ${r.record.receipt} (nothing paid)`);
         return;
       }
@@ -356,7 +415,11 @@ export class Agent {
     const b = job.body;
     const { store, arkiv } = this.opts;
     if (!store.recordForBook(b.book)) throw new Stop("buy_budget", "the buyer book was not issued here");
-    if (b.seller === b.book) throw new Stop("buy_suspended", "that is the buyer's own book");
+    if (b.console !== undefined) {
+      const c = this.opts.consoles?.canSpend(b.console, b.book) ?? { ok: false, tag: null };
+      if (!c.ok) throw suspended("console_not_linked", `console ${c.tag ?? "?"} is not linked to ${b.book}`);
+    }
+    if (b.seller === b.book) throw suspended("own_book", "that is the buyer's own book");
 
     let listing;
     try {
@@ -364,8 +427,17 @@ export class Agent {
     } catch {
       throw new Stop("buy_down", "Arkiv did not answer");
     }
-    if (!listing || listing.book !== b.seller || listing.game !== b.game) throw new Stop("buy_changed", "the listing is gone", { now_price: "gone" });
-    if (listing.book === b.book) throw new Stop("buy_suspended", "that is the buyer's own book");
+    if (!listing || listing.game !== b.game) throw new Stop("buy_changed", "the listing is gone", { now_price: "gone" });
+    if (listing.book === undefined) {
+      // The house's BOT listing: its label, open tier, paying the house account.
+      if (listing.label !== b.seller) throw new Stop("buy_changed", "the listing is gone", { now_price: "gone" });
+      if (listing.human !== false || !this.opts.houseId || listing.pay_to !== this.opts.houseId) {
+        throw suspended("not_house", `a BOT listing must pay the house (it names ${listing.pay_to ?? "no account"})`);
+      }
+    } else {
+      if (listing.book !== b.seller) throw new Stop("buy_changed", "the listing is gone", { now_price: "gone" });
+      if (listing.book === b.book) throw suspended("own_book", "that is the buyer's own book");
+    }
     const listedC = decCents(listing.price);
     if (!Number.isInteger(listedC)) throw new Stop("buy_changed", "the listing's price is unreadable", { now_price: "gone" });
     if (listedC !== b.price_c || listedC !== this.opts.priceC) {
@@ -379,17 +451,17 @@ export class Agent {
       throw new Stop("buy_down", "Arkiv did not answer");
     }
     if (!run || run.key !== b.run || listing.run !== b.run || run.game !== b.game || run.log_h !== listing.log_h || listing.log_h !== b.log_h || !run.log_enc) {
-      throw new Stop("buy_suspended", "the run is gone or changed");
+      throw suspended("run_changed", "the run is gone or changed");
     }
 
-    if (!listing.pay_to) throw new Stop("buy_suspended", "the listing names no Hedera account (not for sale)");
+    if (!listing.pay_to) throw suspended("no_pay_to", "the listing names no Hedera account (not for sale)");
     let receivable: boolean;
     try {
       receivable = await this.canReceive(listing.pay_to);
     } catch {
       throw new Stop("buy_down", "the mirror node did not answer");
     }
-    if (!receivable) throw new Stop("buy_suspended", `${listing.pay_to} cannot take USDC (not associated, no free slot)`);
+    if (!receivable) throw suspended("cannot_receive", `${listing.pay_to} cannot take USDC (not associated, no free slot)`);
 
     if (b.price_c > this.opts.maxPriceC) throw new Stop("buy_budget", "over the per-purchase cap");
     const day = localDay(this.now());
@@ -420,6 +492,7 @@ export class Agent {
     const left = Math.max(0, o.bookDayC - o.store.spentOn(day, b.book));
     let intentSeq: Promise<number | null> = Promise.resolve(null);
     let intentTx: string;
+    const scout = this.scoutFor(job);
     try {
       const bytes = intentMessage({
         id: job.id,
@@ -433,16 +506,28 @@ export class Agent {
         amount: priceText(g.price_c),
         asset: o.usdc,
         why: { you: b.you_frames, target: g.listingFrames },
+        ...(scout ? { scout } : {}),
         left_today: priceText(left),
       });
       const accepted = await timed(o.hedera.submit(o.topic, bytes), this.t.intentTimeoutMs);
       intentTx = accepted.tx;
+      o.store.notePurchaseMessages(job.key, { intent_tx: intentTx });
       intentSeq = accepted.receipt.then((r) => seqNumber(r.seq)).catch(() => null);
+      void intentSeq.then((seq) => {
+        if (seq === null) return;
+        o.store.notePurchaseMessages(job.key, { intent_seq: seq });
+        this.refresh(job);
+      });
     } catch (err) {
       throw new Stop("buy_down", `INTENT not accepted: ${shortSdkError(err)}`);
     }
-    const why = b.you_frames === null ? `no time yet; ${b.seller} at ${fmtTime(g.listingFrames)}` : `YOU ${fmtTime(b.you_frames)}, ${b.seller} ${fmtTime(g.listingFrames)} just ahead`;
-    o.log?.(`PB ${job.id} INTENT (${why}): ${b.book} pays ${priceText(g.price_c)} USDC to ${g.pay_to}, tx ${intentTx} ${hashscan.tx(intentTx)}`);
+    const why = scout
+      ? `the scout's pick, by ${scout.by === "model" ? scout.model : "the rule"}`
+      : b.you_frames === null
+        ? `no time yet; ${b.seller} at ${fmtTime(g.listingFrames)}`
+        : `YOU ${fmtTime(b.you_frames)}, ${b.seller} ${fmtTime(g.listingFrames)} just ahead`;
+    const where = b.console !== undefined ? `console ${this.opts.consoles?.canSpend(b.console, b.book).tag ?? "?"}` : "no console";
+    o.log?.(`PB ${job.id} INTENT (${why}; ${where}): ${b.book} pays ${priceText(g.price_c)} USDC to ${g.pay_to}, tx ${intentTx} ${hashscan.tx(intentTx)}`);
 
     // Find the endpoint and ask unpaid.
     const url = `${o.resourceBase}/x402/ghost/${b.listing}`;
@@ -454,7 +539,7 @@ export class Agent {
     }
     if (res.status === 404) {
       await res.body?.cancel();
-      throw new Stop("buy_suspended", "the paywall says it is not for sale");
+      throw suspended("not_for_sale", "the paywall says it is not for sale");
     }
     if (res.status !== 402) {
       await res.body?.cancel();
@@ -476,7 +561,7 @@ export class Agent {
     }
     if (a.payTo !== g.pay_to) {
       o.log?.(`PB ${job.id} REFUSED payTo: the 402 names ${a.payTo}, the listing pays ${g.pay_to}; nothing signed`);
-      throw new Stop("buy_suspended", "REFUSED payTo");
+      throw suspended("payto_402", "REFUSED payTo");
     }
     if (a.amount !== amount) throw new Stop("buy_changed", `the 402 asks ${atomicText(a.amount)} USDC`, { now_price: `${atomicText(a.amount)} USDC` });
     const fp = typeof a.extra?.feePayer === "string" ? a.extra.feePayer : "";
@@ -519,7 +604,7 @@ export class Agent {
     if (paid.status === 402 && (err.stage === "check" || err.stage === "verify")) {
       throw new Stop("buy_down", `refused at ${String(err.stage)}: ${String(err.error ?? "?")}`);
     }
-    if (paid.status === 404) throw new Stop("buy_suspended", "the paywall would not sell this log");
+    if (paid.status === 404) throw suspended("not_for_sale", "the paywall would not sell this log");
     if (paid.status === 503) throw new Stop("buy_down", "the facilitator was unreachable at /verify");
     return this.settleLater(job, tx, g, startedMs, intentSeq, `settle: ${String(err.error ?? paid.status)}`);
   }
@@ -556,7 +641,7 @@ export class Agent {
     o.store.settlePurchase(job.key, receipt, late);
     o.store.noteSaleBuyer(receipt, job.body.book);
     this.balance = null;
-    job.view = this.okView(receipt, late);
+    job.view = this.okView(job.key, receipt, late);
     o.log?.(`PB ${job.id} ${this.what(job.body)}: paid ${priceText(priceC)} USDC to ${payTo}${late ? " (late)" : ""}, tx ${receipt} ${hashscan.tx(receipt)}`);
     const bg = this.postReceipt(job, receipt, payTo, priceC, intentSeq ?? Promise.resolve(null), late).catch(() => undefined);
     this.background.add(bg);
@@ -598,11 +683,30 @@ export class Agent {
         late,
       });
       const accepted = await timed(o.hedera.submit(o.topic, bytes), this.t.intentTimeoutMs * 2);
+      o.store.notePurchaseMessages(job.key, { receipt_msg_tx: accepted.tx });
+      this.refresh(job);
       const r = await accepted.receipt.catch(() => null);
+      const seq = r ? seqNumber(r.seq) : null;
+      if (seq !== null) {
+        o.store.notePurchaseMessages(job.key, { receipt_msg_seq: seq });
+        this.refresh(job);
+      }
       o.log?.(`PB ${job.id} RECEIPT${r ? ` #${r.seq}` : ""} (mirror ${seen ? "SUCCESS" : "unseen"}), tx ${accepted.tx} ${hashscan.tx(accepted.tx)}`);
     } catch (err) {
       o.log?.(`PB ${job.id} RECEIPT not posted: ${shortSdkError(err)}`);
     }
+  }
+
+  /** The scout's pick for INTENT, when the body's scout id is a held pick of this very purchase. */
+  private scoutFor(job: Job): IntentScout | null {
+    const b = job.body;
+    if (b.scout === undefined) return null;
+    const held = this.opts.scouts?.held(b.scout);
+    if (!held || held.buyer !== b.book || held.game !== b.game || held.listing !== b.listing) {
+      this.opts.log?.(`PB ${job.id}: scout id ignored (not this purchase)`);
+      return null;
+    }
+    return { id: b.scout, ...held.intent };
   }
 
   private prune(nowMs: number): void {

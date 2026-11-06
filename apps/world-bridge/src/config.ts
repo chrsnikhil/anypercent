@@ -35,7 +35,63 @@ export interface Config {
   serverSecret: string;
   arkiv: ArkivConfig;
   hedera: HederaConfig;
+  /** PB's scout on Groq (src/scout/*). */
+  groq: GroqConfig;
+  /** The lap-splits tool (src/arkiv/checker.ts RealChecker.splits). */
+  splits: SplitsConfig;
+  /** The house account and its BOT batches (src/arkiv/house.ts). */
+  house: HouseConfig;
+  /** The Arkiv explorer's link templates (every explorer URL the bridge answers). */
+  explorer: ExplorerConfig;
 }
+
+/**
+ * PB's scout: a language model on Groq picks which listed ghost to buy (never whether or how much).
+ * The key is service-only: never logged, never returned, sent nowhere but GROQ_BASE.
+ */
+export interface GroqConfig {
+  /** GROQ_API_KEY ("" = no key: the scout runs the board's rule). */
+  apiKey: string;
+  /** GROQ_MODEL, pinned: openai/gpt-oss-120b (a production model with strict structured outputs). */
+  model: string;
+  /** GROQ_BASE: the OpenAI-compatible base URL, without a trailing slash. */
+  base: string;
+  /** GROQ_TIMEOUT_MS (6000). NaN when malformed. */
+  timeoutMs: number;
+  /** SCOUT_REASON_MAX (110): printable ASCII characters of the model's reason. NaN when malformed. */
+  reasonMax: number;
+}
+
+export interface SplitsConfig {
+  /** CHECKER_SPLITS with {game}; when unset, CHECKER_REPLAY's directory with arcade_splits. "" = off. */
+  tool: string;
+  /** SPLIT_GAMES: the arcade ids whose runs get lap splits (MDGP). */
+  games: string[];
+}
+
+export interface HouseConfig {
+  /** HEDERA_HOUSE_ID: the house account BOT listings pay (hedera:setup --house). */
+  id: string;
+  /** HOUSE_OWNER_BOOK: the only book whose World approval publishes a house batch. */
+  ownerBook: string;
+  /** HOUSE_MAX_BATCH (8) and HOUSE_TX_PAIRS (6). NaN when malformed. */
+  maxBatch: number;
+  txPairs: number;
+}
+
+export interface ExplorerConfig {
+  /** ARKIV_EXPLORER_TX, with {tx}. */
+  tx: string;
+  /** ARKIV_EXPLORER_ENTITY, with {key}. */
+  entity: string;
+}
+
+export const GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b";
+export const GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1";
+export const ARKIV_EXPLORER_TX = "https://rabdi.explorer.arkiv.network/tx/{tx}";
+export const ARKIV_EXPLORER_ENTITY = "https://rabdi.explorer.arkiv.network/entity/{key}";
+/** A BOT label: the house's batch letter(s) and the position in the batch. */
+export const HOUSE_LABEL_RE = /^BOT-[A-Z]{1,2}[1-8]$/;
 
 /**
  * The Hedera module (src/hedera/*). Testnet only. Missing or malformed values never stop the
@@ -162,7 +218,36 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, baseDir = proce
     serverSecret: str(env, "SERVER_SECRET"),
     arkiv: loadArkiv(env),
     hedera: loadHedera(env, Number.isInteger(port) && port > 0 && port < 65536 ? port : 8787, str(env, "HOST", "127.0.0.1")),
+    groq: {
+      apiKey: str(env, "GROQ_API_KEY"),
+      model: str(env, "GROQ_MODEL", GROQ_DEFAULT_MODEL),
+      base: str(env, "GROQ_BASE", GROQ_DEFAULT_BASE).replace(/\/+$/, ""),
+      timeoutMs: intOrNaN(str(env, "GROQ_TIMEOUT_MS", "6000")),
+      reasonMax: intOrNaN(str(env, "SCOUT_REASON_MAX", "110")),
+    },
+    splits: {
+      tool: str(env, "CHECKER_SPLITS", defaultSplitsTool(str(env, "CHECKER_REPLAY"))),
+      games: str(env, "SPLIT_GAMES", "MDGP")
+        .split(",")
+        .map((s) => s.trim().toUpperCase())
+        .filter((s) => /^[A-Z0-9]{4}$/.test(s)),
+    },
+    house: {
+      id: str(env, "HEDERA_HOUSE_ID"),
+      ownerBook: str(env, "HOUSE_OWNER_BOOK"),
+      maxBatch: intOrNaN(str(env, "HOUSE_MAX_BATCH", "8")),
+      txPairs: intOrNaN(str(env, "HOUSE_TX_PAIRS", "6")),
+    },
+    explorer: {
+      tx: str(env, "ARKIV_EXPLORER_TX", ARKIV_EXPLORER_TX),
+      entity: str(env, "ARKIV_EXPLORER_ENTITY", ARKIV_EXPLORER_ENTITY),
+    },
   };
+}
+
+/** CHECKER_REPLAY's arcade_replay with arcade_splits beside it (the splits tool is installed next to it). */
+export function defaultSplitsTool(replay: string): string {
+  return /(^|[\\/])arcade_replay$/.test(replay) ? replay.replace(/arcade_replay$/, "arcade_splits") : "";
 }
 
 function loadHedera(env: NodeJS.ProcessEnv, port: number, host: string): HederaConfig {
@@ -369,4 +454,50 @@ export function hederaPayProblems(c: Config): string[] {
 /** Every Hedera name that is missing or malformed (the startup log names them; never a value). */
 export function hederaProblems(c: Config): string[] {
   return hederaPayProblems(c);
+}
+
+// ---- scout, splits, house and the explorer links ----------------------------------------------
+
+/** The splits tool can be asked: a {game} template and at least one game. */
+export function splitsReady(c: Config): boolean {
+  return c.splits.tool.includes("{game}") && c.splits.games.length > 0;
+}
+
+/** A Groq key that can go into a header: printable ASCII, no spaces. */
+export function groqKeyReady(c: Config): boolean {
+  return /^[\x21-\x7e]{8,512}$/.test(c.groq.apiKey);
+}
+
+/**
+ * The scout's mode as configuration sees it: "model" with a usable GROQ_API_KEY, else "rule" (the
+ * board's "ghost just ahead"). ScoutService adds "off" (Arkiv or Hedera pay off) and turns "model"
+ * into "rule" after Groq refuses the key (until restart).
+ */
+export function scoutMode(c: Config, keyRefused = false): "model" | "rule" {
+  return groqKeyReady(c) && !keyRefused && httpUrl(c.groq.base, true) ? "model" : "rule";
+}
+
+/**
+ * What keeps house batches off, by .env name: the house account, the owner's book, the batch caps,
+ * the splits tool (every BOT row needs lap splits), and everything an Arkiv write needs.
+ */
+export function houseProblems(c: Config, nowMs = Date.now()): string[] {
+  const h = c.house;
+  const out: string[] = [];
+  if (!ACCOUNT_RE.test(h.id)) out.push("HEDERA_HOUSE_ID");
+  if (!/^ANY-[A-Z0-9]{3,8}$/.test(h.ownerBook)) out.push("HOUSE_OWNER_BOOK");
+  if (!Number.isInteger(h.maxBatch) || h.maxBatch < 1 || h.maxBatch > 8) out.push("HOUSE_MAX_BATCH");
+  if (!Number.isInteger(h.txPairs) || h.txPairs < 1 || h.txPairs > 8) out.push("HOUSE_TX_PAIRS");
+  if (!splitsReady(c)) out.push("CHECKER_SPLITS");
+  return [...out, ...arkivProblems(c, nowMs)];
+}
+
+/** Explorer links, from the configured templates. A value that is not a hash or key gives null. */
+export function explorerLinks(e: ExplorerConfig) {
+  return {
+    tx: (hash: string | null | undefined): string | null =>
+      typeof hash === "string" && /^0x[0-9a-fA-F]{64}$/.test(hash) ? e.tx.replaceAll("{tx}", hash.toLowerCase()) : null,
+    entity: (key: string | null | undefined): string | null =>
+      typeof key === "string" && /^0x[0-9a-fA-F]{64}$/.test(key) ? e.entity.replaceAll("{key}", key.toLowerCase()) : null,
+  };
 }

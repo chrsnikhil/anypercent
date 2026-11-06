@@ -18,6 +18,10 @@
  * - payto:    book -> the Hedera account its ghosts pay. Kept in its own file, data/payto.json,
  *             written only by `npm run hedera:payto` and re-read here when it changes, so the CLI
  *             never writes state.json under a running service.
+ * - consoles: HMAC of a console id -> its tag and the record book it is bound to (one console, one
+ *             person). The raw console id is never stored or logged;
+ * - house:    the house's BOT batches (labels, log hashes, status and what the write answered, never
+ *             the logs) and the next batch letter.
  *
  * Every operation is synchronous read-modify-write inside one event-loop turn, so two requests can
  * never interleave inside a claim: the check and the write are one atomic step for this process.
@@ -48,6 +52,38 @@ export interface ApprovalRecord {
   log_h?: string;
   /** Set once the write landed: what /arkiv/publish answered. Keys and tx hashes are public. */
   result?: { run: string; listing: string; tx: string | null };
+  /** Set when spent on an owner op instead of a listing: "console-link:C-7QZP", "house:3f9c0a", ... */
+  used_for?: string;
+}
+
+export type ConsoleState = "unbound" | "bound" | "released";
+
+/** One console, by the HMAC of its id. */
+export interface ConsoleRecord {
+  /** "C-" + 4 characters of the book alphabet, unique among consoles. */
+  tag: string;
+  book: string | null;
+  state: ConsoleState;
+  /** What made the last binding change: a sign-up, a sign-in (id_dup naming the book), an owner op. */
+  by: "signup" | "signin" | "link" | "release" | null;
+  /** Unix seconds of the last change. */
+  at: number;
+}
+
+export type HouseStatus = "staged" | "approved" | "written";
+
+/** One house batch, by its id (sha256 of the sorted log hashes, 6 hex). Never the logs. */
+export interface HouseBatchRecord {
+  letter: string;
+  game: string;
+  labels: string[];
+  log_hs: string[];
+  status: HouseStatus;
+  at: number;
+  /** The HOUSE message, once a node accepted it (seq once its receipt came). */
+  hcs?: { topic: string; tx: string; seq?: string };
+  /** What the write answered: every run, listing and transaction so far. */
+  result?: { runs: string[]; listings: string[]; txs: string[] };
 }
 
 export type SpendResult = "spent" | "same" | "other" | "unknown";
@@ -81,6 +117,12 @@ export interface PurchaseRecord {
   receipt?: string;
   late?: boolean;
   at: number;
+  /** INTENT on the market topic: its transaction, and its sequence number once the receipt came. */
+  intent_tx?: string;
+  intent_seq?: number;
+  /** RECEIPT on the market topic, once a node accepted it. */
+  receipt_msg_tx?: string;
+  receipt_msg_seq?: number;
 }
 
 /** A settled sale of a listed ghost through the paywall, keyed by its transaction id. */
@@ -113,6 +155,8 @@ interface StateFile {
   purchases: Record<string, PurchaseRecord>;
   sales: Record<string, SaleRecord>;
   saleSeq: number;
+  consoles: Record<string, ConsoleRecord>;
+  house: { batches: Record<string, HouseBatchRecord>; letters: number };
 }
 
 /** The caps a reservation must fit (cents, per local day). */
@@ -139,6 +183,8 @@ const EMPTY = (): StateFile => ({
   purchases: {},
   sales: {},
   saleSeq: 0,
+  consoles: {},
+  house: { batches: {}, letters: 0 },
 });
 
 /** The store key for an approval: sha256(jti), so the jti never lands on disk. */
@@ -176,6 +222,11 @@ export class Store {
         purchases: parsed.purchases ?? {},
         sales: parsed.sales ?? {},
         saleSeq: typeof parsed.saleSeq === "number" ? parsed.saleSeq : 0,
+        consoles: parsed.consoles ?? {},
+        house: {
+          batches: parsed.house?.batches ?? {},
+          letters: typeof parsed.house?.letters === "number" ? parsed.house.letters : 0,
+        },
       };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return EMPTY();
@@ -285,8 +336,24 @@ export class Store {
   spendApproval(jti: string, logH: string): SpendResult {
     const rec = this.state.approvals[approvalKey(jti)];
     if (!rec) return "unknown";
+    if (rec.used_for !== undefined) return "other";
     if (rec.log_h !== undefined) return rec.log_h === logH ? "same" : "other";
     rec.log_h = logH;
+    this.write();
+    return "spent";
+  }
+
+  /**
+   * Spend an approval on an owner op (console link or release, a house batch) instead of a listing.
+   * "spent": now; "same": already spent on exactly this purpose (a retry); "other": spent on a
+   * listing or another op; "unknown": no such approval.
+   */
+  spendApprovalFor(jti: string, purpose: string): SpendResult {
+    const rec = this.state.approvals[approvalKey(jti)];
+    if (!rec) return "unknown";
+    if (rec.log_h !== undefined) return "other";
+    if (rec.used_for !== undefined) return rec.used_for === purpose ? "same" : "other";
+    rec.used_for = purpose;
     this.write();
     return "spent";
   }
@@ -435,6 +502,14 @@ export class Store {
     this.write();
   }
 
+  /** INTENT's and RECEIPT's places on the topic, as they become known (the chain ids the console shows). */
+  notePurchaseMessages(key: string, m: { intent_tx?: string; intent_seq?: number; receipt_msg_tx?: string; receipt_msg_seq?: number }): void {
+    const p = this.state.purchases[key];
+    if (!p) return;
+    for (const [k, v] of Object.entries(m)) if (v !== undefined) (p as unknown as Record<string, unknown>)[k] = v;
+    this.write();
+  }
+
   /** Nothing was paid: the reservation stops counting against the caps. */
   releasePurchase(key: string): void {
     const p = this.state.purchases[key];
@@ -475,4 +550,76 @@ export class Store {
       .map(([tx, s]) => ({ ...s, tx }))
       .sort((a, b) => a.n - b.n);
   }
+
+  // ---- consoles: one console, one person ---------------------------------------------------
+
+  consoleFor(key: string): ConsoleRecord | undefined {
+    return this.state.consoles[key];
+  }
+
+  /** The console with this tag, and its key. */
+  consoleByTag(tag: string): { key: string; record: ConsoleRecord } | undefined {
+    for (const [key, record] of Object.entries(this.state.consoles)) if (record.tag === tag) return { key, record };
+    return undefined;
+  }
+
+  /** Every tag in use (a new console's tag must differ from all of them). */
+  consoleTags(): Set<string> {
+    return new Set(Object.values(this.state.consoles).map((c) => c.tag));
+  }
+
+  /** Register an unseen console as unbound; an existing one is answered as it is. */
+  registerConsole(key: string, tag: string, nowS: number): ConsoleRecord {
+    const held = this.state.consoles[key];
+    if (held) return held;
+    const rec: ConsoleRecord = { tag, book: null, state: "unbound", by: null, at: nowS };
+    this.state.consoles[key] = rec;
+    this.write();
+    return rec;
+  }
+
+  /** Change a console's binding (the caller has checked the rules). */
+  setConsole(key: string, change: Pick<ConsoleRecord, "book" | "state" | "by">, nowS: number): ConsoleRecord | undefined {
+    const rec = this.state.consoles[key];
+    if (!rec) return undefined;
+    rec.book = change.book;
+    rec.state = change.state;
+    rec.by = change.by;
+    rec.at = nowS;
+    this.write();
+    return rec;
+  }
+
+  // ---- the house's BOT batches ---------------------------------------------------------------
+
+  houseBatch(batch: string): HouseBatchRecord | undefined {
+    return this.state.house.batches[batch];
+  }
+
+  /** A batch staged for the first time takes the next letter (A, B, ... Z, AA, AB, ...); a known one keeps its own. */
+  stageHouseBatch(batch: string, game: string, logHs: string[], nowS: number, labelsFor: (letter: string) => string[]): HouseBatchRecord {
+    const held = this.state.house.batches[batch];
+    if (held) return held;
+    const letter = batchLetter(this.state.house.letters);
+    this.state.house.letters += 1;
+    const rec: HouseBatchRecord = { letter, game, labels: labelsFor(letter), log_hs: [...logHs], status: "staged", at: nowS };
+    this.state.house.batches[batch] = rec;
+    this.write();
+    return rec;
+  }
+
+  updateHouseBatch(batch: string, change: Partial<Pick<HouseBatchRecord, "status" | "hcs" | "result">>): void {
+    const rec = this.state.house.batches[batch];
+    if (!rec) return;
+    Object.assign(rec, change);
+    this.write();
+  }
+}
+
+/** The n-th batch letter, from 0: A..Z, then AA..ZZ. */
+export function batchLetter(n: number): string {
+  const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  if (n < 26) return A[n];
+  const m = n - 26;
+  return `${A[Math.floor(m / 26) % 26]}${A[m % 26]}`;
 }

@@ -5,7 +5,7 @@
  *
  *   check   the approval, the book, the approved text, the payout account, then the copy check
  *   submit  the LISTING is out; waiting for its receipt (10 s)
- *   done    {topic, seq, tx, hashscan}, or one of the handler's own failure names
+ *   done    {topic, seq, tx, hashscan, hashscan_topic}, or one of the handler's own failure names
  *
  * Failures, in this order:
  *   ls_expired      approval unknown to this bridge, or unspent and older than 24 h
@@ -13,7 +13,8 @@
  *   ls_mismatch     sha256(action) differs, price_c differs from ARKIV_GHOST_PRICE_C, action is not
  *                   actionText(title, frames, price_c, pay_to), or pay_to is not the book's
  *                   registered account
- *   ls_reused       the approval was already spent (published) with no LISTING for it
+ *   ls_reused       the approval was already spent (published) with no LISTING for it, or spent on
+ *                   an owner op (a console link or release, a house batch)
  *   ls_copied       the body's log_h is already on the board under another book: a copied run,
  *                   which publish would refuse, so no LISTING goes out for it
  *   ls_record_fail  HCS refused it, timed out, or is not configured; Arkiv could not be read for
@@ -200,7 +201,7 @@ export class Recorder {
 
   private done(job: Job, tx: string, seq: string, note = ""): void {
     const n = seqNumber(seq);
-    job.view = { stage: "done", ok: true, failure: null, data: { topic: this.opts.topic, seq: n, tx, hashscan: hashscan.tx(tx) } };
+    job.view = { stage: "done", ok: true, failure: null, data: { topic: this.opts.topic, seq: n, tx, hashscan: hashscan.tx(tx), hashscan_topic: hashscan.topic(this.opts.topic) } };
     this.opts.log?.(`hedera record ${this.what(job.body)}: LISTING #${seq} on ${this.opts.topic}, tx ${tx}${note} ${hashscan.tx(tx)}`);
   }
 
@@ -214,6 +215,7 @@ export class Recorder {
     if (!rec) return this.fail(job, "ls_expired", "approval unknown to this bridge");
     if (rec.log_h === undefined && this.now() - rec.at * 1000 > this.approvalTtlMs) return this.fail(job, "ls_expired", "approval older than 24 h");
     if (rec.book !== b.book) return this.fail(job, "ls_wrong", "approved for another book");
+    if (rec.used_for !== undefined) return this.fail(job, "ls_reused", "approval already spent on an owner op");
     const book = store.recordForBook(b.book);
     if (!book) return this.fail(job, "ls_wrong", "book not issued by this bridge");
     if (createHash("sha256").update(b.action).digest("hex") !== rec.action_sha) return this.fail(job, "ls_mismatch", "not the text World App showed");

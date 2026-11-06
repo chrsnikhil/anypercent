@@ -2,7 +2,7 @@
  * The Hedera half of the bridge's HTTP contract (spec: HTTP contract), wired from what is configured:
  *
  *   GET  /hedera/config           network, mirror, hashscan, topic, usdc, agent, facilitator, fee payer,
- *                                 caps, and the paywall's URL template. No keys.
+ *                                 caps, the paywall's URL template and the house account. No keys.
  *   GET  /hedera/payto/{book}     {"book", "pay_to"} (null when none)
  *   POST /hedera/record           the LISTING message -> {id, expires_s: 120}         (record.ts)
  *   GET  /hedera/record/{id}      {stage, ok, failure, data}
@@ -54,6 +54,8 @@ export interface HederaServiceOptions {
   agent: Agent | null;
   recorder: Recorder | null;
   resource: ResourceServer | null;
+  /** HEDERA_HOUSE_ID ("" or absent: no house account yet). */
+  houseId?: string;
   log?: (line: string) => void;
 }
 
@@ -166,6 +168,7 @@ export class HederaService {
       fee_payer: cur?.feePayer ?? null,
       caps: { max_c: cfg.maxPriceC, book_day_c: cfg.bookDayC, agent_day_c: cfg.agentDayC },
       resource: `${cfg.resourceBase}/x402/ghost/{listing}`,
+      house: acct(this.opts.houseId ?? ""),
     };
   }
 

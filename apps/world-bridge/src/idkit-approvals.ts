@@ -222,7 +222,7 @@ export class IdkitApprovals implements ApprovalProvider {
     if (s.cancelled) return;
 
     if (!r.ok) {
-      if (r.kind === "network") return this.finish(s, "ls_world_down");
+      if (r.kind === "network" || r.kind === "stopped") return this.finish(s, "ls_world_down");
       if (r.kind === "check") {
         const why = r.check === "session" ? " (the proof is for another World session)" : "";
         return this.finish(s, approvalProofFailure(r.check), {}, why);

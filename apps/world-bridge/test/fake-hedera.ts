@@ -13,6 +13,8 @@ export const SELLER_ACCT = "0.0.5123456";
 export const TOPIC = "0.0.8001";
 export const FEE_PAYER = "0.0.9185802";
 export const FEE_PAYER_2 = "0.0.7162784";
+/** The house account BOT listings pay (associated with USDC). */
+export const HOUSE = "0.0.4004004";
 
 export interface SentMessage {
   topic: string;
@@ -102,6 +104,8 @@ export class FakeMirror implements MirrorPort {
     this.holdings.set(`${AGENT}|${USDC}`, 20_000_000n);
     this.addAccount(SELLER_ACCT, { balance: 0n, maxAuto: 0 });
     this.holdings.set(`${SELLER_ACCT}|${USDC}`, 0n);
+    this.addAccount(HOUSE, { balance: 2n * 100_000_000n, maxAuto: 0 });
+    this.holdings.set(`${HOUSE}|${USDC}`, 0n);
   }
 
   addAccount(id: string, o: { balance?: bigint; maxAuto?: number } = {}): void {

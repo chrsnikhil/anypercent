@@ -14,13 +14,13 @@
  * buy_load_fail on /arkiv/ghost.
  */
 import { readFileSync } from "node:fs";
-import { ARKIV_EXPLORER, GHOST_SECRET_RE } from "../config.js";
+import { ARKIV_EXPLORER, ARKIV_EXPLORER_ENTITY, ARKIV_EXPLORER_TX, GHOST_SECRET_RE, type ExplorerConfig } from "../config.js";
 import { ArkivError, type ArkivPort } from "./client.js";
 import { decryptGhost, sha256Hex } from "./ghost.js";
 import type { PaymentCheck } from "./payments.js";
 import { PublishRefused, priceText, type Publisher, type PublishView, type WriteGate } from "./publish.js";
 import { KEY_RE } from "./queries.js";
-import { LISTING_DAYS, LISTING_SCHEMA, RUN_SCHEMA } from "./schema.js";
+import { LISTING_DAYS, LISTING_SCHEMA, RUN_SCHEMA, SPLIT_COLUMNS } from "./schema.js";
 
 export class RouteError extends Error {
   constructor(public readonly status: number, public readonly body: { error: string; failure: string }) {
@@ -53,6 +53,8 @@ export interface ArkivServiceOptions {
   problems: string[];
   boardFile: string;
   snapshotFile: string;
+  /** ARKIV_EXPLORER_TX / ARKIV_EXPLORER_ENTITY (default: Rabdi's explorer). */
+  explorer?: ExplorerConfig;
   log?: (line: string) => void;
 }
 
@@ -141,6 +143,9 @@ export class ArkivService {
       schemas: { run: RUN_SCHEMA, listing: LISTING_SCHEMA },
       price: Number.isInteger(this.opts.priceC) ? priceText(this.opts.priceC) : null,
       listing_days: LISTING_DAYS,
+      split_columns: [...SPLIT_COLUMNS],
+      explorer_tx: this.opts.explorer?.tx ?? ARKIV_EXPLORER_TX,
+      explorer_entity: this.opts.explorer?.entity ?? ARKIV_EXPLORER_ENTITY,
     };
   }
 

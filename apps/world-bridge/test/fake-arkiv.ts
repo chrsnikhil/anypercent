@@ -4,8 +4,9 @@
  * assert every column. Nothing here touches the network.
  */
 import { createHash } from "node:crypto";
-import type { ArkivPort, CreateSpec, ListingRow, ListingValues, RunRow, RunValues } from "../src/arkiv/client.js";
+import type { ArkivPort, CreateSpec, HousePair, ListingRow, ListingValues, RunRow, RunValues } from "../src/arkiv/client.js";
 import { ArkivError } from "../src/arkiv/client.js";
+import { splitsOf } from "../src/arkiv/rows.js";
 import { CheckerError, type CheckerPort, type ReplayResult } from "../src/arkiv/checker.js";
 
 export const CHECKER = "0x1111111111111111111111111111111111111111";
@@ -34,7 +35,9 @@ function newKey(): string {
 export class FakeArkiv implements ArkivPort {
   runs: StoredRun[] = [];
   listings: StoredListing[] = [];
-  batches: { kind: "run+listing" | "listing" | "run"; tx: string }[] = [];
+  batches: { kind: "run+listing" | "listing" | "run" | "house"; tx: string; creates?: number }[] = [];
+  /** A house transaction with more creates than this is refused (gas or size), as Arkiv would. */
+  maxCreates = Infinity;
   chain = 7794095;
   balances = new Map<string, bigint>([[CHECKER.toLowerCase(), 10n ** 18n]]);
   /** Throw on the next n writes (Arkiv down, a revert). */
@@ -80,6 +83,17 @@ export class FakeArkiv implements ArkivPort {
       credential: v.credential,
       tool: v.tool,
       ...(withLog ? { log: v.log, log_enc: v.log_enc } : {}),
+      ...(() => {
+        const splits = splitsOf({
+          frames: BigInt(v.frames),
+          ...(v.s1 !== undefined ? { s1: BigInt(v.s1) } : {}),
+          ...(v.s2 !== undefined ? { s2: BigInt(v.s2) } : {}),
+          ...(v.s3 !== undefined ? { s3: BigInt(v.s3) } : {}),
+          ...(v.s4 !== undefined ? { s4: BigInt(v.s4) } : {}),
+          ...(v.split_kind !== undefined ? { split_kind: v.split_kind } : {}),
+        });
+        return splits ? { splits } : {};
+      })(),
     };
   }
 
@@ -102,7 +116,8 @@ export class FakeArkiv implements ArkivPort {
       log_h: v.log_h,
       price: v.price,
       seller: v.seller,
-      book: v.book,
+      ...(v.book !== undefined ? { book: v.book } : {}),
+      ...(v.label !== undefined ? { label: v.label } : {}),
       human: v.human,
       ...(v.pay_to !== undefined ? { pay_to: v.pay_to } : {}),
       ...(v.hcs !== undefined ? { hcs: v.hcs } : {}),
@@ -166,6 +181,40 @@ export class FakeArkiv implements ArkivPort {
     return { listing: listingKey, tx };
   }
 
+  async writeHouse(pairs: HousePair[]) {
+    await this.gate();
+    if (2 * pairs.length > this.maxCreates) throw new ArkivError("exceeds the block gas limit");
+    const runs: string[] = [];
+    const listings: string[] = [];
+    for (const p of pairs) {
+      const runKey = newKey();
+      const listingKey = newKey();
+      this.runs.push({ key: runKey, creator: CHECKER, spec: p.run, live: true });
+      this.listings.push({ key: listingKey, creator: CHECKER, run: runKey, spec: p.listing, live: true });
+      runs.push(runKey);
+      listings.push(listingKey);
+    }
+    const tx = newKey();
+    this.batches.push({ kind: "house", tx, creates: 2 * pairs.length });
+    return { runs, listings, tx };
+  }
+
+  async boardRuns(game: string, season: number): Promise<RunRow[]> {
+    if (this.readsDown) throw new ArkivError("down");
+    return this.runs
+      .filter((r) => r.live && r.creator === CHECKER && r.spec.values.game === game && r.spec.values.season === season)
+      .sort((a, b) => a.spec.values.frames - b.spec.values.frames)
+      .map((r) => this.runRow(r, false));
+  }
+
+  async boardListings(game: string, season: number): Promise<ListingRow[]> {
+    if (this.readsDown) throw new ArkivError("down");
+    return this.listings
+      .filter((l) => l.live && l.creator === CHECKER && l.spec.values.game === game && l.spec.values.season === season)
+      .sort((a, b) => a.spec.values.frames - b.spec.values.frames)
+      .map((l) => this.listingRow(l));
+  }
+
   async writeRun(run: CreateSpec<RunValues>) {
     await this.gate();
     const runKey = newKey();
@@ -183,11 +232,17 @@ export class FakeChecker implements CheckerPort {
 
   constructor(public frames = 6170) {}
 
-  async replay(game: string): Promise<ReplayResult> {
+  /** The replay's final hash (arcade_splits must report the same one). */
+  finalHash = 576543229;
+  /** Per log hash: what the tool answers instead (house batches replay several logs). */
+  byLog = new Map<string, Partial<ReplayResult>>();
+
+  async replay(game: string, logH?: string): Promise<ReplayResult> {
     this.calls += 1;
     if (this.result === "error") throw new CheckerError("exit 2");
     if (this.result === "timeout") throw new CheckerError("timed out");
-    return { game, hash_matches: true, complete: true, claims_match: true, finished: true, time_frames: this.frames, ...this.result };
+    const per = logH !== undefined ? this.byLog.get(logH) : undefined;
+    return { game, hash_matches: true, complete: true, claims_match: true, finished: true, time_frames: this.frames, final_hash: this.finalHash, ...this.result, ...per };
   }
 
   async toolTag(): Promise<string> {

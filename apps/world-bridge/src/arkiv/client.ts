@@ -21,8 +21,8 @@ import { rabdi } from "@arkiv-network/sdk/chains";
 import { bool, bytes, dec, i32, key as keyValue, str, u64 } from "@arkiv-network/sdk/schema";
 import { http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { queryParams, qListingForRun, q6Listing, q6Run, q7RunByLogHash, LISTING_ATTRS, RUN_ALL_ATTRS, selectOf, type RpcSelect } from "./queries.js";
-import { decodePage, type DecodedRow } from "./rows.js";
+import { queryParams, qListingForRun, q1Board, q2Listings, q6Listing, q6Run, q7RunByLogHash, LISTING_ATTRS, RUN_ALL_ATTRS, RUN_BOARD_ATTRS, selectOf, type RpcSelect } from "./queries.js";
+import { decodePage, splitsOf, type DecodedRow } from "./rows.js";
 import { LISTING_TYPES, Listing, REAL, Run, RUN_TYPES, SmokeListing, SmokeRun, type SchemaNames } from "./schema.js";
 
 export interface RunRow {
@@ -43,6 +43,8 @@ export interface RunRow {
   tool?: string;
   log?: Uint8Array;
   log_enc?: Uint8Array;
+  /** The lap splits in frames when the row carries splits that check out (rows.splitsOf), else absent. */
+  splits?: number[];
 }
 
 export interface ListingRow {
@@ -56,12 +58,19 @@ export interface ListingRow {
   log_h: string;
   price: string;
   seller: string;
-  book: string;
+  /** A person's listing names its book; the house's names its BOT label instead (exactly one). */
+  book?: string;
+  label?: string;
   human: boolean;
   /** The seller's Hedera account; absent: not for sale. */
   pay_to?: string;
   /** `<topic>/<seq>` of the LISTING message on HCS. */
   hcs?: string;
+}
+
+/** The listing's seller as the console and INTENT name it: its book, or the house's BOT label. */
+export function sellerName(l: Pick<ListingRow, "book" | "label">): string {
+  return l.book ?? l.label ?? "";
 }
 
 /** What a run row is written with (spec: Entities). Exactly one of log and log_enc. */
@@ -80,6 +89,22 @@ export interface RunValues {
   tool: string;
   log?: Uint8Array;
   log_enc?: Uint8Array;
+  /** Lap splits, contiguous from s1, summing to frames (split_kind "lap"). */
+  s1?: number;
+  s2?: number;
+  s3?: number;
+  s4?: number;
+  split_kind?: string;
+  /** BOT rows only: how the log was made. */
+  gen?: string;
+}
+
+/** The split columns for these splits: {s1, ..., sN, split_kind: "lap"}, or nothing for none. */
+export function splitValues(splits: readonly number[] | null | undefined): Pick<RunValues, "s1" | "s2" | "s3" | "s4" | "split_kind"> {
+  if (!splits || splits.length === 0) return {};
+  const out: Record<string, number | string> = { split_kind: "lap" };
+  splits.slice(0, 4).forEach((v, i) => (out[`s${i + 1}`] = v));
+  return out as Pick<RunValues, "s1" | "s2" | "s3" | "s4" | "split_kind">;
 }
 
 /** What a listing row is written with; its `run` key is filled in by the writer. */
@@ -91,10 +116,18 @@ export interface ListingValues {
   /** USDC, as a decimal string ("0.1"). */
   price: string;
   seller: string;
-  book: string;
+  /** Exactly one of book (a person's listing) and label (the house's). */
+  book?: string;
+  label?: string;
   human: boolean;
   pay_to?: string;
   hcs?: string;
+}
+
+/** One house pair: a BOT run and its listing (the listing's `run` is filled in by the writer). */
+export interface HousePair {
+  run: CreateSpec<RunValues>;
+  listing: CreateSpec<ListingValues>;
 }
 
 export type ExpirySpec =
@@ -142,6 +175,15 @@ export interface ArkivPort {
   writeListing(runKey: string, listing: CreateSpec<ListingValues>, replaces?: string): Promise<{ listing: string; tx: string }>;
   /** A run alone (the open tier). */
   writeRun(run: CreateSpec<RunValues>): Promise<{ run: string; tx: string }>;
+  /**
+   * House pairs in ONE transaction: [run1, listing1, run2, listing2, ...], each listing naming its
+   * run's predicted key. The caller splits a batch that is refused (house.ts).
+   */
+  writeHouse(pairs: HousePair[]): Promise<{ runs: string[]; listings: string[]; tx: string }>;
+  /** Q1: the run board of one game and season (one page, fastest first), with splits and labels. */
+  boardRuns(game: string, season: number): Promise<RunRow[]>;
+  /** Q2: the live listings of one game and season (one page, fastest first). */
+  boardListings(game: string, season: number): Promise<ListingRow[]>;
 }
 
 /** A read or write that did not complete: Arkiv down, a revert, out of gas, a timeout. */
@@ -177,6 +219,10 @@ export function runFromRow(r: DecodedRow): RunRow {
     tool: v.tool as string | undefined,
     log: v.log as Uint8Array | undefined,
     log_enc: v.log_enc as Uint8Array | undefined,
+    ...(() => {
+      const splits = splitsOf(v);
+      return splits ? { splits } : {};
+    })(),
   };
 }
 
@@ -193,7 +239,8 @@ export function listingFromRow(r: DecodedRow): ListingRow {
     log_h: v.log_h as string,
     price: v.price as string,
     seller: v.seller as string,
-    book: v.book as string,
+    ...(typeof v.book === "string" ? { book: v.book } : {}),
+    ...(typeof v.label === "string" ? { label: v.label } : {}),
     human: v.human as boolean,
     ...(typeof v.pay_to === "string" ? { pay_to: v.pay_to } : {}),
     ...(typeof v.hcs === "string" ? { hcs: v.hcs } : {}),
@@ -435,6 +482,56 @@ export class SdkArkiv implements ArkivPort {
         return { listing: res.createdEntities[0].toLowerCase(), tx: res.txHash };
       } catch (err) {
         throw this.fail(err);
+      }
+    });
+  }
+
+  async boardRuns(game: string, season: number): Promise<RunRow[]> {
+    const asked = [...RUN_BOARD_ATTRS];
+    const res = await this.query(q1Board(game, season, this.pinned(), this.names), selectOf(asked), 100);
+    return decodePage(res.data, RUN_TYPES, asked, this.names.run, this.pinned()).rows.map(runFromRow);
+  }
+
+  async boardListings(game: string, season: number): Promise<ListingRow[]> {
+    const asked = [...LISTING_ATTRS];
+    const res = await this.query(q2Listings(game, season, this.pinned(), this.names), selectOf(asked), 100);
+    return decodePage(res.data, LISTING_TYPES, asked, this.names.listing, this.pinned()).rows.map(listingFromRow);
+  }
+
+  writeHouse(pairs: HousePair[]): Promise<{ runs: string[]; listings: string[]; tx: string }> {
+    return this.serial(async () => {
+      const wallet = this.needWallet();
+      const s = this.schemas();
+      try {
+        const keys = await this.pub.predictEntityKeys({ owner: this.checker as Hex, count: 2 * pairs.length });
+        const creates = pairs.flatMap((p, i) => {
+          const r = keys[2 * i];
+          const l = keys[2 * i + 1];
+          return [
+            {
+              schema: s.run,
+              values: toSdkValues("run", p.run.values as unknown as Record<string, unknown>) as never,
+              expiration: toExpiration(p.run.expiry),
+              flags: p.run.flags,
+              salt: r.salt,
+            },
+            {
+              schema: s.listing,
+              values: toSdkValues("listing", { ...p.listing.values, run: r.key }) as never,
+              expiration: toExpiration(p.listing.expiry),
+              flags: p.listing.flags,
+              salt: l.salt,
+            },
+          ];
+        });
+        const res = await wallet.executeBatch({ creates } as never);
+        const made = res.createdEntities.map((k) => k.toLowerCase());
+        if (made.length !== keys.length || made.some((k, i) => k !== keys[i].key.toLowerCase())) {
+          throw new ArkivError("the predicted keys moved (another writer used the checker wallet)");
+        }
+        return { runs: made.filter((_, i) => i % 2 === 0), listings: made.filter((_, i) => i % 2 === 1), tx: res.txHash };
+      } catch (err) {
+        throw err instanceof ArkivError ? err : this.fail(err);
       }
     });
   }

@@ -48,6 +48,13 @@ td.time .meta { font: 12px var(--sans); }
 .human { background: var(--lime); color: #111; }
 .listed { background: var(--amber); color: #111; }
 .open { background: var(--line); color: var(--text); }
+.bot { background: var(--amber); color: #111; cursor: help; }
+.tiers { color: var(--text); font-size: 14px; margin: 0 0 10px; }
+.laps { font: 12px var(--mono); color: var(--dim); }
+.leaders { margin: 14px 0 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.leaders h3 { margin: 0 0 6px; font-size: 14px; }
+.leaders ol { margin: 0; padding-left: 20px; font: 13px/1.6 var(--mono); }
+.leaders .meta { display: inline; }
 tr.ignored td { color: var(--red); text-decoration: line-through; }
 tr.ignored td .why { text-decoration: none; display: block; font-size: 12px; }
 tr.you td { background: #1d2412; }
@@ -79,6 +86,7 @@ a { color: var(--blue); }
       <label><input type="checkbox" id="anyWallet"> show rows from any wallet</label>
       <label><input type="checkbox" id="humanOnly"> HUMAN only</label>
     </div>
+    <p class="tiers" id="tiers"></p>
     <form class="ahead" id="aheadForm">
       <span>Who is just ahead of</span>
       <input id="aheadTime" placeholder="1:44.83" inputmode="decimal" aria-label="your time, m:ss.cc">
@@ -91,8 +99,14 @@ a { color: var(--blue); }
     </table>
     <p class="legend"><span class="badge human">HUMAN</span>record book opened with World ID (<span id="credLegend">Orb</span>).
       <span class="badge listed">LISTED</span>its ghost is for sale; "pays 0.0.N" is the runner's own Hedera account (testnet USDC),
-      "approved on Hedera" the listing's message on the market topic.</p>
+      "approved on Hedera" the listing's message on the market topic.
+      <span id="botLegend" hidden><span class="badge bot">BOT</span>made by a program: the route bot slowed down on purpose
+      (dev/ghostgen.py), replayed by the same checker, sold by the house account, never HUMAN.</span></p>
     <p class="note" id="dropped" hidden></p>
+    <div class="leaders" id="leaders" hidden>
+      <h3>Lap leaders (one indexed split per query, Q10)</h3>
+      <ol id="leaderList"></ol>
+    </div>
   </div>
   <div id="profile-view" hidden>
     <p><a href="#" id="backToBoard">Back to the board</a></p>
@@ -119,7 +133,7 @@ a { color: var(--blue); }
   <footer>
     <p>Anyone can write a row that looks like ours; this board ignores every row our checker did not create (tick "show rows from any wallet" to see them struck out).
       A run row cannot be edited, not even by our checker. Our checker could delete one; anyone can keep one alive longer.
-      Listings end after 7 days. Payments are mocked in this build.</p>
+      Listings end after 7 days. Ghosts are paid in testnet USDC on Hedera (x402).</p>
     <p>Profiles: add <code>#book=ANY-XXX</code> to this page's address.</p>
   </footer>
 </main>
@@ -143,16 +157,20 @@ const Q = {
   q5: (book, checker) => `arkiv.schema = str('anypercent.listing') AND book = str('${book}') AND $creator = addr(${checker}) ORDER BY $expiresAt:u64 ASC`,
   q8: (game, season) => `arkiv.schema = str('anypercent.run') AND game = str('${game}') AND season = i32(${season}) ORDER BY frames:u64 ASC`,
   q9: (game, season, checker) => `arkiv.schema = str('anypercent.run') AND game = str('${game}') AND season = i32(${season}) AND human = true AND $creator = addr(${checker}) ORDER BY frames:u64 ASC`,
+  q10: (game, season, checker, lap) => `arkiv.schema = str('anypercent.run') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${checker}) ORDER BY s${lap}:u64 ASC`,
 };
 
-const RUN_ATTRS = ["game", "title", "frames", "runner", "book", "label", "human", "credential", "log_h", "rules"];
-const LISTING_ATTRS = ["run", "game", "season", "frames", "log_h", "price", "seller", "book", "human", "pay_to", "hcs"];
-const RUN_TYPES = { game: "str", title: "str", frames: "u64", runner: "str", book: "str", label: "str", human: "bool", credential: "str", log_h: "str", rules: "u64" };
+// s1..s4 and split_kind are a run's lap splits (optional: rows before them have none).
+const RUN_ATTRS = ["game", "title", "frames", "runner", "book", "label", "human", "credential", "log_h", "rules", "s1", "s2", "s3", "s4", "split_kind"];
+const LISTING_ATTRS = ["run", "game", "season", "frames", "log_h", "price", "seller", "book", "label", "human", "pay_to", "hcs"];
+const RUN_TYPES = { game: "str", title: "str", frames: "u64", runner: "str", book: "str", label: "str", human: "bool", credential: "str", log_h: "str", rules: "u64",
+  s1: "u64", s2: "u64", s3: "u64", s4: "u64", split_kind: "str" };
 const RUN_REQUIRED = ["game", "title", "frames", "runner", "human", "log_h", "rules"];
 // pay_to (the seller's Hedera account, as World App showed it) and hcs ("<topic>/<seq>" of the LISTING
-// message) are optional: listings written before payouts have neither and are not for sale.
-const LISTING_TYPES = { run: "key", game: "str", season: "i32", frames: "u64", log_h: "str", price: "dec", seller: "str", book: "str", human: "bool", pay_to: "str", hcs: "str" };
-const LISTING_REQUIRED = ["run", "game", "season", "frames", "log_h", "price", "seller", "book", "human"];
+// message) are optional: listings written before payouts have neither and are not for sale. A listing
+// names exactly one of book (a person's) and label (the house's BOT ghosts).
+const LISTING_TYPES = { run: "key", game: "str", season: "i32", frames: "u64", log_h: "str", price: "dec", seller: "str", book: "str", label: "str", human: "bool", pay_to: "str", hcs: "str" };
+const LISTING_REQUIRED = ["run", "game", "season", "frames", "log_h", "price", "seller", "human"];
 const ACCOUNT_RE = /^0\.0\.\d{1,10}$/;
 const HCS_RE = /^(0\.0\.\d{1,10})\/\d{1,20}$/;
 const BOOK_RE = /^ANY-[A-Z0-9]{3,8}$/;
@@ -221,6 +239,8 @@ function decode(raw, types, required, schema, pin) {
   }
   if (tag !== undefined && tag !== schema) return null;
   for (const r of required) if (v[r] === undefined) return null;
+  // A listing names exactly one of book and label; both or neither is not ours to show.
+  if (/listing$/.test(schema) && (v.book === undefined) === (v.label === undefined)) return null;
   const expiresAt = typeof raw.expiresAt === "string" && /^0x[0-9a-fA-F]+$/.test(raw.expiresAt) ? Number(BigInt(raw.expiresAt)) : null;
   return { key: raw.key.toLowerCase(), creator, expiresAt, ...v };
 }
@@ -229,6 +249,18 @@ function decodeAll(data, types, required, schema, pin) {
   for (const raw of data || []) { const r = decode(raw, types, required, schema, pin); if (r) rows.push(r); else dropped++; }
   return { rows, dropped };
 }
+/** A run's lap splits, or null when they do not check out (not contiguous from s1, not laps, a zero, a sum other than frames). */
+function splitsOf(r) {
+  const out = []; let ended = false;
+  for (const k of ["s1", "s2", "s3", "s4"]) {
+    if (r[k] === undefined) { ended = true; continue; }
+    if (ended || !(r[k] > 0)) return null;
+    out.push(r[k]);
+  }
+  if (!out.length || r.split_kind !== "lap") return null;
+  return out.reduce((a, b) => a + b, 0) === r.frames ? out : null;
+}
+const isBot = (r) => typeof r.label === "string" && r.label.startsWith("BOT-") && r.human !== true && !r.book;
 
 // ---- State ---------------------------------------------------------------------------------
 let timing = null;       // {block, time, duration}: turns $expiresAt into a date
@@ -244,9 +276,11 @@ function untilDate(expiresAt) {
   const s = timing.time + (expiresAt - timing.block) * timing.duration;
   return "about " + new Date(s * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
-/** The time cell, with "on the board until" under it where the column is hidden (phones). */
+/** The time cell, with its laps when the row has them, and "on the board until" where that column is hidden (phones). */
 function timeCell(r) {
   const td = el("td", "time", fmt(r.frames));
+  const laps = splitsOf(r);
+  if (laps) td.append(el("span", "meta laps", `laps ${laps.map((f) => (Math.round(f * 100 / 60) / 100).toFixed(2)).join(" / ")}`));
   td.append(el("span", "meta until-sm", `on the board until ${untilDate(r.expiresAt)}`));
   return td;
 }
@@ -317,7 +351,12 @@ function runnerCell(r) {
   } else td.append(el("span", "", r.label || r.runner));
   const meta = el("span", "meta");
   if (r.human === true) meta.append(el("span", "badge human", "HUMAN"));
-  else if (!r.book) meta.append(el("span", "badge open", "OPEN"));
+  else if (isBot(r)) {
+    const b = el("span", "badge bot", "BOT");
+    const house = r.listing && typeof r.listing.pay_to === "string" && ACCOUNT_RE.test(r.listing.pay_to) ? r.listing.pay_to : "0.0.N";
+    b.title = `generated by a program (dev/ghostgen.py), sold by the house account ${house}`;
+    meta.append(b);
+  } else if (!r.book) meta.append(el("span", "badge open", "OPEN"));
   if (r.listing) meta.append(el("span", "badge listed", "LISTED"), `${r.listing.price} USDC`);
   if (r.listing) hederaLinks(meta, r.listing);
   if (meta.childNodes.length) td.append(meta);
@@ -362,10 +401,45 @@ async function showBoard(game) {
   }
   if (!rows.length) body.append(rowMsg("No runs on the board yet.", 4));
   $("credLegend").textContent = creds.size ? [...creds].join(" or ") : "Orb";
+  // How many humans are on this board: one record book is one person, however many runs it has.
+  const ours = rows.filter((r) => !r.ignored);
+  const books = new Set(ours.filter((r) => r.human === true && r.book).map((r) => r.book));
+  const bots = ours.filter(isBot).length;
+  const open = ours.filter((r) => r.human !== true && !isBot(r)).length;
+  $("tiers").textContent = `Humans on this board: ${books.size} record book${books.size === 1 ? "" : "s"}` +
+    ($("humanOnly").checked ? " (HUMAN only)" : ` · BOT: ${bots}${open ? ` · OPEN: ${open}` : ""}`);
+  $("botLegend").hidden = !bots;
+  showLeaders(game, b.snap ? b.runs : null);
   const d = $("dropped");
   d.hidden = !b.dropped;
   d.textContent = b.dropped ? `${b.dropped} row${b.dropped > 1 ? "s" : ""} did not fit the schema and ${b.dropped > 1 ? "were" : "was"} dropped.` : "";
   showQuery(game);
+}
+
+// ---- Q10: the lap leaders, the fastest of each lap (one indexed split, one query) ---------------
+async function showLeaders(game, snapRuns) {
+  const box = $("leaders"), list = $("leaderList");
+  list.textContent = "";
+  const leaders = [];
+  for (const lap of [1, 2, 3]) {
+    let rows;
+    try {
+      if (snapRuns) throw new Error("snapshot");
+      const res = await query(Q.q10(game, SEASON, CHECKER, lap), RUN_ATTRS, 20);
+      rows = decodeAll(res.data, RUN_TYPES, RUN_REQUIRED, "anypercent.run", CHECKER).rows;
+    } catch {
+      rows = (snapRuns || []).slice().sort((a, b) => (a[`s${lap}`] ?? Infinity) - (b[`s${lap}`] ?? Infinity));
+    }
+    // Rows without splits (or with splits that do not check out) never lead a lap, wherever they sort.
+    const best = rows.find((r) => { const s = splitsOf(r); return s && s.length >= lap; });
+    if (best) leaders.push({ lap, r: best, f: splitsOf(best)[lap - 1] });
+  }
+  box.hidden = !leaders.length;
+  for (const { lap, r, f } of leaders) {
+    const li = el("li", "", `Lap ${lap}: ${(Math.round(f * 100 / 60) / 100).toFixed(2)} s by ${r.book || r.label || r.runner} `);
+    li.append(el("span", `badge ${r.human === true ? "human" : isBot(r) ? "bot" : "open"} meta`, r.human === true ? "HUMAN" : isBot(r) ? "BOT" : "OPEN"));
+    list.append(li);
+  }
 }
 
 function rowMsg(text, span) {
@@ -398,7 +472,7 @@ async function justAhead(ev) {
   }
   if (!l) { out.textContent = `nobody listed is ahead of ${fmt(frames)}`; return; }
   const days = daysLeft(l.expiresAt);
-  out.textContent = `${l.book} at ${fmt(l.frames)}, ${l.price} USDC${days !== null ? `, listing ends in ${days} day${days === 1 ? "" : "s"}` : ""}`;
+  out.textContent = `${l.book || l.label} at ${fmt(l.frames)}, ${l.price} USDC${days !== null ? `, listing ends in ${days} day${days === 1 ? "" : "s"}` : ""}`;
 }
 
 // ---- Profile: Q4 + Q5 ---------------------------------------------------------------------

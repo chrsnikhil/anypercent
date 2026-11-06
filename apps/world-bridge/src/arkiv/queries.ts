@@ -19,10 +19,10 @@ import { GAME_IDS, REAL, type SchemaNames } from "./schema.js";
 export const Q1_TEMPLATE =
   "arkiv.schema = str('anypercent.run') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${checker}) ORDER BY frames:u64 ASC";
 
-/** What a run board selects: never `log` or `log_enc` (only one ghost at a time selects those). */
-export const RUN_BOARD_ATTRS = ["game", "title", "frames", "runner", "book", "label", "human", "credential", "log_h", "rules"] as const;
-/** What a listing read selects; `pay_to` and `hcs` are optional (rows before the Hedera module have neither). */
-export const LISTING_ATTRS = ["run", "game", "season", "frames", "log_h", "price", "seller", "book", "human", "pay_to", "hcs"] as const;
+/** What a run board selects: never `log` or `log_enc` (only one ghost at a time selects those). Splits are optional. */
+export const RUN_BOARD_ATTRS = ["game", "title", "frames", "runner", "book", "label", "human", "credential", "log_h", "rules", "s1", "s2", "s3", "s4", "split_kind"] as const;
+/** What a listing read selects; `pay_to` and `hcs` are optional (rows before the Hedera module have neither); exactly one of `book` and `label`. */
+export const LISTING_ATTRS = ["run", "game", "season", "frames", "log_h", "price", "seller", "book", "label", "human", "pay_to", "hcs"] as const;
 export const RUN_ALL_ATTRS = [...RUN_BOARD_ATTRS, "season", "tool"] as const;
 export const SCHEMA_ATTR = "arkiv.schema";
 /** A page holds at most this many rows (the node's maximum). */
@@ -120,6 +120,15 @@ export function q8AnyWallet(g: string, s: number, names: SchemaNames = REAL): st
 /** Q9: Q1 with `human = true`: the web board's "HUMAN only" filter. */
 export function q9Human(g: string, s: number, checker: string, names: SchemaNames = REAL): string {
   return `arkiv.schema = ${sv(names.run)} AND game = ${sv(game(g))} AND season = i32(${season(s)}) AND human = true AND $creator = addr(${checksum(checker)}) ORDER BY frames:u64 ASC`;
+}
+
+/**
+ * Q10: the lap leaders, the fastest split `s<lap>` on the board (default lap 2), one indexed column
+ * in one query. Rows without splits sort last.
+ */
+export function q10LapLeaders(g: string, s: number, checker: string, lap = 2, names: SchemaNames = REAL): string {
+  need(Number.isInteger(lap) && lap >= 1 && lap <= 4, "lap");
+  return `arkiv.schema = ${sv(names.run)} AND game = ${sv(game(g))} AND season = i32(${season(s)}) AND $creator = addr(${checksum(checker)}) ORDER BY s${lap}:u64 ASC`;
 }
 
 /** The service's own: the live listing of one run (dedupe: write a listing only when none is live). */

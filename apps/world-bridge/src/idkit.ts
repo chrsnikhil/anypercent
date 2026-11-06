@@ -21,6 +21,15 @@
  * The proof is bound to this sign-up by its signal ("anyb1|<console hash>|<sign-up id>"), checked
  * here because the portal does not know which signal we meant. The nullifier is stored only as an
  * HMAC; the book id is derived from it, so the same human always gets the same book.
+ *
+ * One console, one person (consoles.ts), when a console sends a console id:
+ * - on a console bound to book B, a proof whose bound nullifiers own no B is refused before the
+ *   portal call: done / id_taken with data {book: B, console: tag}. The portal never sees it, so the
+ *   person's nullifier is not spent and no book is made;
+ * - a book made on an unbound or released console binds it (data gains `console`), and so does an
+ *   id_dup that names the book (the proof was made for this request's signal and its nullifier owns
+ *   that book);
+ * - an id_dup on a console already bound to that book is answered as before.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { CredentialRequest, IDKit, type IDKitRequest } from "@worldcoin/idkit-core";
@@ -28,7 +37,8 @@ import { signRequest } from "@worldcoin/idkit-core/signing";
 import type { Config, WorldEnvironment } from "./config.js";
 import { idkitAppFailure, portalFailure, proofCheckFailure, type IdFailure } from "./failures.js";
 import { BOOK_CHARS, nullifierKey, runnerId } from "./hmac.js";
-import { checkProof } from "./proof.js";
+import type { Consoles } from "./consoles.js";
+import { checkProof, type ProofHooks } from "./proof.js";
 import type { Store } from "./store.js";
 
 export interface IdkitView {
@@ -152,10 +162,14 @@ export interface IdkitOptions {
   maxActive?: number;
   /** Outcome lines: failure names and book ids. Never links, signals, nullifiers or session ids. */
   log?: (line: string) => void;
+  /** One console, one person; absent: no console binding (as before consoles). */
+  consoles?: Consoles | null;
 }
 
 interface Session {
   id: string;
+  /** The console id the sign-up named, when it is a console id (consoles.ts). Never logged. */
+  console: string | null;
   /** The signal of the request now being polled. */
   signal: string;
   request: BridgeRequest;
@@ -213,6 +227,9 @@ export class IdkitSessions {
     if (active >= this.maxActive) throw new IdkitStartFailure("id_offline", 503, "too many sign-ups in flight");
 
     const id = randomBytes(16).toString("base64url");
+    const consoles = this.opts.consoles ?? null;
+    // A console id registers the console; a host name from an older launcher binds nothing.
+    const named = consoles && consoles.tagOf(consoleId) !== null ? consoleId : null;
     const consoleTag = createHash("sha256").update(consoleId).digest("hex").slice(0, 16);
     // Never starts with "0x", so hashSignal always takes its UTF-8 branch.
     const signal = `anyb1|${consoleTag}|${id}`;
@@ -225,6 +242,7 @@ export class IdkitSessions {
     const nowMs = this.now();
     const s: Session = {
       id,
+      console: named,
       signal,
       request,
       expiresAtMs: nowMs + this.ttlS * 1000,
@@ -274,12 +292,12 @@ export class IdkitSessions {
     }, delayMs);
   }
 
-  private finish(s: Session, failure: IdFailure | null, data: Record<string, unknown> = {}, note = ""): void {
+  private finish(s: Session, failure: IdFailure | null, data: Record<string, unknown> = {}, note = "", logBook = true): void {
     if (s.view.stage === "done") return;
     if (s.timer) clearTimeout(s.timer);
     s.timer = null;
     s.view = { stage: "done", ok: failure === null, failure, data };
-    const book = typeof data.book === "string" ? ` ${data.book}` : "";
+    const book = logBook && typeof data.book === "string" ? ` ${data.book}` : "";
     const cred = typeof data.credential === "string" ? ` (${data.credential})` : "";
     this.opts.log?.(`idkit sign-up: ${failure ?? "verified"}${book}${cred}${note}`);
   }
@@ -327,20 +345,32 @@ export class IdkitSessions {
   }
 
   private async verify(s: Session, result: unknown): Promise<void> {
-    const r = await checkProof(this.ctx(), s.signal, result, { kind: "uniqueness" });
+    // One console, one person: on a bound console only the owner's proof may reach the portal.
+    const owner = s.console && this.opts.consoles ? this.opts.consoles.boundTo(s.console) : null;
+    const hooks: ProofHooks = owner
+      ? {
+          beforePortal: (canonicals) =>
+            canonicals.some((c) => this.opts.store.bookFor(nullifierKey(this.opts.secret, this.opts.action, c))?.book === owner.book) ? "go" : "stop",
+        }
+      : {};
+    const r = await checkProof(this.ctx(), s.signal, result, { kind: "uniqueness" }, hooks);
     // Circle won while the portal was answering: discard the proof, make and name no book. From
     // here to claimBook everything is synchronous, so a cancel cannot slip in after this check.
     if (s.cancelled) return;
 
     if (!r.ok) {
-      if (r.kind === "network") return this.finish(s, "id_offline");
+      if (r.kind === "stopped" && owner) {
+        const note = ` (console ${owner.tag} belongs to ${owner.book}; not sent to the portal)`;
+        return this.finish(s, "id_taken", { book: owner.book, console: owner.tag }, note, false);
+      }
+      if (r.kind === "network" || r.kind === "stopped") return this.finish(s, "id_offline");
       if (r.kind === "check") return this.finish(s, proofCheckFailure(r.check));
       const failure = portalFailure(r.status, r.body);
       if (failure === "id_dup") {
         // World refused a repeat of a proof it otherwise holds: name the book this nullifier owns.
         const nKey = this.lookup(r.canonicals);
         const rec = nKey ? this.opts.store.bookFor(nKey) : undefined;
-        if (nKey && rec) return this.settle(s, nKey, { failure: "id_dup", data: { book: rec.book } });
+        if (nKey && rec) return this.settle(s, nKey, { failure: "id_dup", data: { book: rec.book, ...this.bind(s, rec.book, "signin") } });
         return this.finish(s, "id_dup");
       }
       return this.finish(s, failure);
@@ -353,12 +383,19 @@ export class IdkitSessions {
     if (!created) {
       // A verified repeat by the book's owner may still carry the session the book lacks.
       if (r.sessionId) this.opts.store.setSession(nKey, r.sessionId);
-      return this.settle(s, nKey, { failure: "id_dup", data: { book: record.book } });
+      return this.settle(s, nKey, { failure: "id_dup", data: { book: record.book, ...this.bind(s, record.book, "signin") } });
     }
     return this.settle(s, nKey, {
       failure: null,
-      data: { book: record.book, credential: record.credential, runner_id: record.runner_id },
+      data: { book: record.book, credential: record.credential, runner_id: record.runner_id, ...this.bind(s, record.book, "signup") },
     });
+  }
+
+  /** Bind an unbound or released console to the book this sign-up proved: {console: tag}, else nothing. */
+  private bind(s: Session, book: string, by: "signup" | "signin"): { console?: string } {
+    if (!s.console || !this.opts.consoles) return {};
+    const tag = this.opts.consoles.bindAtSignup(s.console, book, by);
+    return tag ? { console: tag } : {};
   }
 
   /** The sign-up's outcome is known. A book with its session finishes now; one without either says
@@ -401,7 +438,7 @@ export class IdkitSessions {
     if (s.cancelled) return;
     const note = this.phaseNote(s);
     if (!r.ok) {
-      if (r.kind === "network") return this.finish(s, "id_offline", {}, note);
+      if (r.kind === "network" || r.kind === "stopped") return this.finish(s, "id_offline", {}, note);
       if (r.kind === "check") return this.finish(s, proofCheckFailure(r.check), {}, note);
       return this.finish(s, portalFailure(r.status, r.body), {}, note);
     }

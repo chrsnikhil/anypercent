@@ -3,8 +3,10 @@
  *
  * Writes one open-tier run row from the team's own logs (spec: Decisions 3): the same replay check
  * as /arkiv/publish, then a run row with the plain `log` (anyone can replay it), no book, no person:
- * `label` is a display name such as TEAM or BOT-7 (never a person's name), `runner` an HMAC of
+ * `label` is a display name such as TEAM (never a person's name), `runner` an HMAC of
  * "open|<label>", `human` false. No listing. A log already on the board is not written twice.
+ * Labels starting with BOT- are refused: BOT rows come only from a house batch its owner approved in
+ * World App (npm run house:publish).
  *
  * The shipped test logs live in the WSL sandbox; from Windows, pass them by their \\wsl.localhost path.
  * Do not run this while the service is publishing: both sign with the checker's wallet.
@@ -28,7 +30,8 @@ const logPath = arg("log") ?? "";
 
 async function main(): Promise<void> {
   if (!GAMES[game]) die(`--game must be one of ${Object.keys(GAMES).join(", ")}`);
-  if (!/^[A-Z0-9][A-Z0-9-]{0,11}$/.test(label)) die("--label must be 1-12 of A-Z, 0-9 and -, e.g. TEAM or BOT-7 (never a person's name)");
+  if (!/^[A-Z0-9][A-Z0-9-]{0,11}$/.test(label)) die("--label must be 1-12 of A-Z, 0-9 and -, e.g. TEAM (never a person's name)");
+  if (label.startsWith("BOT-")) die("BOT- labels come only from a World-approved house batch: npm run house:publish -- --dir <ghostgen output>");
   if (!logPath) die("--log <path to the .acl> is required");
   const missing = arkivProblems(cfg).filter((n) => n !== "ARKIV_GHOST_SECRET");
   if (missing.length) die(`set these in .env first: ${missing.join(", ")}`);

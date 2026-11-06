@@ -44,7 +44,13 @@ describe("record: the LISTING", () => {
       Buffer.from(m.bytes).toString("utf8"),
       `{"v":1,"t":"LISTING","book":"${s.h.seller.book}","runner":"1111222233334444","game":"MDGP","frames":6170,"price":"0.10","pay_to":"${SELLER_ACCT}","action":"List MARINE DRIVE GP 1:42.83 ghost for 0.10 USDC to ${SELLER_ACCT} on the public board"}`,
     );
-    assert.deepEqual(v.data, { topic: TOPIC, seq: 1, tx: m.tx, hashscan: `https://hashscan.io/testnet/transaction/${m.tx.replace("@", "-").replace(/\.(\d{9})$/, "-$1")}` });
+    assert.deepEqual(v.data, {
+      topic: TOPIC,
+      seq: 1,
+      tx: m.tx,
+      hashscan: `https://hashscan.io/testnet/transaction/${m.tx.replace("@", "-").replace(/\.(\d{9})$/, "-$1")}`,
+      hashscan_topic: `https://hashscan.io/testnet/topic/${TOPIC}`,
+    });
     assert.equal(s.h.store.hcsListingFor("jti-0001")?.seq, "1");
     assert.ok(!s.h.lines.join("\n").includes("jti-0001"), "the jti is never logged");
   });

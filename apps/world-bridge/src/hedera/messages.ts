@@ -6,8 +6,10 @@
  * Long and are converted with .toString() before they go into JSON (as numbers here).
  *
  *   LISTING  the record step: what the seller approved in World App, word for word
- *   INTENT   PB's purchase, submitted before the payment is signed
+ *   INTENT   PB's purchase, submitted before the payment is signed; with the scout's pick (which
+ *            model, the laps it compared, its reason) when PB's scout chose this ghost
  *   RECEIPT  after settlement, once the mirror node shows the transfer
+ *   HOUSE    a BOT batch the house owner approved in World App, word for word, before its rows
  *   SMOKE    hedera:smoke's test message
  *
  * START and END (the Live-run stretch, cut item 1) are not built.
@@ -73,6 +75,23 @@ export interface IntentMessage {
   why: { you: number | null; target: number };
   /** What the buyer book has left today after this purchase, "0.90". */
   left_today: string;
+  /** PB's scout picked this ghost: which model (null for the board's rule), the laps, the reason. */
+  scout?: IntentScout;
+}
+
+export interface IntentScout {
+  id: string;
+  by: "model" | "rule";
+  model: string | null;
+  /** The lap the reason is about (null when there were no laps to compare). */
+  lap: number | null;
+  /** YOU's and the ghost's lap splits, in frames. */
+  you: number[];
+  it: number[];
+  /** "model": the model's own sentence passed the fact check; "template": ours. */
+  text: "model" | "template";
+  /** The reason the console showed, at most 110 printable ASCII characters. */
+  why: string;
 }
 
 export function intentMessage(m: IntentMessage): Uint8Array {
@@ -90,8 +109,39 @@ export function intentMessage(m: IntentMessage): Uint8Array {
     amount: m.amount,
     asset: m.asset,
     why: { you: m.why.you, target: m.why.target },
+    ...(m.scout
+      ? {
+          scout: {
+            id: m.scout.id,
+            by: m.scout.by,
+            model: m.scout.model,
+            lap: m.scout.lap,
+            you: m.scout.you,
+            it: m.scout.it,
+            text: m.scout.text,
+            why: m.scout.why,
+          },
+        }
+      : {}),
     left_today: m.left_today,
   });
+}
+
+export interface HouseMessage {
+  batch: string;
+  /** HOUSE_OWNER_BOOK: whose World approval published it. */
+  book: string;
+  game: string;
+  n: number;
+  /** "0.10" */
+  price: string;
+  pay_to: string;
+  /** The text World App showed, word for word. */
+  action: string;
+}
+
+export function houseMessage(m: HouseMessage): Uint8Array {
+  return encode({ v: 1, t: "HOUSE", batch: m.batch, book: m.book, game: m.game, n: m.n, price: m.price, pay_to: m.pay_to, action: m.action });
 }
 
 export interface ReceiptMessage {

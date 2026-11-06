@@ -8,6 +8,12 @@
  *   approved text; absent: not for sale) and `hcs` (`<topic>/<sequence number>` of the LISTING
  *   message; absent when Hedera was off). Rows written before them still fit the schema.
  *
+ * Splits and the house (scout and pivot): a run row may carry its lap splits, `s1`..`s4` (u64,
+ * indexed, contiguous from s1, summing to `frames`) with `split_kind` "lap", and a BOT row carries
+ * `gen` (how the log was made). A listing has exactly one of `book` (a person's World-approved
+ * listing) and `label` (the house's: `human` false, `pay_to` the house account). Every column added
+ * here is optional, so every row written before still fits.
+ *
  * The anypercent.smoke.* twins have the same columns; only `npm run arkiv:smoke` writes them, with a
  * one-hour expiry, and deletes them again.
  *
@@ -49,6 +55,12 @@ function runColumns() {
     tool: str(),
     log: bytes().optional(),
     log_enc: bytes().optional(),
+    s1: u64().indexed().optional(),
+    s2: u64().indexed().optional(),
+    s3: u64().indexed().optional(),
+    s4: u64().indexed().optional(),
+    split_kind: str().optional(),
+    gen: str().optional(),
   };
 }
 
@@ -61,7 +73,8 @@ function listingColumns() {
     log_h: str().indexed(),
     price: dec().indexed(),
     seller: str().indexed(),
-    book: str().indexed(),
+    book: str().indexed().optional(),
+    label: str().optional(),
     human: bool().indexed(),
     pay_to: str().indexed().optional(),
     hcs: str().optional(),
@@ -100,6 +113,12 @@ export const RUN_TYPES: Record<string, { type: string; required: boolean }> = {
   tool: { type: "str", required: true },
   log: { type: "bytes", required: false },
   log_enc: { type: "bytes", required: false },
+  s1: { type: "u64", required: false },
+  s2: { type: "u64", required: false },
+  s3: { type: "u64", required: false },
+  s4: { type: "u64", required: false },
+  split_kind: { type: "str", required: false },
+  gen: { type: "str", required: false },
 };
 export const LISTING_TYPES: Record<string, { type: string; required: boolean }> = {
   run: { type: "key", required: true },
@@ -109,11 +128,17 @@ export const LISTING_TYPES: Record<string, { type: string; required: boolean }> 
   log_h: { type: "str", required: true },
   price: { type: "dec", required: true },
   seller: { type: "str", required: true },
-  book: { type: "str", required: true },
+  book: { type: "str", required: false },
+  label: { type: "str", required: false },
   human: { type: "bool", required: true },
   pay_to: { type: "str", required: false },
   hcs: { type: "str", required: false },
 };
+
+/** The split columns, in order. */
+export const SPLIT_COLUMNS = ["s1", "s2", "s3", "s4"] as const;
+/** The one kind of split this build writes: MDGP's laps. */
+export const SPLIT_KIND = "lap";
 
 /** Flags and expiry, by entity (spec: Entities). */
 export const RUN_FLAGS = { readonly: true, permissionlessExtension: true } as const;

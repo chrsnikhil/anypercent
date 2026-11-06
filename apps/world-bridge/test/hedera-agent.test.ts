@@ -66,7 +66,9 @@ describe("PB buys: the happy path", () => {
     assert.equal(v.failure, null);
     const receipt = v.data.receipt as string;
     assert.match(receipt, new RegExp(`^${FEE_PAYER.replaceAll(".", "\\.")}@\\d+\\.\\d{9}$`));
-    assert.deepEqual(v.data, { receipt, hashscan: `https://hashscan.io/testnet/transaction/${txDash(receipt)}`, late: false });
+    assert.equal(v.data.receipt, receipt);
+    assert.equal(v.data.hashscan, `https://hashscan.io/testnet/transaction/${txDash(receipt)}`);
+    assert.equal(v.data.late, false);
     assert.deepEqual(h.fac.ops(), ["verify", "settle"]);
     assert.equal(h.signs.count, 1);
 
@@ -103,6 +105,14 @@ describe("PB buys: the happy path", () => {
       run: h.run,
       mirror: "SUCCESS",
       late: false,
+    });
+    // After done the view keeps answering, with INTENT's and RECEIPT's places on the topic.
+    assert.deepEqual(h.agent.view(v.id)!.data, {
+      receipt,
+      hashscan: `https://hashscan.io/testnet/transaction/${txDash(receipt)}`,
+      late: false,
+      intent: { seq: Number(intent.seq), tx: intent.tx, hashscan: `https://hashscan.io/testnet/transaction/${txDash(intent.tx)}` },
+      receipt_msg: { seq: Number(rc.seq), tx: rc.tx, hashscan: `https://hashscan.io/testnet/transaction/${txDash(rc.tx)}` },
     });
     const p = h.store.purchaseFor(purchaseKey(h.buyer.book, "MDGP", h.seller.book, h.run))!;
     assert.equal(p.state, "settled");

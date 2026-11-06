@@ -27,13 +27,21 @@
  * record step put a LISTING on HCS for this approval, `hcs` = "<topic>/<seq>". Publish never needs
  * a LISTING. A relist whose `pay_to` differs from the run's live listing writes a new listing and
  * deletes the old one in the same batch, so a run listed before payouts existed can be put up for sale.
+ *
+ * Splits: for a game in SPLIT_GAMES the run row also carries its lap splits (`s1`..`sN`,
+ * `split_kind` "lap") from `arcade_splits`, written only when they add up to the replayed time and
+ * come from the same replay (the same final hash). A missing tool, an error or a disagreement writes
+ * the run without splits and logs why: splits never fail a publish.
+ *
+ * An approval spent on an owner op (`used_for`: a console link or release, a house batch) is
+ * ls_reused here. The done view carries explorer links for the transaction and both rows.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { BOOK_RE } from "../approvals.js";
 import { ACCOUNT_RE } from "../config.js";
 import type { Store } from "../store.js";
-import { ArkivError, type ArkivPort, type CreateSpec, type ListingValues, type RunValues } from "./client.js";
-import { CheckerError, LOG_MAX, LOG_MIN, parseHeader, verdict, type CheckerPort } from "./checker.js";
+import { ArkivError, splitValues, type ArkivPort, type CreateSpec, type ListingValues, type RunValues } from "./client.js";
+import { CheckerError, LOG_MAX, LOG_MIN, parseHeader, splitsVerdict, verdict, type CheckerPort, type SplitsPort } from "./checker.js";
 import { encryptGhost, sha256Hex } from "./ghost.js";
 import { GAME_IDS, LISTING_DAYS, LISTING_FLAGS, RUN_FLAGS } from "./schema.js";
 
@@ -68,6 +76,10 @@ export interface PublisherOptions {
   ghostSecret: string;
   /** Whether a new job may start (config complete, right chain, funded checker). Default: yes. */
   gate?: WriteGate;
+  /** The lap-splits tool (absent: runs are written without splits). */
+  splits?: SplitsPort | null;
+  /** Explorer links for the done view (absent: no `explorer` in it). */
+  explorer?: { tx(hash: string | null): string | null; entity(key: string | null): string | null } | null;
   now?: () => number;
   log?: (line: string) => void;
   /** How long a job is held for repeat POSTs and GETs (1 h). */
@@ -249,7 +261,9 @@ export class Publisher {
   }
 
   private done(job: Job, result: { run: string; listing: string; tx: string | null }, note = ""): void {
-    job.view = { stage: "done", ok: true, failure: null, data: { run: result.run, listing: result.listing, tx: result.tx } };
+    const ex = this.opts.explorer;
+    const explorer = ex ? { explorer: { tx: ex.tx(result.tx), run: ex.entity(result.run), listing: ex.entity(result.listing) } } : {};
+    job.view = { stage: "done", ok: true, failure: null, data: { run: result.run, listing: result.listing, tx: result.tx, ...explorer } };
     this.opts.log?.(
       `arkiv publish ${this.what(job.body)}: run ${result.run} listing ${result.listing}${result.tx ? ` tx ${result.tx}` : ""}${note}`,
     );
@@ -273,6 +287,7 @@ export class Publisher {
       return this.fail(job, "ls_expired", "approval older than 24 h");
     }
     if (rec.book !== b.book) return this.fail(job, "ls_wrong", "approved for another book");
+    if (rec.used_for !== undefined) return this.fail(job, "ls_reused", "approval already spent on an owner op");
     if (createHash("sha256").update(b.action).digest("hex") !== rec.action_sha) {
       return this.fail(job, "ls_mismatch", "not the text World App showed");
     }
@@ -288,10 +303,13 @@ export class Publisher {
 
     // 5. The replay: the checker's own time, or nothing.
     let frames: number;
+    let finalHash: number | undefined;
     try {
-      const v = verdict(b.game, await checker.replay(b.game, b.logH, b.log));
+      const replayed = await checker.replay(b.game, b.logH, b.log);
+      const v = verdict(b.game, replayed);
       if (!v.ok) return this.fail(job, "ls_publish_fail", `replay refused: ${v.why}`);
       frames = v.frames;
+      finalHash = replayed.final_hash;
     } catch (err) {
       const why = err instanceof CheckerError ? err.message : "error";
       return this.fail(job, "ls_publish_fail", `replay tool: ${why}`);
@@ -310,6 +328,7 @@ export class Publisher {
     } catch {
       return this.fail(job, "ls_publish_fail", "could not hash the replay tool");
     }
+    const splits = await this.splitsFor(b, frames, finalHash);
 
     const run: CreateSpec<RunValues> = {
       values: {
@@ -325,6 +344,7 @@ export class Publisher {
         credential: book.credential,
         tool,
         log_enc: encryptGhost(this.opts.ghostSecret, b.logH, b.log),
+        ...splitValues(splits),
       },
       flags: { ...RUN_FLAGS },
       expiry: { kind: "atDate", date: this.opts.runExpiry, atLeastDays: 1 },
@@ -400,6 +420,22 @@ export class Publisher {
       // 10. Done.
       return this.done(job, outcome.w);
     });
+  }
+
+  /** The run's lap splits from arcade_splits, or null (logged): splits never fail a publish. */
+  private async splitsFor(b: Body, frames: number, finalHash: number | undefined): Promise<number[] | null> {
+    const port = this.opts.splits;
+    if (!port || !port.games.includes(b.game)) return null;
+    const note = (why: string) => {
+      this.opts.log?.(`arkiv publish ${this.what(b, frames)}: splits not written (${why})`);
+      return null;
+    };
+    try {
+      const v = splitsVerdict(await port.splits(b.game, b.logH, b.log), frames, finalHash);
+      return v.ok ? v.splits : note(v.why);
+    } catch (err) {
+      return note(`splits tool: ${err instanceof CheckerError ? err.message : "error"}`);
+    }
   }
 
   /** Forget jobs an hour after they were made (or last retried), unless still running. */

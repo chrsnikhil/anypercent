@@ -53,7 +53,19 @@ export type ProofResult =
   | { ok: false; kind: "check"; check: ProofCheck }
   /** The portal refused it. `canonicals`: the bound items' nullifiers, for naming a book on a repeat. */
   | { ok: false; kind: "portal"; status: number; body: PortalError | undefined; canonicals: string[] }
-  | { ok: false; kind: "network" };
+  | { ok: false; kind: "network" }
+  /** The caller's beforePortal hook stopped it: the portal was never called. */
+  | { ok: false; kind: "stopped" };
+
+/**
+ * Optional hooks. `beforePortal` sees the bound items' canonical nullifiers (uniqueness proofs only)
+ * after every local check and before the portal call; answering "stop" ends the check there, so the
+ * portal never sees the proof and the person's nullifier is not spent (the console binding,
+ * idkit.ts: id_taken).
+ */
+export interface ProofHooks {
+  beforePortal?: (canonicals: string[]) => "stop" | "go";
+}
 
 type Item = {
   identifier?: unknown;
@@ -89,6 +101,7 @@ export async function checkProof(
   signal: string,
   result: unknown,
   mode: ProofKind = { kind: "uniqueness" },
+  hooks: ProofHooks = {},
 ): Promise<ProofResult> {
   const r = (result ?? {}) as Record<string, unknown>;
   const check = (c: ProofCheck): ProofResult => ({ ok: false, kind: "check", check: c });
@@ -111,6 +124,11 @@ export async function checkProof(
   const items = (Array.isArray(r.responses) ? r.responses : []) as Item[];
   const bound = items.filter((it) => sameField(it.signal_hash, expected));
   if (bound.length === 0) return check("signal");
+
+  if (hooks.beforePortal && mode.kind === "uniqueness") {
+    const canonicals = bound.map(canonicalOf).filter((c): c is string => c !== null);
+    if (hooks.beforePortal(canonicals) === "stop") return { ok: false, kind: "stopped" };
+  }
 
   let status: number;
   let body: Record<string, unknown> | undefined;

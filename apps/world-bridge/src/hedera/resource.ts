@@ -25,7 +25,7 @@
  */
 import { createHash } from "node:crypto";
 import { decryptGhost } from "../arkiv/ghost.js";
-import type { ArkivPort } from "../arkiv/client.js";
+import { sellerName, type ArkivPort } from "../arkiv/client.js";
 import { fmtTime } from "../arkiv/publish.js";
 import { KEY_RE } from "../arkiv/queries.js";
 import type { SaleRecord, Store } from "../store.js";
@@ -53,7 +53,7 @@ export interface Offer {
   run: string;
   log_h: string;
   game: string;
-  /** The seller's book. */
+  /** The seller's book, or the house's BOT label. */
   seller: string;
   pay_to: string;
   price_c: number;
@@ -92,15 +92,19 @@ export class ArkivOffers implements OfferSource {
     if (!Number.isInteger(priceC) || priceC <= 0) return null;
     const sealed = r.log_enc;
     const secret = this.ghostSecret;
+    const seller = sellerName(l);
+    if (!seller) return null;
+    // A house (BOT) listing says so in the paywall's own description.
+    const made = l.book === undefined ? " (generated)" : "";
     return {
       listing: l.key,
       run: r.key,
       log_h: l.log_h,
       game: l.game,
-      seller: l.book,
+      seller,
       pay_to: l.pay_to,
       price_c: priceC,
-      description: `Any% ghost: ${r.title ?? l.game} ${fmtTime(Number(l.frames))} by ${l.book}`,
+      description: `Any% ghost: ${r.title ?? l.game} ${fmtTime(Number(l.frames))} by ${seller}${made}`,
       open: () => decryptGhost(secret, r.log_h, sealed),
     };
   }

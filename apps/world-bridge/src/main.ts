@@ -10,6 +10,11 @@
  * reads the mirror (HEDERA_USDC once, the agent's USDC, the operator's HBAR) and the
  * facilitators' /supported, so /health never waits on Hedera. With Hedera payments configured,
  * /arkiv/ghost takes only receipts the paywall settled; mock receipts are refused.
+ *
+ * Scout and pivot: consoles are bound to one record book (src/consoles.ts); run rows carry lap
+ * splits (CHECKER_SPLITS); PB's scout picks which listed ghost to buy (src/scout/*, Groq when
+ * GROQ_API_KEY is set, else the board's rule); the house publishes BOT batches after its owner's
+ * World approval (src/arkiv/house.ts). /health adds "console", "splits", "scout" and "house".
  */
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -18,6 +23,7 @@ import { AgentPass } from "./agentpass.js";
 import type { ApprovalProvider } from "./approvals.js";
 import { RealChecker } from "./arkiv/checker.js";
 import { SdkArkiv } from "./arkiv/client.js";
+import { HouseService } from "./arkiv/house.js";
 import { MockPayments, type PaymentCheck } from "./arkiv/payments.js";
 import { Publisher } from "./arkiv/publish.js";
 import { checksum } from "./arkiv/queries.js";
@@ -26,15 +32,20 @@ import {
   arkivProblems,
   arkivRpcUrl,
   chooseApprovals,
+  explorerLinks,
+  groqKeyReady,
   HEDERA_NETWORK_CAIP2,
   hederaPayProblems,
   hederaRecordProblems,
+  houseProblems,
   idkitReady,
   loadConfig,
   PRIVATE_KEY_RE,
   runExpiry,
   secretReady,
+  splitsReady,
 } from "./config.js";
+import { Consoles } from "./consoles.js";
 import { createClientHederaSigner } from "@x402/hedera";
 import { Agent } from "./hedera/agent.js";
 import { parseDerKey, RestMirror, SdkHedera } from "./hedera/net.js";
@@ -46,7 +57,9 @@ import { Facilitators, HttpFacilitator, PaymentBuilder } from "./hedera/x402.js"
 import { IdkitSessions, realIdkitDeps } from "./idkit.js";
 import { IdkitApprovals } from "./idkit-approvals.js";
 import { WorldIdp } from "./oidc.js";
-import { buildServer, makeHealth } from "./server.js";
+import { GroqClient } from "./scout/groq.js";
+import { ScoutService } from "./scout/scout.js";
+import { buildServer, makeHealth, pivotHealth } from "./server.js";
 import { Store } from "./store.js";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -61,20 +74,6 @@ const IDKIT_TTL_S = 300;
 
 // One request builder for sign-ups and IDKit approvals (proof_of_human through .constraints(), sessions).
 const idkitDeps = store && idkitReady(cfg) ? realIdkitDeps(cfg, IDKIT_TTL_S) : null;
-
-const idkit =
-  store && idkitDeps
-    ? new IdkitSessions({
-        deps: idkitDeps,
-        store,
-        secret: cfg.serverSecret,
-        action: cfg.world.action,
-        environment: cfg.world.environment,
-        signupSession: cfg.world.signupSession,
-        ttlS: IDKIT_TTL_S,
-        log,
-      })
-    : null;
 
 // Listing approvals: APPROVALS=idkit|agentpass (default: idkit when only IDKit is configured).
 const choice = chooseApprovals(cfg);
@@ -113,6 +112,24 @@ if (store && idp) {
   });
 }
 
+// One console, one person: bindings at sign-up, and the owner's link / release on a World approval.
+const consoles = store ? new Consoles({ store, secret: cfg.serverSecret, approvals, log }) : null;
+
+const idkit =
+  store && idkitDeps
+    ? new IdkitSessions({
+        deps: idkitDeps,
+        store,
+        secret: cfg.serverSecret,
+        action: cfg.world.action,
+        environment: cfg.world.environment,
+        signupSession: cfg.world.signupSession,
+        ttlS: IDKIT_TTL_S,
+        consoles,
+        log,
+      })
+    : null;
+
 // ---- is World reachable? Probed in the background so /health never waits on the network. ----
 let reachable = false;
 async function probe(): Promise<void> {
@@ -147,11 +164,22 @@ try {
 }
 const checkerAddress = arkivPort?.checker ? checksum(arkivPort.checker) : null;
 const expiry = runExpiry(ak);
+const links = explorerLinks(cfg.explorer);
+// The replay tool and, beside it, the splits tool (same runner, same data/checker directory).
+const realChecker = new RealChecker({
+  replay: ak.replay,
+  wsl: ak.wsl,
+  dir: join(cfg.dataDir, "checker"),
+  ...(splitsReady(cfg) ? { splits: cfg.splits.tool, splitGames: cfg.splits.games } : {}),
+});
+const splitsPort = splitsReady(cfg) ? realChecker : null;
 const publisher: Publisher | null =
   store && arkivPort && checkerKey && expiry && arkivIssues.length === 0
     ? new Publisher({
         arkiv: arkivPort,
-        checker: new RealChecker({ replay: ak.replay, wsl: ak.wsl, dir: join(cfg.dataDir, "checker") }),
+        checker: realChecker,
+        splits: splitsPort,
+        explorer: links,
         store,
         season: ak.season,
         runExpiry: expiry,
@@ -231,6 +259,9 @@ const agent =
         bookDayC: hc.bookDayC,
         agentDayC: hc.agentDayC,
         feePayersPin: hc.feePayers,
+        houseId: cfg.house.id,
+        consoles,
+        scouts: { held: (id: string) => scout?.held(id) },
         gate: () => hedera.payGate(),
         log,
       })
@@ -247,6 +278,7 @@ const hedera: HederaService = new HederaService({
   agent,
   recorder,
   resource,
+  houseId: cfg.house.id,
   log,
 });
 // With Hedera payments on, a ghost's key is released only for a sale the paywall settled.
@@ -268,15 +300,73 @@ const arkiv: ArkivService = new ArkivService({
   problems: arkivIssues,
   boardFile: join(appDir, "public", "board.html"),
   snapshotFile: resolve(appDir, "..", "..", "arkiv", "snapshot.json"),
+  explorer: cfg.explorer,
   log,
 });
 void arkiv.probe();
 const arkivTimer = setInterval(() => void arkiv.probe(), 30_000);
 arkivTimer.unref();
 
-const health = () => ({ ...makeHealth(idkit, approvals, reachable), ...arkiv.health(), ...hedera.health() });
+// ---- PB's scout: which listed ghost to buy (Groq picks among code-eligible candidates, or the rule) ----
+const groq = groqKeyReady(cfg)
+  ? new GroqClient({ apiKey: cfg.groq.apiKey, model: cfg.groq.model, base: cfg.groq.base, timeoutMs: Number.isInteger(cfg.groq.timeoutMs) && cfg.groq.timeoutMs > 0 ? cfg.groq.timeoutMs : 6000 })
+  : null;
+const scout: ScoutService | null =
+  store && arkivPort && arkivPort.checker && agent
+    ? new ScoutService({
+        store,
+        arkiv: arkivPort,
+        checker: realChecker,
+        splits: splitsPort,
+        agent,
+        groq,
+        consoles,
+        season: ak.season,
+        priceC: ak.priceC,
+        houseId: cfg.house.id,
+        bookDayC: hc.bookDayC,
+        reasonMax: Number.isInteger(cfg.groq.reasonMax) && cfg.groq.reasonMax > 0 ? cfg.groq.reasonMax : 110,
+        on: () => hedera.health().hedera_pay && arkiv.health().arkiv === "ok",
+        log,
+      })
+    : null;
 
-const server = buildServer({ health, idkit, approvals, arkiv, hedera, log });
+// ---- the house's BOT batches (written only after HOUSE_OWNER_BOOK's World approval) ----
+const houseIssues = houseProblems(cfg);
+const house: HouseService | null =
+  store && arkivPort && checkerKey && expiry && houseIssues.length === 0
+    ? new HouseService({
+        store,
+        arkiv: arkivPort,
+        checker: realChecker,
+        splits: splitsPort,
+        approvals,
+        hedera: hcs,
+        topic: hc.topicId,
+        houseId: cfg.house.id,
+        ownerBook: cfg.house.ownerBook,
+        maxBatch: cfg.house.maxBatch,
+        txPairs: cfg.house.txPairs,
+        season: ak.season,
+        runExpiry: expiry,
+        priceC: ak.priceC,
+        ghostSecret: ak.ghostSecret,
+        secret: cfg.serverSecret,
+        problems: () => houseIssues,
+        gate: () => arkiv.gate(),
+        explorer: links,
+        log,
+      })
+    : null;
+
+const health = () => ({
+  ...makeHealth(idkit, approvals, reachable),
+  ...arkiv.health(),
+  ...hedera.health(),
+  ...pivotHealth({ consoles, splits: splitsReady(cfg), scout, house, arkivWrites: arkiv.health().arkiv_writes }),
+});
+
+const server = buildServer({ health, idkit, approvals, arkiv, hedera, consoles, scout, house, log });
 server.on("error", (err: NodeJS.ErrnoException) => {
   if (err.code === "EADDRINUSE") log(`port ${cfg.port} is already in use (another bridge running?)`);
   else if (err.code === "EADDRNOTAVAIL") log(`HOST ${cfg.host} is not an address of this machine right now (hotspot off?)`);
@@ -299,11 +389,18 @@ server.listen(cfg.port, cfg.host, () => {
       `payments ${resource ? "configured" : `off until set: ${payProblems.join(", ") || "a parsable key"}`}, ` +
       `record ${recorder ? "configured" : `off until set: ${recordProblems.join(", ") || "a parsable key"}`}`,
   );
+  log(
+    `pivot: consoles ${consoles ? "on" : "off"}, splits ${splitsReady(cfg) ? `${cfg.splits.games.join(",")} via ${cfg.splits.tool}` : "off"}, ` +
+      `scout ${scout ? (groq ? `model ${cfg.groq.model}` : "rule (no GROQ_API_KEY)") : "off (needs Arkiv and Hedera payments)"}, ` +
+      `house ${house ? `${cfg.house.id} for ${cfg.house.ownerBook}` : `off until set: ${houseIssues.join(", ")}`}`,
+  );
 });
 
 function shutdown(): void {
   idkit?.stopAll();
   approvals?.stopAll();
+  consoles?.stopAll();
+  house?.stopAll();
   hcs?.close();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1000).unref();

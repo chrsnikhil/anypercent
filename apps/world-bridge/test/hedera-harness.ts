@@ -21,7 +21,7 @@ import { buildServer, makeHealth, type ServerDeps } from "../src/server.js";
 import { Store } from "../src/store.js";
 import { FakeFacilitator } from "./fake-facilitator.js";
 import { FakeArkiv, makeLog } from "./fake-arkiv.js";
-import { AGENT, fakeClock, FakeHedera, FakeMirror, SELLER_ACCT, TOPIC, USDC } from "./fake-hedera.js";
+import { AGENT, fakeClock, FakeHedera, FakeMirror, HOUSE, SELLER_ACCT, TOPIC, USDC } from "./fake-hedera.js";
 import { SECRET, tempDir } from "./helpers.js";
 
 export const GHOST = "5e".repeat(32);
@@ -37,6 +37,9 @@ export interface HarnessOptions {
   /** Point the agent at another paywall (an evil one). */
   resourceBase?: string;
   extraFacilitators?: FacilitatorPort[];
+  /** The agent's console registry and held scout picks (absent: none). */
+  consoles?: AgentOptions["consoles"];
+  scouts?: AgentOptions["scouts"];
 }
 
 export async function hedera(opts: HarnessOptions = {}) {
@@ -125,6 +128,9 @@ export async function hedera(opts: HarnessOptions = {}) {
     bookDayC: opts.bookDayC ?? 100,
     agentDayC: opts.agentDayC ?? 500,
     feePayersPin: opts.feePayersPin ?? [],
+    houseId: HOUSE,
+    consoles: opts.consoles ?? null,
+    scouts: opts.scouts ?? null,
     gate: () => svc?.payGate() ?? null,
     now: clock.now,
     sleep: clock.sleep,
@@ -144,6 +150,7 @@ export async function hedera(opts: HarnessOptions = {}) {
     agent,
     recorder,
     resource,
+    houseId: HOUSE,
     log,
   });
   deps.hedera = svc;

@@ -5,7 +5,12 @@
  * - it lacks a required column it was asked for, or carries one with the wrong type;
  * - its creator is not the pinned checker (when a checker is pinned);
  * - its `arkiv.schema` is not the expected one;
- * - (runs, when both ghost columns were asked for) it has neither or both of `log` and `log_enc`.
+ * - (runs, when both ghost columns were asked for) it has neither or both of `log` and `log_enc`;
+ * - (listings, when both were asked for) it has neither or both of `book` and `label`.
+ *
+ * A run's lap splits (`s1`..`s4`, `split_kind`) are read with `splitsOf`: splits that do not check
+ * out (not contiguous from s1, another kind, a zero, a sum other than `frames`) are treated as absent
+ * and the row is kept.
  *
  * JSON encodings (spec: Queries): u64 and u256 are 0x quantities, i32 a number, bool bare, dec and
  * str strings, key, addr and bytes 0x hex.
@@ -114,10 +119,36 @@ export function decodeRow(
   if (asked.includes("log") && asked.includes("log_enc") && (values.log === undefined) === (values.log_enc === undefined)) {
     return { dropped: "needs exactly one of log and log_enc" };
   }
+  if ("seller" in spec && asked.includes("book") && asked.includes("label") && (values.book === undefined) === (values.label === undefined)) {
+    return { dropped: "needs exactly one of book and label" };
+  }
   let expiresAt: bigint | null = null;
   if (typeof raw.expiresAt === "string" && /^0x[0-9a-fA-F]+$/.test(raw.expiresAt)) expiresAt = BigInt(raw.expiresAt);
   const owner = typeof raw.owner === "string" ? raw.owner.toLowerCase() : null;
   return { row: { key: raw.key.toLowerCase(), creator, owner, expiresAt, values } };
+}
+
+/**
+ * A run's lap splits in frames, or null when it has none that check out: s1..sN contiguous from s1
+ * (N <= 4), `split_kind` "lap", every split above 0 and their sum equal to `frames`.
+ */
+export function splitsOf(values: Record<string, Value | undefined>): number[] | null {
+  const frames = values.frames;
+  if (typeof frames !== "bigint") return null;
+  const out: number[] = [];
+  let ended = false;
+  for (const name of ["s1", "s2", "s3", "s4"]) {
+    const v = values[name];
+    if (v === undefined) {
+      ended = true;
+      continue;
+    }
+    if (ended || typeof v !== "bigint" || v <= 0n || v > 0xffffffffn) return null;
+    out.push(Number(v));
+  }
+  if (out.length === 0) return null;
+  if (values.split_kind !== "lap") return null;
+  return BigInt(out.reduce((a, b) => a + b, 0)) === frames ? out : null;
 }
 
 /** A page of raw rows, checked: the rows that fit, and how many were dropped (and why). */

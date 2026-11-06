@@ -22,10 +22,20 @@
  *                                the Hedera module (src/hedera/service.ts); /health then adds
  *                                "hedera", "hedera_pay" and "hedera_record"
  *
+ *   GET  /console/{console}      {"tag", "book", "state", "credential"}; registers an unseen console
+ *   POST /console/op             {"op": "link"|"release", "console": tag, "book"?} -> {"id", "action",
+ *                                "approval": {"id", "qr", "code", "expires_s"}}  (owner CLIs)
+ *   GET  /console/op/{id}        {"stage", "ok", "failure", "data"};  POST /console/op/{id}/cancel
+ *   POST /scout, GET /scout/{id} PB's scout (src/scout/scout.ts)
+ *   POST /house/batch, POST /house/publish, GET /house/publish/{id}, POST /house/publish/{id}/cancel
+ *                                the house's BOT batches (src/arkiv/house.ts; owner CLI only)
+ *
  * After a cancel every GET answers {"stage": "done", "ok": false, "failure": "id_rejected" |
  * "ls_denied", "data": {}}, and nothing the phone sends later makes or binds anything.
  *
- * Bodies are limited to 4 KiB, except POST /arkiv/publish (192 KiB: it carries the run's log).
+ * Bodies are limited to 4 KiB, except POST /arkiv/publish and POST /house/batch (192 KiB: they carry
+ * logs) and POST /scout (96 KiB). Errors on /console/* carry failure id_offline, on /scout* buy_down;
+ * the /house/* routes answer {"error", "detail"}.
  * /x402/ghost answers the x402 exchange itself (402 with PAYMENT-REQUIRED, 200 with
  * PAYMENT-RESPONSE, 404 {"error": "not_for_sale"}, 503); a payment header is never logged.
  *
@@ -37,7 +47,10 @@
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { BOOK_RE, StartFailure, type ApprovalProvider, type ApprovalsKind } from "./approvals.js";
+import { HouseRefused, MAX_HOUSE_BODY, type HouseView } from "./arkiv/house.js";
 import { MAX_PUBLISH_BODY, type PublishView } from "./arkiv/publish.js";
+import { ConsoleOpRefused, type ConsoleView, type OpView } from "./consoles.js";
+import { MAX_SCOUT_BODY, ScoutRefused, type ScoutView } from "./scout/scout.js";
 import { RouteError, type ArkivHealth } from "./arkiv/service.js";
 import { HederaRouteError, type HederaHealth } from "./hedera/service.js";
 import type { BuyView } from "./hedera/agent.js";
@@ -62,8 +75,47 @@ export function makeHealth(idkit: unknown | null, approvals: ApprovalProvider | 
   };
 }
 
+/** The scout-and-pivot fields of /health. */
+export interface PivotHealth {
+  /** Consoles are bound (one console, one person). */
+  console: boolean;
+  /** The splits tool is configured (CHECKER_SPLITS). */
+  splits: boolean;
+  /** PB's scout: "model" (Groq), "rule" (no key, or the key refused), "off" (Arkiv or Hedera pay off). */
+  scout: "model" | "rule" | "off";
+  /** House batches can be published (house account, owner book, Arkiv writes). */
+  house: boolean;
+}
+
+/** The pivot fields from what is wired: house is on only while Arkiv writes are. */
+export function pivotHealth(w: { consoles: unknown | null; splits: boolean; scout: { mode(): "model" | "rule" | "off" } | null; house: unknown | null; arkivWrites: boolean }): PivotHealth {
+  return { console: w.consoles !== null, splits: w.splits, scout: w.scout?.mode() ?? "off", house: w.house !== null && w.arkivWrites };
+}
+
 /** /health with the Arkiv and Hedera modules' fields when they are wired. */
-export type FullHealth = Health & Partial<ArkivHealth> & Partial<HederaHealth>;
+export type FullHealth = Health & Partial<ArkivHealth> & Partial<HederaHealth> & Partial<PivotHealth>;
+
+/** What the routes need of the console registry (Consoles). */
+export interface ConsoleRoutes {
+  view(id: string): ConsoleView;
+  startOp(body: Record<string, unknown>): Promise<{ id: string; action: string; approval: Record<string, unknown> }>;
+  opView(id: string): OpView | undefined;
+  cancelOp(id: string): boolean;
+}
+
+/** What the routes need of the scout (ScoutService). */
+export interface ScoutRoutes {
+  start(body: Record<string, unknown>): { id: string; expires_s: number };
+  view(id: string): ScoutView | undefined;
+}
+
+/** What the routes need of the house (HouseService). */
+export interface HouseRoutes {
+  stage(body: Record<string, unknown>): Promise<Record<string, unknown>>;
+  publish(body: Record<string, unknown>): Promise<{ id: string; action: string; approval: Record<string, unknown> | null }>;
+  view(id: string): HouseView | undefined;
+  cancel(id: string): boolean;
+}
 
 /** What the routes need of the Arkiv module (ArkivService). */
 export interface ArkivRoutes {
@@ -97,6 +149,12 @@ export interface ServerDeps {
   arkiv?: ArkivRoutes | null;
   /** The Hedera routes; null or absent: they answer 503. */
   hedera?: HederaRoutes | null;
+  /** One console, one person; null or absent: /console/* answers 503. */
+  consoles?: ConsoleRoutes | null;
+  /** PB's scout; null or absent: /scout answers 503. */
+  scout?: ScoutRoutes | null;
+  /** The house's BOT batches; null or absent: /house/* answers 503. */
+  house?: HouseRoutes | null;
   log?: (line: string) => void;
 }
 
@@ -232,6 +290,9 @@ async function route(deps: ServerDeps, req: IncomingMessage): Promise<[number, u
   }
 
   if (parts[0] === "arkiv") return arkivRoute(deps, req, method, parts);
+  if (parts[0] === "console") return consoleRoute(deps, req, method, parts);
+  if (parts[0] === "scout") return scoutRoute(deps, req, method, parts);
+  if (parts[0] === "house") return houseRoute(deps, req, method, parts);
   if (parts[0] === "hedera") return hederaRoute(deps, req, method, parts, url);
   if (parts[0] === "x402" && parts[1] === "ghost" && parts.length === 3) {
     const h = deps.hedera ?? null;
@@ -333,6 +394,92 @@ async function hederaRoute(deps: ServerDeps, req: IncomingMessage, method: strin
   throw new HttpError(404, { error: "not_found" });
 }
 
+/** /console/*: failure id_offline (the launcher only GETs; the ops are the owner's CLIs). */
+async function consoleRoute(deps: ServerDeps, req: IncomingMessage, method: string, parts: string[]): Promise<[number, unknown]> {
+  const c = deps.consoles ?? null;
+  const err = (status: number, error: string) => new HttpError(status, { error, failure: "id_offline" });
+  try {
+    if (method === "POST" && parts.length === 2 && parts[1] === "op") {
+      const body = await readJson(req, MAX_BODY, { error: "bad_body", failure: "id_offline" }, 400).catch((e: unknown) => {
+        throw e instanceof HttpError && e.status === 400 ? err(400, "bad_body") : e;
+      });
+      if (!c) throw err(503, "consoles_not_configured");
+      return [200, await c.startOp(body)];
+    }
+    if (method === "GET" && parts.length === 3 && parts[1] === "op") {
+      const v = c?.opView(parts[2]);
+      if (!v) throw err(404, "unknown_id");
+      return [200, v];
+    }
+    if (method === "POST" && parts.length === 4 && parts[1] === "op" && parts[3] === "cancel") {
+      if (!c?.cancelOp(parts[2])) throw err(404, "unknown_id");
+      return [200, { ok: true }];
+    }
+    if (method === "GET" && parts.length === 2) {
+      if (!/^[A-Za-z0-9_-]{16,128}$/.test(parts[1])) throw err(400, "bad_console");
+      if (!c) throw err(503, "consoles_not_configured");
+      return [200, c.view(parts[1])];
+    }
+  } catch (e) {
+    if (e instanceof ConsoleOpRefused) throw err(e.status, e.error);
+    throw e;
+  }
+  throw new HttpError(404, { error: "not_found" });
+}
+
+/** /scout*: failure buy_down. */
+async function scoutRoute(deps: ServerDeps, req: IncomingMessage, method: string, parts: string[]): Promise<[number, unknown]> {
+  const s = deps.scout ?? null;
+  const err = (status: number, error: string) => new HttpError(status, { error, failure: "buy_down" });
+  try {
+    if (method === "POST" && parts.length === 1) {
+      const body = await readJson(req, MAX_SCOUT_BODY, { error: "bad_body", failure: "buy_down" }, 400).catch((e: unknown) => {
+        throw e instanceof HttpError && e.status === 400 ? err(400, "bad_body") : e;
+      });
+      if (!s) throw err(503, "scout_off");
+      return [200, s.start(body)];
+    }
+    if (method === "GET" && parts.length === 2) {
+      const v = s?.view(parts[1]);
+      if (!v) throw err(404, "unknown_id");
+      return [200, v];
+    }
+  } catch (e) {
+    if (e instanceof ScoutRefused) throw err(e.status, e.error);
+    throw e;
+  }
+  throw new HttpError(404, { error: "not_found" });
+}
+
+/** /house/*: the owner's CLI; errors are {error, detail}. */
+async function houseRoute(deps: ServerDeps, req: IncomingMessage, method: string, parts: string[]): Promise<[number, unknown]> {
+  const h = deps.house ?? null;
+  const err = (status: number, error: string, detail?: string) => new HttpError(status, detail ? { error, detail } : { error });
+  try {
+    if (method === "POST" && parts.length === 2 && (parts[1] === "batch" || parts[1] === "publish")) {
+      const max = parts[1] === "batch" ? MAX_HOUSE_BODY : MAX_BODY;
+      const body = await readJson(req, max, { error: "bad_body", detail: "body too large" }, 400).catch((e: unknown) => {
+        throw e instanceof HttpError && e.status === 400 ? err(400, "bad_body", String(e.body.detail ?? "not a JSON object")) : e;
+      });
+      if (!h) throw err(503, "house_not_configured");
+      return [200, parts[1] === "batch" ? await h.stage(body) : await h.publish(body)];
+    }
+    if (method === "GET" && parts.length === 3 && parts[1] === "publish") {
+      const v = h?.view(parts[2]);
+      if (!v) throw err(404, "unknown_id");
+      return [200, v];
+    }
+    if (method === "POST" && parts.length === 4 && parts[1] === "publish" && parts[3] === "cancel") {
+      if (!h?.cancel(parts[2])) throw err(404, "unknown_id");
+      return [200, { ok: true }];
+    }
+  } catch (e) {
+    if (e instanceof HouseRefused) throw err(e.status, e.error, e.detail);
+    throw e;
+  }
+  throw new HttpError(404, { error: "not_found" });
+}
+
 /** "/agentpass/AbC.../cancel" -> "/agentpass/:id/cancel": ids stay out of the log. */
 function shape(path: string): string {
   const parts = path.split("?")[0].split("/");
@@ -340,6 +487,13 @@ function shape(path: string): string {
   if (parts.length >= 4 && parts[1] === "arkiv" && parts[2] === "publish") parts[3] = ":id";
   if (parts.length >= 4 && parts[1] === "hedera" && ["record", "buy", "payto", "sales"].includes(parts[2])) parts[3] = parts[2] === "payto" || parts[2] === "sales" ? ":book" : ":id";
   if (parts.length >= 4 && parts[1] === "x402" && parts[2] === "ghost") parts[3] = ":listing";
+  if (parts.length >= 3 && parts[1] === "console") {
+    if (parts[2] === "op") {
+      if (parts.length >= 4) parts[3] = ":id";
+    } else parts[2] = ":console";
+  }
+  if (parts.length >= 3 && parts[1] === "scout") parts[2] = ":id";
+  if (parts.length >= 4 && parts[1] === "house" && parts[2] === "publish") parts[3] = ":id";
   return parts.join("/");
 }
 

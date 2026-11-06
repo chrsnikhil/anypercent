@@ -2,7 +2,7 @@
   "name": "world-bridge",
   "version": "0.1.0",
   "private": true,
-  "description": "Any% World bridge: IDKit record book + listing approvals, the Arkiv board (checked run rows, listings, the web board), and Hedera (PB pays over x402, receipts on HCS).",
+  "description": "Any% World bridge: IDKit record book + listing approvals and console binding, the Arkiv board (checked run rows with lap splits, listings, BOT batches, the web board), Hedera (PB pays over x402, receipts on HCS) and PB's scout on Groq.",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -23,7 +23,11 @@
     "hedera:smoke": "tsx scripts/hedera-smoke.ts",
     "hedera:agent": "tsx scripts/hedera-agent.ts",
     "hedera:evil402": "tsx scripts/hedera-evil402.ts",
-    "hedera:verify": "tsx scripts/hedera-verify.ts"
+    "hedera:verify": "tsx scripts/hedera-verify.ts",
+    "console:link": "tsx scripts/console-op.ts link",
+    "console:release": "tsx scripts/console-op.ts release",
+    "house:publish": "tsx scripts/house-publish.ts",
+    "scout:smoke": "tsx scripts/scout-smoke.ts"
   },
   "dependencies": {
     "@arkiv-network/sdk": "1.0.1",
@@ -37,6 +41,8 @@
   },
   "devDependencies": {
     "@types/node": "22.19.1",
+    "@types/qrcode": "1.5.6",
+    "qrcode": "1.5.4",
     "tsx": "4.23.15",
     "typescript": "5.9.3"
   }

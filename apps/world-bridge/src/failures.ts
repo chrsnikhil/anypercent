@@ -4,7 +4,12 @@
  * handler has no screen for lands on the closest existing one, and the choice is written next to it.
  */
 
-export const ID_FAILURES = ["id_rejected", "id_expired", "id_nocred", "id_dup", "id_offline"] as const;
+/**
+ * `id_taken` (one console, one person): the console is bound to another record book, so the sign-up
+ * was refused before the portal saw the proof. A launcher from before consoles never gets it: only
+ * a console that sends a console id can be bound.
+ */
+export const ID_FAILURES = ["id_rejected", "id_expired", "id_nocred", "id_dup", "id_offline", "id_taken"] as const;
 export const LS_FAILURES = [
   "ls_denied",
   "ls_expired",

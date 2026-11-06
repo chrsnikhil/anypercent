@@ -7,7 +7,7 @@ import { HederaService } from "../src/hedera/service.js";
 import { Facilitators } from "../src/hedera/x402.js";
 import { buildServer, makeHealth } from "../src/server.js";
 import { FakeFacilitator } from "./fake-facilitator.js";
-import { AGENT, FakeMirror, OPERATOR, SELLER_ACCT, TOPIC, USDC } from "./fake-hedera.js";
+import { AGENT, FakeMirror, HOUSE, OPERATOR, SELLER_ACCT, TOPIC, USDC } from "./fake-hedera.js";
 import { hedera, type Harness } from "./hedera-harness.js";
 
 const OP_KEY = `302e020100300506032b657004220420${"11".repeat(32)}`;
@@ -192,6 +192,7 @@ describe("the Hedera routes", () => {
       fee_payer: "0.0.9185802",
       caps: { max_c: 10, book_day_c: 100, agent_day_c: 500 },
       resource: `${h.base}/x402/ghost/{listing}`,
+      house: HOUSE,
     });
     assert.ok(!/key|secret/i.test(Object.keys(r.json).join(",")));
   });
