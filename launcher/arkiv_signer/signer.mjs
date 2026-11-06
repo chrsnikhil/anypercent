@@ -287,7 +287,7 @@ async function write(w, account, clients) {
     ...(w.replaces ? { deletes: [{ entityKey: w.replaces }] } : {}),
   });
   const made = (res.createdEntities ?? []).map((k) => String(k).toLowerCase());
-  if (made.length !== 1) throw new WriteError(`the node named ${made.length} new entities for one listing (tx ${res.txHash})`, "rpc", res.txHash);
+  if (made.length !== 1) throw new WriteError(`the node named ${made.length} new entities for one listing (tx ${res.txHash})`, "rejected", res.txHash);   // a node bug, not a retryable one
   return { tx: res.txHash, run: w.runKey, listing: made[0] };
 }
 
