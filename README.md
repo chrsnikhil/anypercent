@@ -143,12 +143,12 @@ _Owner: paste the real `PAYMENT-REQUIRED` (decoded) and the settle response from
 
 | What | Id | HashScan |
 |---|---|---|
-| Market topic (no admin key) | _Owner: the topic id (`HEDERA_TOPIC_ID`)_ | `https://hashscan.io/testnet/topic/<id>` |
-| PB's agent account | _Owner: the agent id (`HEDERA_AGENT_ID`)_ | `https://hashscan.io/testnet/account/<id>` |
+| Market topic (no admin key) | `0.0.11332437` | https://hashscan.io/testnet/topic/0.0.11332437 |
+| PB's agent account | `0.0.11332435` | https://hashscan.io/testnet/account/0.0.11332435 |
 | Facilitator | https://x402.org/facilitator, fee payer `0.0.9185802` | https://hashscan.io/testnet/account/0.0.9185802 |
 | Testnet USDC | `0.0.429274` | https://hashscan.io/testnet/token/0.0.429274 |
-| A settled payment | _Owner: the transaction id, checked by `npm run hedera:verify`_ | _link_ |
-| Its INTENT and RECEIPT | _Owner: sequence numbers_ | _links_ |
+| A settled payment (0.10 USDC, PB's agent to ANY-6PS's seller account `0.0.9473064`) | `0.0.9185802@1793930445.643007633` | https://hashscan.io/testnet/transaction/0.0.9185802-1793930445-643007633 |
+| Its INTENT and RECEIPT | #7 and #8 on `0.0.11332437` | https://hashscan.io/testnet/transaction/1793930450.748974293/message, https://hashscan.io/testnet/transaction/1793930457.098249017/message |
 
 Every transaction id shown in the video is in [hedera/transactions.md](hedera/transactions.md).
 
