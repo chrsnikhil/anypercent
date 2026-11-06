@@ -300,11 +300,16 @@ class ArkivSponsors:
         with self._lock:
             self._tried.add(game)
             self._due[game] = self._clock_ms() + REFRESH_MS
-            self._reads[game] = BoardRead(rows=rows, block=block, stale=False)
+            old = self._reads.get(game)
+            same = old is not None and old.rows == rows
+            # Nothing new on the board: the same rows object, so the frame side has nothing to rebuild, and the
+            # cache file nothing to rewrite.
+            self._reads[game] = BoardRead(rows=old.rows if same else rows, block=block, stale=False)
             self._rpc_ok = True
         if dropped:
             log.info("Arkiv %s board: %d rows dropped (not our checker's, or misfit)", game, dropped)
-        self._save_cache()
+        if not same:
+            self._save_cache()
 
     def _read_failed(self, e):
         """Under the lock: an Arkiv read failed. Said once an outage, never with a key or a receipt."""
@@ -532,9 +537,13 @@ class ArkivSponsors:
                 self._reads[game] = BoardRead(rows=rows, block=board["block"], stale=True)
 
     def _save_cache(self):
+        """The boards to state_dir, on the worker, only after a read that changed one; a row is copied field by field
+        (dataclasses.asdict deep-copies, too slow on a Pi), and the lock is held only to take the reads."""
         with self._lock:
-            boards = {game: {"block": read.block, "rows": [dataclasses.asdict(row) for row in read.rows]}
-                      for game, read in self._reads.items()}
+            reads = list(self._reads.items())
+        boards = {game: {"block": read.block, "rows": [{name: getattr(row, name) for name in _ROW_FIELDS}
+                                                       for row in read.rows]}
+                  for game, read in reads}
         data = {"v": 1, "checker": self._checker, "season": self._season, "boards": boards}
         path = self._cache_path()
         try:

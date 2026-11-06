@@ -1208,6 +1208,133 @@ def test_attract_mode_and_the_record_book_read_the_real_board(apps, tmp_path):
     assert _replays_of_the_test_log(bridge) == []
 
 
+# ---- the frame path: never the network, a hash or a decode, and cheap ------------------------------------------------
+# The launcher draws at 60 fps on a Pi 3B+: whatever a frame calls on the adapter must be a read of state the worker
+# prepared. These fail if a frame-side call reaches Arkiv or the service, hashes (Keccak, EIP-55), decodes a page,
+# rebuilds a board nothing changed on, or simply gets slow.
+
+FRAME_BUDGET_MS = 0.25          # mean per frame for every frame-side call together (about 0.01 ms measured)
+
+
+def _full_board(rig, games=("MDGP", "SHIP")):
+    """100 runs a game, a third of them listed: a full page for every read."""
+    for game in games:
+        for i in range(100):
+            rig.node.run("ANY-%03d" % i, 6000 + 7 * i, listed=i % 3 == 0, game=game)
+
+
+class Counted:
+    def __init__(self, real=None):
+        self.real, self.calls = real, 0
+
+    def __call__(self, *a, **kw):
+        self.calls += 1
+        return self.real(*a, **kw) if self.real is not None else None
+
+
+def test_frame_side_calls_only_read_prepared_state(tmp_path, monkeypatch):
+    rig = Rig(tmp_path)
+    _full_board(rig)
+    rig.prefetch()
+    run = rig.node.runs[0]
+    pending = rig.sponsors.begin("check_listing", target_payload(rig.node, run))   # in flight: the worker owns it
+    asked, sent = len(rig.node.queries), len(rig.service.requests)
+    rpc.eip55.cache_clear()
+    counters = {name: Counted(getattr(rpc, name)) for name in ("keccak256", "decode_runs", "decode_listings",
+                                                               "read_board", "read_listing", "read_run")}
+    for name, counter in counters.items():
+        monkeypatch.setattr(rpc, name, counter)
+    frames = 2000
+    t = time.perf_counter()
+    for _ in range(frames):                                             # what PB's screens call each frame
+        rig.sponsors.status()
+        rig.sponsors.board("MDGP")
+        for game in ("SHIP", "MDGP", "RUSH"):
+            rig.sponsors.board(game, look=False)                        # attract mode's glance
+        pending.poll()
+        rig.sponsors.mocked("board")
+        rig.sponsors.outcomes("pay")
+        rig.sponsors.begin("sales", {}).poll()
+    per_frame = (time.perf_counter() - t) * 1000 / frames
+    assert {name: c.calls for name, c in counters.items()} == dict.fromkeys(counters, 0)
+    assert (len(rig.node.queries), len(rig.service.requests)) == (asked, sent)
+    assert per_frame < FRAME_BUDGET_MS, f"{per_frame:.3f} ms of adapter calls a frame"
+
+
+def test_the_checker_is_hashed_once_never_per_read(tmp_path, monkeypatch):
+    rpc.eip55.cache_clear()
+    keccak = Counted(rpc.keccak256)
+    monkeypatch.setattr(rpc, "keccak256", keccak)
+    rig = Rig(tmp_path)
+    _full_board(rig, games=("MDGP",))
+    for _ in range(5):
+        rig.prefetch()
+        rig.step(arkiv.REFRESH_MS)
+    run = rig.node.runs[0]
+    _check(rig, target_payload(rig.node, run))
+    assert keccak.calls == 1
+
+
+def test_a_refresh_with_nothing_new_rebuilds_and_rewrites_nothing(tmp_path, monkeypatch):
+    rig = Rig(tmp_path)
+    _full_board(rig, games=("MDGP",))
+    rig.prefetch()
+    first = rig.sponsors.board("MDGP")
+    saves = Counted(rig.sponsors._save_cache)
+    monkeypatch.setattr(rig.sponsors, "_save_cache", saves)
+    rig.step(arkiv.REFRESH_MS)
+    again = rig.sponsors.board("MDGP")
+    assert again.rows is first.rows and saves.calls == 0                 # the same rows object: nothing to redo
+    rig.node.run("ANY-NEW", 5000, listed=True)
+    rig.step(arkiv.REFRESH_MS)
+    assert rig.sponsors.board("MDGP").rows is not first.rows and saves.calls == 1
+    rig.node.down = True
+    rig.step(arkiv.REFRESH_MS)
+    stale = rig.sponsors.board("MDGP")
+    assert stale.stale and saves.calls == 1                             # an outage: marked stale, nothing written
+
+
+def test_a_page_is_decoded_in_slices_that_let_the_frame_loop_in(monkeypatch):
+    yields = []
+    monkeypatch.setattr(rpc.time, "sleep", lambda s: yields.append(s))
+    node = StubNode()
+    for i in range(100):
+        node.run("ANY-%03d" % i, 6000 + i, listed=True)
+    rows, block, dropped = rpc.read_board(node, "MDGP", SEASON, CHECKER)
+    assert len(rows) == 100 and dropped == 0
+    assert yields == [0] * (2 * (99 // rpc.YIELD_EVERY))           # every 20 rows of each page: the GIL is let go
+
+
+def test_the_glue_rebuilds_the_board_only_when_its_rows_change(apps, tmp_path, monkeypatch):
+    from arca_launcher.actions import Action as A
+    from arca_launcher.handler import board as board_module
+    app, rig, bridge = arkiv_app(apps, tmp_path)
+    _full_board(rig, games=("MDGP",))
+    rig.prefetch()
+    app.frame(16, [A.Y])
+    app.frame(16, [A.A])                                                # the board screen: refreshed while looked at
+    flow = app.nav.handler
+    assert flow.state.name == "board" and len(flow.ctx["board_rows"]) > 100
+    builds = Counted(board_module.build_real)
+    monkeypatch.setattr(board_module, "build_real", builds)
+    asked = len(rig.node.queries)
+    frames, spent = 0, 0.0
+    for refresh in range(3):                                            # three refreshes with nothing new
+        rig.step(arkiv.REFRESH_MS)
+        for _ in range(100):
+            t = time.perf_counter()
+            app.handler.frame(16)
+            spent += time.perf_counter() - t
+            frames += 1
+    assert len(rig.node.queries) == asked + 6                           # read three times, by the worker only
+    assert builds.calls == 0 and spent * 1000 / frames < FRAME_BUDGET_MS * 4
+    rig.node.run("ANY-NEW", 5000, listed=True)                          # a new run: built once, then shown
+    rig.step(arkiv.REFRESH_MS)
+    for _ in range(50):
+        app.handler.frame(16)
+    assert builds.calls == 1 and flow.ctx["board_rows"][0].name == "ANY-NEW"
+
+
 # ---- the screens ------------------------------------------------------------------------------------------------
 
 def test_only_hedera_carries_a_mock_tag(screen, tmp_path, monkeypatch):

@@ -315,7 +315,7 @@ def test_handler_code_has_no_network_or_sponsor_imports():
 # the console).
 REAL_ADAPTERS = {
     "world.py": {"json", "logging", "platform", "threading", "urllib", "arca_launcher"},
-    "arkiv_rpc.py": {"functools", "json", "re", "urllib", "arca_launcher"},
+    "arkiv_rpc.py": {"functools", "json", "re", "time", "urllib", "arca_launcher"},
     "arkiv.py": {"base64", "binascii", "dataclasses", "decimal", "hashlib", "json", "logging", "os", "re",
                  "threading", "urllib", "arca_launcher"},
     "hedera.py": {"json", "logging", "os", "re", "threading", "urllib", "arca_launcher"},

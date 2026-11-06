@@ -92,7 +92,7 @@ class HandlerGlue:
         self._warm_jobs = {}               # (arcade id, "time" or "ghost") -> its warm_up read
         self._locks = {}                   # (arcade id, "time" or "ghost") -> its read's Lock
         self._felt = None                  # (flow, state name) the pad last rumbled for, or saw without a rumble
-        self._read = None                  # the real board read the open flow's board was built from
+        self._read_rows = None             # the real board's rows the open flow's board was built from
         self._real_ghosts = {}             # a real target's checked log -> her ghost bytes, drawn once
         self._times_ms = BOARD_TIMES_MS    # since attract mode's runs to beat were last taken from the real boards
         # A sale counted before a restart, never told: PB tells it now. Only the mock counts sales, so a real board
@@ -239,7 +239,7 @@ class HandlerGlue:
         frames, and on a real board her run, its listing and its log."""
         if self._real():
             b, read = self._real_board(arcade, best_frames)
-            self._read = read
+            self._read_rows = read.rows if read else None
             t = b.target
             run = next((r for r in read.rows if r.key == t.key), None) if t is not None and read else None
             mine = next((r.frames for r in b.rows if r.you), None)
@@ -258,10 +258,14 @@ class HandlerGlue:
                 "rank": _you(b), "new_rank": ordinal(b.target.rank) if b.target else ""}
 
     def _fresh_board(self, flow):
-        """A newer real board read for the open game: its board screens show it (the first press after start may
-        come before the first read)."""
+        """New rows on the open game's real board: its board screens show them (the first press after start may come
+        before the first read). Every frame this only compares two references; the board is built again only when
+        the worker brought rows that differ (a refresh with nothing new keeps the very same rows object)."""
         arcade = self._game.arcade if self._game is not None else None
-        if not arcade or self.app.sponsors.board(arcade["id"]) is self._read:
+        if not arcade:
+            return
+        read = self.app.sponsors.board(arcade["id"])
+        if (read.rows if read is not None else None) is self._read_rows:
             return
         flow.ctx.update(self._board_ctx(arcade, None, flow.ctx.get("best_frames")))
 

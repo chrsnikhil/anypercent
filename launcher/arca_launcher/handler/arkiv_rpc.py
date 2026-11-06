@@ -11,6 +11,7 @@ copied); keys go in lowercase."""
 import functools
 import json
 import re
+import time
 import urllib.request
 
 from arca_launcher.handler.sponsors import PAY_TO, RunRow
@@ -21,6 +22,7 @@ PAGE = 100                    # one page: runners beyond the top 100 runs are no
 TIMEOUT_S = 3.0
 MAX_REPLY = 1 << 20           # a reply with one ghost's log (64 KiB as hex) is far below this
 TEXT_MAX = 64                 # bytes of any text column (a title, a book, a label)
+YIELD_EVERY = 20              # rows decoded between letting the frame loop have the GIL (a Pi decodes slowly)
 
 _GAME = re.compile(r"[A-Z0-9]{4}")
 _ADDR = re.compile(r"0x[0-9a-f]{40}")
@@ -251,12 +253,20 @@ def _row(entity, schema, columns, optional, checker):
     return out
 
 
+def _yield(i):
+    """Every YIELD_EVERY rows, let another thread take the GIL: the board is decoded on the worker, and the frame loop
+    must never wait behind a whole page (a slice of 20 rows is well under a millisecond, even on a Pi)."""
+    if i and i % YIELD_EVERY == 0:
+        time.sleep(0)
+
+
 def decode_runs(data, game, checker, schema=RUN_SCHEMA, with_log=False):
     """(the valid run rows of data, as dicts in data's order, how many were dropped). game None: any game."""
     checker = checker_address(checker)
     columns = dict(RUN_COLUMNS, log="bytes") if with_log else RUN_COLUMNS
     rows, dropped = [], 0
-    for entity in data:
+    for i, entity in enumerate(data):
+        _yield(i)
         row = _row(entity, schema, columns, RUN_OPTIONAL, checker)
         if row is None or (game is not None and row["game"] != game) or not (row["book"] or row["label"]):
             dropped += 1
@@ -270,7 +280,8 @@ def decode_listings(data, game, checker, season=None, schema=LISTING_SCHEMA):
     pay_to that is not a plain `0.0.N` account makes the row a misfit: PB never pays an account it cannot read."""
     checker = checker_address(checker)
     rows, dropped = [], 0
-    for entity in data:
+    for i, entity in enumerate(data):
+        _yield(i)
         row = _row(entity, schema, LISTING_COLUMNS, LISTING_OPTIONAL, checker)
         if (row is None or game not in (None, row["game"]) or season not in (None, row["season"])
                 or (row["pay_to"] is not None and not PAY_TO.fullmatch(row["pay_to"]))):
