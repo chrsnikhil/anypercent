@@ -1,0 +1,177 @@
+{
+ "shot": "scout_pick_try3",
+ "script": "/mnt/c/Users/chrsn/Desktop/retro-handheld-ethglobal/video/final/shots/scout_pick.json",
+ "video": "scout_pick_try3.mp4",
+ "recorded_at": "2026-11-06T17:45:23+00:00",
+ "fps": 30,
+ "size": [
+  800,
+  480
+ ],
+ "frames": 384,
+ "duration_s": 12.8,
+ "real_s": 12.77,
+ "max_lag_ms": 46.6,
+ "warm_up_s": 5.6,
+ "sponsors": {
+  "world": "real",
+  "board": "real",
+  "third": "real"
+ },
+ "console": {
+  "tag": "C-QP6P",
+  "book": "ANY-6PS",
+  "state": "bound",
+  "credential": "Orb"
+ },
+ "book": "ANY-6PS",
+ "arkiv_rpc": "https://rpc.rabdi.db-chain.testnet.arkiv.network (agent_rpc, User-Agent anypercent-recorder/1)",
+ "state_from": "/opt/arca-sandbox/laptop-state.json",
+ "marks": [
+  {
+   "mark": "scout_start",
+   "frame": 164,
+   "t": 5.467
+  },
+  {
+   "mark": "scout_pick",
+   "frame": 242,
+   "t": 8.067
+  }
+ ],
+ "links": [],
+ "launch": null,
+ "ended": "script",
+ "error": null,
+ "skipped": [],
+ "steps": [
+  {
+   "step": 1,
+   "do": "{\"wait_ms\": 1200}",
+   "frames": [
+    0,
+    36
+   ]
+  },
+  {
+   "step": 2,
+   "do": "{\"select\": \"marine-drive-gp\"}",
+   "frames": [
+    36,
+    36
+   ]
+  },
+  {
+   "step": 3,
+   "do": "{\"wait_ms\": 800}",
+   "frames": [
+    36,
+    60
+   ]
+  },
+  {
+   "step": 4,
+   "do": "{\"press\": \"triangle\"}",
+   "frames": [
+    60,
+    61
+   ]
+  },
+  {
+   "step": 5,
+   "do": "{\"timeout_ms\": 5000, \"until_state\": \"hub\"}",
+   "frames": [
+    61,
+    61
+   ]
+  },
+  {
+   "step": 6,
+   "do": "{\"wait_ms\": 900}",
+   "frames": [
+    61,
+    88
+   ]
+  },
+  {
+   "step": 7,
+   "do": "{\"press\": \"cross\"}",
+   "frames": [
+    88,
+    89
+   ]
+  },
+  {
+   "step": 8,
+   "do": "{\"timeout_ms\": 5000, \"until_state\": \"board\"}",
+   "frames": [
+    89,
+    89
+   ]
+  },
+  {
+   "step": 9,
+   "do": "{\"wait_ms\": 2500}",
+   "frames": [
+    89,
+    164
+   ]
+  },
+  {
+   "step": 10,
+   "do": "{\"mark\": \"scout_start\"}",
+   "frames": [
+    164,
+    164
+   ]
+  },
+  {
+   "step": 11,
+   "do": "{\"press\": \"cross\"}",
+   "frames": [
+    164,
+    165
+   ]
+  },
+  {
+   "step": 12,
+   "do": "{\"timeout_ms\": 40000, \"until_state\": \"scout_pick\"}",
+   "frames": [
+    165,
+    242
+   ]
+  },
+  {
+   "step": 13,
+   "do": "{\"mark\": \"scout_pick\"}",
+   "frames": [
+    242,
+    242
+   ]
+  },
+  {
+   "step": 14,
+   "do": "{\"wait_ms\": 2200}",
+   "frames": [
+    242,
+    308
+   ]
+  },
+  {
+   "step": 15,
+   "do": "{\"press\": \"circle\"}",
+   "frames": [
+    308,
+    309
+   ]
+  },
+  {
+   "step": 16,
+   "do": "{\"wait_ms\": 2500}",
+   "frames": [
+    309,
+    384
+   ]
+  }
+ ]
+}

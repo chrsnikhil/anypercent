@@ -1,0 +1,259 @@
+{
+ "shot": "sample_board",
+ "script": "/mnt/c/Users/chrsn/Desktop/retro-handheld-ethglobal/video/final/shots/sample_board.json",
+ "video": "sample_board.mp4",
+ "recorded_at": "2026-11-06T09:11:47+00:00",
+ "fps": 30,
+ "size": [
+  800,
+  480
+ ],
+ "frames": 766,
+ "duration_s": 25.533,
+ "real_s": 25.5,
+ "max_lag_ms": 213.0,
+ "warm_up_s": 4.3,
+ "sponsors": {
+  "world": "real",
+  "board": "real",
+  "third": "real"
+ },
+ "console": {
+  "tag": "C-QP6P",
+  "book": "ANY-6PS",
+  "state": "bound",
+  "credential": "Orb"
+ },
+ "book": "ANY-6PS",
+ "arkiv_rpc": "https://rpc.rabdi.db-chain.testnet.arkiv.network (agent_rpc, User-Agent anypercent-recorder/1)",
+ "state_from": "/opt/arca-sandbox/laptop-state.json",
+ "marks": [
+  {
+   "mark": "pb_open",
+   "frame": 81,
+   "t": 2.7
+  },
+  {
+   "mark": "board_open",
+   "frame": 157,
+   "t": 5.233
+  },
+  {
+   "mark": "on_chain_card",
+   "frame": 309,
+   "t": 10.3
+  },
+  {
+   "mark": "back_to_board",
+   "frame": 705,
+   "t": 23.5
+  }
+ ],
+ "links": [],
+ "launch": null,
+ "ended": "script",
+ "error": null,
+ "skipped": [],
+ "steps": [
+  {
+   "step": 1,
+   "do": "{\"wait_ms\": 1500}",
+   "frames": [
+    0,
+    45
+   ]
+  },
+  {
+   "step": 2,
+   "do": "{\"select\": \"marine-drive-gp\"}",
+   "frames": [
+    45,
+    45
+   ]
+  },
+  {
+   "step": 3,
+   "do": "{\"wait_ms\": 1200}",
+   "frames": [
+    45,
+    81
+   ]
+  },
+  {
+   "step": 4,
+   "do": "{\"mark\": \"pb_open\"}",
+   "frames": [
+    81,
+    81
+   ]
+  },
+  {
+   "step": 5,
+   "do": "{\"press\": \"triangle\"}",
+   "frames": [
+    81,
+    82
+   ]
+  },
+  {
+   "step": 6,
+   "do": "{\"timeout_ms\": 5000, \"until_state\": \"hub\"}",
+   "frames": [
+    82,
+    82
+   ]
+  },
+  {
+   "step": 7,
+   "do": "{\"wait_ms\": 2500}",
+   "frames": [
+    82,
+    157
+   ]
+  },
+  {
+   "step": 8,
+   "do": "{\"mark\": \"board_open\"}",
+   "frames": [
+    157,
+    157
+   ]
+  },
+  {
+   "step": 9,
+   "do": "{\"press\": \"cross\"}",
+   "frames": [
+    157,
+    158
+   ]
+  },
+  {
+   "step": 10,
+   "do": "{\"timeout_ms\": 5000, \"until_state\": \"board\"}",
+   "frames": [
+    158,
+    158
+   ]
+  },
+  {
+   "step": 11,
+   "do": "{\"wait_ms\": 3500}",
+   "frames": [
+    158,
+    263
+   ]
+  },
+  {
+   "step": 12,
+   "do": "{\"every_ms\": 500, \"pick\": \"BOT-A2\"}",
+   "frames": [
+    263,
+    264
+   ]
+  },
+  {
+   "step": 13,
+   "do": "{\"wait_ms\": 1500}",
+   "frames": [
+    264,
+    309
+   ]
+  },
+  {
+   "step": 14,
+   "do": "{\"mark\": \"on_chain_card\"}",
+   "frames": [
+    309,
+    309
+   ]
+  },
+  {
+   "step": 15,
+   "do": "{\"press\": \"triangle\"}",
+   "frames": [
+    309,
+    310
+   ]
+  },
+  {
+   "step": 16,
+   "do": "{\"timeout_ms\": 3000, \"until_state\": \"run_links\"}",
+   "frames": [
+    310,
+    310
+   ]
+  },
+  {
+   "step": 17,
+   "do": "{\"wait_ms\": 3000}",
+   "frames": [
+    310,
+    400
+   ]
+  },
+  {
+   "step": 18,
+   "do": "{\"every_ms\": 1800, \"press\": \"down\", \"times\": 4}",
+   "frames": [
+    400,
+    566
+   ]
+  },
+  {
+   "step": 19,
+   "do": "{\"wait_ms\": 1800}",
+   "frames": [
+    566,
+    620
+   ]
+  },
+  {
+   "step": 20,
+   "do": "{\"every_ms\": 500, \"press\": \"up\", \"times\": 4}",
+   "frames": [
+    620,
+    669
+   ]
+  },
+  {
+   "step": 21,
+   "do": "{\"wait_ms\": 1200}",
+   "frames": [
+    669,
+    705
+   ]
+  },
+  {
+   "step": 22,
+   "do": "{\"mark\": \"back_to_board\"}",
+   "frames": [
+    705,
+    705
+   ]
+  },
+  {
+   "step": 23,
+   "do": "{\"press\": \"circle\"}",
+   "frames": [
+    705,
+    706
+   ]
+  },
+  {
+   "step": 24,
+   "do": "{\"timeout_ms\": 3000, \"until_state\": \"board\"}",
+   "frames": [
+    706,
+    706
+   ]
+  },
+  {
+   "step": 25,
+   "do": "{\"wait_ms\": 2000}",
+   "frames": [
+    706,
+    766
+   ]
+  }
+ ]
+}

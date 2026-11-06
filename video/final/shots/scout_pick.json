@@ -1,0 +1,8 @@
+{"name": "scout_pick", "real_writes": true, "steps": [
+  {"wait_ms": 1200}, {"select": "marine-drive-gp"}, {"wait_ms": 800},
+  {"press": "triangle"}, {"until_state": "hub", "timeout_ms": 5000}, {"wait_ms": 900},
+  {"press": "cross"}, {"until_state": "board", "timeout_ms": 5000}, {"wait_ms": 2500},
+  {"mark": "scout_start"}, {"press": "cross"}, {"until_state": "scout_pick", "timeout_ms": 40000},
+  {"mark": "scout_pick"}, {"wait_ms": 2200},
+  {"press": "circle"}, {"wait_ms": 2500}
+]}

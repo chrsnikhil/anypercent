@@ -1,0 +1,30 @@
+{
+ "name": "sample_board",
+ "steps": [
+  {"wait_ms": 1500},
+  {"select": "marine-drive-gp"},
+  {"wait_ms": 1200},
+  {"mark": "pb_open"},
+  {"press": "triangle"},
+  {"until_state": "hub", "timeout_ms": 5000},
+  {"wait_ms": 2500},
+  {"mark": "board_open"},
+  {"press": "cross"},
+  {"until_state": "board", "timeout_ms": 5000},
+  {"wait_ms": 3500},
+  {"pick": "BOT-A2", "every_ms": 500},
+  {"wait_ms": 1500},
+  {"mark": "on_chain_card"},
+  {"press": "triangle"},
+  {"until_state": "run_links", "timeout_ms": 3000},
+  {"wait_ms": 3000},
+  {"press": "down", "times": 4, "every_ms": 1800},
+  {"wait_ms": 1800},
+  {"press": "up", "times": 4, "every_ms": 500},
+  {"wait_ms": 1200},
+  {"mark": "back_to_board"},
+  {"press": "circle"},
+  {"until_state": "board", "timeout_ms": 3000},
+  {"wait_ms": 2000}
+ ]
+}

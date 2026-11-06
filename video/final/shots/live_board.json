@@ -1,0 +1,9 @@
+{"name": "live_board", "steps": [
+  {"wait_ms": 1200}, {"select": "marine-drive-gp"}, {"wait_ms": 800},
+  {"press": "triangle"}, {"until_state": "hub", "timeout_ms": 5000}, {"wait_ms": 900},
+  {"press": "cross"}, {"until_state": "board", "timeout_ms": 8000}, {"wait_ms": 4500},
+  {"pick": "YOU", "every_ms": 500}, {"wait_ms": 1200}, {"mark": "own_run_card"},
+  {"press": "triangle"}, {"until_state": "run_links", "timeout_ms": 5000}, {"wait_ms": 2500},
+  {"press": "down", "times": 5, "every_ms": 1700}, {"wait_ms": 1500},
+  {"press": "circle"}, {"wait_ms": 1500}, {"mark": "humans_on"}, {"press": "square"}, {"wait_ms": 3000}
+]}

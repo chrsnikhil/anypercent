@@ -1,0 +1,41 @@
+{
+ "note": "the live take on the handheld C-FMHE, 7 Nov ~03:50 IST",
+ "console": "C-FMHE",
+ "console_wallet": "0xda2855662f95b4a02232e3eee445270ec6902f89",
+ "book": "ANY-6PS",
+ "link_approved_utc": "2026-11-06T22:19:12Z",
+ "already_registered_utc": "2026-11-06T22:19:51Z (World App: nullifier_replayed)",
+ "listing_approved_utc": "2026-11-06T22:20:52Z",
+ "hcs_listing": {
+  "seq": 17,
+  "tx": "0.0.6421420@1794003650.055631848",
+  "hashscan": "https://hashscan.io/testnet/transaction/0.0.6421420-1794003650-055631848"
+ },
+ "arkiv": {
+  "run": "0x226e4415fad3cc052574ed63cce379bed1468112d5b3f79d967aa21914d9ede4",
+  "listing": "0xcd3bbc796feaa153e87d8b64673b781c4350add1c2946949a3e450d320a55077",
+  "console_tx": "0xd2d522ad1750715618c12ad226a1dafd0277ddc759128c5eed7f7c78725a9e8c",
+  "stamp": "0xe1891b91f30f7ff91865178dda74190bb8522b3e3ceef3eda77b4db386b36fa5",
+  "stamp_tx": "0x9513836ab705d97a832814f26fa2b4e4bee8f6a3abdb1e1ba3d66d7741c73186"
+ },
+ "house_batch": {
+  "tx": "0xb41ea6ca64da17cdaf2cab7a3abc5a69977786543815b3115e20d0873b20b357",
+  "stamp_tx": "0x07fe222b9ddd9aa9e6e0221e8a4897f6d58f02e436ec6d19878c6858237be417",
+  "house_wallet": "0xb65bf2156c09883c06e24f08d969d890bc5ea484"
+ },
+ "hedera_fresh": {
+  "purchase": "p-fef82028",
+  "ghost": "BOT-A1 1:42.83",
+  "by": "hedera:agent (terminal, no console)",
+  "tx": "0.0.9185802@1794004897.987759644",
+  "hashscan": "https://hashscan.io/testnet/transaction/0.0.9185802-1794004897-987759644",
+  "intent_seq": 19,
+  "receipt_seq": 20,
+  "settle_ms": 1087
+ },
+ "scout_on_handheld": {
+  "utc": "2026-11-06T22:34:31Z",
+  "pick": "BOT-A3 (lap 1) by openai/gpt-oss-120b",
+  "paid": "no: already owned (never pays twice); the card shows the earlier real payment 0.0.9185802@1793951207.849742365"
+ }
+}

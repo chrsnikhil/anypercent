@@ -1,0 +1,7 @@
+{"name": "record_book", "steps": [
+  {"wait_ms": 1200}, {"select": "marine-drive-gp"}, {"wait_ms": 800},
+  {"press": "triangle"}, {"until_state": "hub", "timeout_ms": 5000}, {"wait_ms": 1500},
+  {"press": "down", "times": 2, "every_ms": 450}, {"wait_ms": 700}, {"mark": "book_open"},
+  {"press": "cross"}, {"until_state": "book_view", "timeout_ms": 5000}, {"wait_ms": 6000},
+  {"press": "circle"}, {"wait_ms": 1200}
+]}

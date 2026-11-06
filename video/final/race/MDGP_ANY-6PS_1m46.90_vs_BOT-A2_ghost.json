@@ -1,0 +1,68 @@
+{
+ "name": "MDGP_ANY-6PS_1m46.90_vs_BOT-A2_ghost",
+ "video": "MDGP_ANY-6PS_1m46.90_vs_BOT-A2_ghost.mp4",
+ "rendered_at": "2026-11-06T09:18:36+00:00",
+ "fps": 60,
+ "size": [
+  960,
+  640
+ ],
+ "scale": 4,
+ "frames": 7257,
+ "duration_s": 120.95,
+ "audio": {
+  "rate": 48000,
+  "samples": 5804906,
+  "note": "mGBA's mix, 800 samples a frame: 60 fps, 0.45% above the GBA's own 59.73 fps and pitch"
+ },
+ "game": "MDGP",
+ "rom": "/opt/arca-sandbox/games/built/marine-drive-gp.gba",
+ "rom_sha256": "5e3517476ec1b3ec100ccaf239716c133e856b9fcc1618392faac1dd18111bcc",
+ "run": {
+  "log": "/opt/arca-sandbox/runs/best/MDGP.acl",
+  "log_h": "10ace1f19f052ed68e0819b893964f513973a6088cd947288a0b7a60e7ee4355",
+  "time_frames": 6414,
+  "finished": true,
+  "seed": 558121973,
+  "final_hash": "f542e1f6",
+  "steps": 7009,
+  "label": "ANY-6PS",
+  "bot": false,
+  "board": "MDGP",
+  "book": "ANY-6PS",
+  "human": true,
+  "credential": "Orb",
+  "run_key": "0x08e77782105438c8ee8c9403475bd0a1715ab75f2856b341636d6e08e84b32a0",
+  "listing": "0x23bf791d2b779ec2f157abda8a5d18bd069c44503b8425093b0ab94c7301af44",
+  "ghostgen": null
+ },
+ "ghost": {
+  "log": "/mnt/c/Users/chrsn/Desktop/retro-handheld-ethglobal/games/marinedrive/out/ghostgen/default/v2.acl",
+  "log_h": "ea41e473ae1561917660fca36635bdd473cf325a570fadce0f89db1fe282f020",
+  "time_frames": 6236,
+  "label": "BOT-A2",
+  "bot": true,
+  "board": "MDGP",
+  "book": null,
+  "human": false,
+  "credential": null,
+  "run_key": "0xf3b09047da909137d731aee09a633e2278ba0c64b39dc68a1165b4ab7ce50428",
+  "listing": "0x9216be8b849f9714b933fd3e0f9975d97c5ec0704d56e1d6aa2f5edbdf8d0122",
+  "ghostgen": "ghostgen v2 slow start (games/marinedrive/out/ghostgen/default/manifest.json)"
+ },
+ "best_in_cart": {
+  "log": "/opt/arca-sandbox/runs/queue/MDGP-4a0d8d11.acl",
+  "time_frames": 6457
+ },
+ "verified": {
+  "replay_tool": true,
+  "rom_final_hash": "f542e1f6",
+  "rom_seed": "214443f5",
+  "profile": {
+   "nonce": 614938049,
+   "boots_written": 0
+  }
+ },
+ "finish_frame": 7017,
+ "finish_s": 116.95
+}

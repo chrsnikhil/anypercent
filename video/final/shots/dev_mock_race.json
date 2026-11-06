@@ -1,0 +1,69 @@
+{
+ "name": "dev_mock_race",
+ "steps": [
+  {
+   "wait_ms": 800
+  },
+  {
+   "select": "marine-drive-gp"
+  },
+  {
+   "press": "triangle"
+  },
+  {
+   "until_state": "hub",
+   "timeout_ms": 5000
+  },
+  {
+   "wait_ms": 1000
+  },
+  {
+   "press": "cross"
+  },
+  {
+   "until_screen": "HANDLER"
+  },
+  {
+   "wait_ms": 1500
+  },
+  {
+   "mark": "target"
+  },
+  {
+   "press": "cross"
+  },
+  {
+   "until_state": "target",
+   "timeout_ms": 5000
+  },
+  {
+   "wait_ms": 1500
+  },
+  {
+   "press": "cross"
+  },
+  {
+   "until_state": "buy_done",
+   "timeout_ms": 20000
+  },
+  {
+   "wait_ms": 1500
+  },
+  {
+   "mark": "race_press"
+  },
+  {
+   "press": "cross"
+  },
+  {
+   "until_state": "racing",
+   "timeout_ms": 5000
+  },
+  {
+   "wait_ms": 3000
+  },
+  {
+   "mark": "never reached: the launch ends the shot"
+  }
+ ]
+}
