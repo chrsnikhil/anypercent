@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Any% Board</title>
+<meta name="description" content="The Any% speedrun board, read straight from Arkiv: every time was replayed by our checker before it was written.">
+<style>
+:root {
+  --bg: #0e1013; --panel: #161a20; --line: #262c35; --text: #e9e7e2; --dim: #9aa3ad;
+  --lime: #c8f04a; --amber: #f5b942; --red: #ff6b6b; --blue: #7cc4ff;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var(--sans); }
+main { max-width: 860px; margin: 0 auto; padding: 20px 16px 48px; }
+h1 { font: 800 26px/1.1 var(--sans); letter-spacing: .5px; margin: 0 0 4px; }
+h1 b { color: var(--lime); }
+.sub { color: var(--dim); margin: 0 0 14px; font-size: 14px; }
+.source { font: 12.5px/1.5 var(--mono); color: var(--dim); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 10px; margin-bottom: 14px; overflow-wrap: anywhere; }
+.source.snap { border-color: var(--amber); color: var(--amber); }
+.source a { color: var(--blue); }
+nav { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+nav button { font: 600 13px var(--sans); color: var(--text); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 999px; padding: 6px 12px; cursor: pointer; }
+nav button[aria-pressed="true"] { background: var(--lime); color: #111; border-color: var(--lime); }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 0 0 10px; font-size: 14px; }
+.controls label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.ahead { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 14px; font-size: 14px; }
+.ahead input { font: 14px var(--mono); width: 92px; background: var(--panel); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 5px 8px; }
+.ahead button, .copy { font: 600 13px var(--sans); background: var(--panel); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+.ahead output { color: var(--lime); }
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 12px var(--sans); color: var(--dim); text-transform: uppercase; letter-spacing: .6px; }
+tr:last-child td { border-bottom: 0; }
+td.rank { font: 700 15px var(--mono); color: var(--dim); width: 2.5em; }
+td.who { font: 700 15px var(--mono); }
+td.time { font: 700 16px var(--mono); color: var(--lime); white-space: nowrap; }
+.meta { display: block; font-size: 12.5px; color: var(--dim); margin-top: 2px; }
+td.time .meta { font: 12px var(--sans); }
+.until-sm { display: none; }
+.badge { display: inline-block; font: 800 11px var(--sans); letter-spacing: .8px; border-radius: 4px; padding: 2px 6px; margin: 0 6px 0 0; vertical-align: 1px; }
+.human { background: var(--lime); color: #111; }
+.listed { background: var(--amber); color: #111; }
+.open { background: var(--line); color: var(--text); }
+.bot { background: var(--amber); color: #111; cursor: help; }
+.tiers { color: var(--text); font-size: 14px; margin: 0 0 10px; }
+.laps { font: 12px var(--mono); color: var(--dim); }
+.leaders { margin: 14px 0 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.leaders h3 { margin: 0 0 6px; font-size: 14px; }
+.leaders ol { margin: 0; padding-left: 20px; font: 13px/1.6 var(--mono); }
+.leaders .meta { display: inline; }
+tr.ignored td { color: var(--red); text-decoration: line-through; }
+tr.ignored td .why { text-decoration: none; display: block; font-size: 12px; }
+tr.you td { background: #1d2412; }
+.legend { color: var(--dim); font-size: 13px; margin: 8px 0 0; }
+.empty { padding: 18px 12px; color: var(--dim); text-align: center; }
+.note { color: var(--amber); font-size: 13px; margin: 8px 0 0; }
+details { margin-top: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+summary { cursor: pointer; font-weight: 700; }
+pre { font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 10px; margin: 8px 0; }
+footer { margin-top: 22px; color: var(--dim); font-size: 13px; }
+footer p { margin: 6px 0; }
+a { color: var(--blue); }
+@media (max-width: 560px) {
+  th.until, td.until { display: none; }
+  .until-sm { display: block; }
+  td, th { padding: 8px 7px; }
+}
+</style>
+</head>
+<body>
+<main>
+  <h1>Any<b>%</b> board</h1>
+  <p class="sub">Speedruns from the Any% handheld. Every time here was replayed by our checker before it was written to Arkiv.</p>
+  <div id="source" class="source">Reading Arkiv...</div>
+  <nav id="tabs" aria-label="Games"></nav>
+  <div id="board-view">
+    <div class="controls">
+      <label><input type="checkbox" id="anyWallet"> show rows from any wallet</label>
+      <label><input type="checkbox" id="humanOnly"> HUMAN only</label>
+    </div>
+    <p class="tiers" id="tiers"></p>
+    <form class="ahead" id="aheadForm">
+      <span>Who is just ahead of</span>
+      <input id="aheadTime" placeholder="1:44.83" inputmode="decimal" aria-label="your time, m:ss.cc">
+      <button type="submit">Look up</button>
+      <output id="aheadOut"></output>
+    </form>
+    <table>
+      <thead><tr><th>#</th><th>Runner</th><th>Time</th><th class="until">On the board until</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <p class="legend"><span class="badge human">HUMAN</span>record book opened with World ID (<span id="credLegend">Orb</span>).
+      <span class="badge listed">LISTED</span>its ghost is for sale; "pays 0.0.N" is the runner's own Hedera account (testnet USDC),
+      "approved on Hedera" the listing's message on the market topic.
+      <span id="botLegend" hidden><span class="badge bot">BOT</span>made by a program: the route bot slowed down on purpose
+      (dev/ghostgen.py), replayed by the same checker, sold by the house account, never HUMAN.</span></p>
+    <p class="note" id="dropped" hidden></p>
+    <div class="leaders" id="leaders" hidden>
+      <h3>Lap leaders (one indexed split per query, Q10)</h3>
+      <ol id="leaderList"></ol>
+    </div>
+  </div>
+  <div id="profile-view" hidden>
+    <p><a href="#" id="backToBoard">Back to the board</a></p>
+    <h2 id="profileTitle"></h2>
+    <p id="profileBadge"></p>
+    <table>
+      <thead><tr><th>Game</th><th>Time</th><th class="until">On the board until</th></tr></thead>
+      <tbody id="profileRuns"></tbody>
+    </table>
+    <h3>Listed ghosts, soonest to end first</h3>
+    <table>
+      <thead><tr><th>Game</th><th>Time</th><th>Price</th><th>Ends</th></tr></thead>
+      <tbody id="profileListings"></tbody>
+    </table>
+  </div>
+  <details id="yourself">
+    <summary>Run this query yourself</summary>
+    <p>This is the exact query this page sends to Arkiv for the board above. Only rows our checker's wallet created count:</p>
+    <pre id="q1Text"></pre>
+    <p>With curl (no key needed):</p>
+    <pre id="curlText"></pre>
+    <button class="copy" id="copyCurl" type="button">Copy curl</button>
+  </details>
+  <footer>
+    <p>Anyone can write a row that looks like ours; this board ignores every row our checker did not create (tick "show rows from any wallet" to see them struck out).
+      A run row cannot be edited, not even by our checker. Our checker could delete one; anyone can keep one alive longer.
+      Listings end after 7 days. Ghosts are paid in testnet USDC on Hedera (x402).</p>
+    <p>Profiles: add <code>#book=ANY-XXX</code> to this page's address.</p>
+  </footer>
+</main>
+<script>
+"use strict";
+// ---- Set these once. ---------------------------------------------------------------------
+const RPC = "https://rpc.rabdi.db-chain.testnet.arkiv.network";
+const CHECKER = "0x3d3260425Cb52F0c6716212274a883337aFa3f63"; // the checker's address (EIP-55), as `npm run arkiv:keygen` prints it
+const SEASON = 1;
+const GAMES = [["MDGP", "MARINE DRIVE GP"], ["SHIP", "SHIP IT!"], ["RUSH", "RUSH HOUR"], ["SEGF", "SEGFAULT"], ["ZIPG", "ZIP"]];
+const EXPLORER = "https://rabdi.explorer.arkiv.network";
+const HASHSCAN = "https://hashscan.io/testnet"; // a listing's Hedera payout account and its LISTING message
+// ------------------------------------------------------------------------------------------
+
+// The queries, word for word as the console and the service send them.
+const Q = {
+  q1: (game, season, checker) => `arkiv.schema = str('anypercent.run') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${checker}) ORDER BY frames:u64 ASC`,
+  q2: (game, season, checker) => `arkiv.schema = str('anypercent.listing') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${checker}) ORDER BY frames:u64 ASC`,
+  q3: (game, season, frames, checker) => `arkiv.schema = str('anypercent.listing') AND game = str('${game}') AND season = i32(${season}) AND frames < u64(${frames}) AND $creator = addr(${checker}) ORDER BY frames:u64 DESC`,
+  q4: (book, checker) => `arkiv.schema = str('anypercent.run') AND book = str('${book}') AND $creator = addr(${checker}) ORDER BY frames:u64 ASC`,
+  q5: (book, checker) => `arkiv.schema = str('anypercent.listing') AND book = str('${book}') AND $creator = addr(${checker}) ORDER BY $expiresAt:u64 ASC`,
+  q8: (game, season) => `arkiv.schema = str('anypercent.run') AND game = str('${game}') AND season = i32(${season}) ORDER BY frames:u64 ASC`,
+  q9: (game, season, checker) => `arkiv.schema = str('anypercent.run') AND game = str('${game}') AND season = i32(${season}) AND human = true AND $creator = addr(${checker}) ORDER BY frames:u64 ASC`,
+  q10: (game, season, checker, lap) => `arkiv.schema = str('anypercent.run') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${checker}) ORDER BY s${lap}:u64 ASC`,
+};
+
+// s1..s4 and split_kind are a run's lap splits (optional: rows before them have none).
+const RUN_ATTRS = ["game", "title", "frames", "runner", "book", "label", "human", "credential", "log_h", "rules", "s1", "s2", "s3", "s4", "split_kind"];
+const LISTING_ATTRS = ["run", "game", "season", "frames", "log_h", "price", "seller", "book", "label", "human", "pay_to", "hcs"];
+const RUN_TYPES = { game: "str", title: "str", frames: "u64", runner: "str", book: "str", label: "str", human: "bool", credential: "str", log_h: "str", rules: "u64",
+  s1: "u64", s2: "u64", s3: "u64", s4: "u64", split_kind: "str" };
+const RUN_REQUIRED = ["game", "title", "frames", "runner", "human", "log_h", "rules"];
+// pay_to (the seller's Hedera account, as World App showed it) and hcs ("<topic>/<seq>" of the LISTING
+// message) are optional: listings written before payouts have neither and are not for sale. A listing
+// names exactly one of book (a person's) and label (the house's BOT ghosts).
+const LISTING_TYPES = { run: "key", game: "str", season: "i32", frames: "u64", log_h: "str", price: "dec", seller: "str", book: "str", label: "str", human: "bool", pay_to: "str", hcs: "str" };
+const LISTING_REQUIRED = ["run", "game", "season", "frames", "log_h", "price", "seller", "human"];
+const ACCOUNT_RE = /^0\.0\.\d{1,10}$/;
+const HCS_RE = /^(0\.0\.\d{1,10})\/\d{1,20}$/;
+const BOOK_RE = /^ANY-[A-Z0-9]{3,8}$/;
+const KEY_RE = /^0x[0-9a-f]{64}$/;
+/** A row's page on the Arkiv explorer (its entity key, lower case as decode() keeps it), as the service's explorer_entity builds it; null for anything else. */
+const entityUrl = (key) => (typeof key === "string" && KEY_RE.test(key) ? `${EXPLORER}/entity/${key}` : null);
+
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+const short = (a) => a ? `${a.slice(0, 6)}...${a.slice(-4)}` : "?";
+
+function fmt(frames) {
+  const cs = Math.round(Number(frames) * 100 / 60);
+  const two = (n) => String(n).padStart(2, "0");
+  return `${Math.floor(cs / 6000)}:${two(Math.floor(cs / 100) % 60)}.${two(cs % 100)}`;
+}
+function parseTime(text) {
+  const m = /^\s*(\d+):([0-5]\d)\.(\d\d)\s*$/.exec(text || "");
+  if (!m) return null;
+  const cs = Number(m[1]) * 6000 + Number(m[2]) * 100 + Number(m[3]);
+  return Math.round(cs * 0.6);
+}
+
+// ---- Arkiv JSON-RPC, straight from the browser: no key, no backend of ours. ----------------
+async function rpc(method, params) {
+  const res = await fetch(RPC, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined,
+  });
+  if (!res.ok) throw new Error(`RPC ${res.status}`);
+  const j = await res.json();
+  if (j.error) throw new Error(j.error.message || "RPC error");
+  return j.result;
+}
+function select(attrs) {
+  const attributes = { "arkiv.schema": true };
+  for (const a of attrs) attributes[a] = true;
+  return { key: true, creator: true, expiresAt: true, attributes };
+}
+async function query(q, attrs, limit = 100) {
+  return rpc("arkiv_query", [q, { select: select(attrs), limit: "0x" + limit.toString(16) }]);
+}
+
+// ---- Validation: drop (and count) what doesn't fit, as every raw reader must. --------------
+// Rabdi tags a key column "bytes32" in arkiv_query replies; the SDK reads that as a key, and so do we.
+const tagOf = (t) => (t === "bytes32" ? "key" : t);
+function decode(raw, types, required, schema, pin) {
+  if (!raw || typeof raw.key !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(raw.key)) return null;
+  const creator = typeof raw.creator === "string" ? raw.creator.toLowerCase() : null;
+  if (pin && creator !== pin.toLowerCase()) return null;
+  const v = {};
+  let tag;
+  for (const a of raw.attributes || []) {
+    if (!a || typeof a.name !== "string") continue;
+    if (a.name === "arkiv.schema") { tag = a.type === "str" ? a.value : null; continue; }
+    const t = types[a.name];
+    if (!t) continue;
+    if (tagOf(a.type) !== t) return null;
+    let x;
+    if (t === "str" || t === "dec") x = typeof a.value === "string" ? a.value : undefined;
+    else if (t === "i32") x = Number.isInteger(a.value) ? a.value : undefined;
+    else if (t === "bool") x = typeof a.value === "boolean" ? a.value : undefined;
+    else if (t === "u64") x = typeof a.value === "string" && /^0x[0-9a-fA-F]+$/.test(a.value) ? Number(BigInt(a.value)) : undefined;
+    else if (t === "key") x = typeof a.value === "string" && /^0x[0-9a-fA-F]{64}$/.test(a.value) ? a.value.toLowerCase() : undefined;
+    if (x === undefined) return null;
+    v[a.name] = x;
+  }
+  if (tag !== undefined && tag !== schema) return null;
+  for (const r of required) if (v[r] === undefined) return null;
+  // A listing names exactly one of book and label; both or neither is not ours to show.
+  if (/listing$/.test(schema) && (v.book === undefined) === (v.label === undefined)) return null;
+  const expiresAt = typeof raw.expiresAt === "string" && /^0x[0-9a-fA-F]+$/.test(raw.expiresAt) ? Number(BigInt(raw.expiresAt)) : null;
+  return { key: raw.key.toLowerCase(), creator, expiresAt, ...v };
+}
+function decodeAll(data, types, required, schema, pin) {
+  const rows = []; let dropped = 0;
+  for (const raw of data || []) { const r = decode(raw, types, required, schema, pin); if (r) rows.push(r); else dropped++; }
+  return { rows, dropped };
+}
+/** A run's lap splits, or null when they do not check out (not contiguous from s1, not laps, a zero, a sum other than frames). */
+function splitsOf(r) {
+  const out = []; let ended = false;
+  for (const k of ["s1", "s2", "s3", "s4"]) {
+    if (r[k] === undefined) { ended = true; continue; }
+    if (ended || !(r[k] > 0)) return null;
+    out.push(r[k]);
+  }
+  if (!out.length || r.split_kind !== "lap") return null;
+  return out.reduce((a, b) => a + b, 0) === r.frames ? out : null;
+}
+const isBot = (r) => typeof r.label === "string" && r.label.startsWith("BOT-") && r.human !== true && !r.book;
+
+// ---- State ---------------------------------------------------------------------------------
+let timing = null;       // {block, time, duration}: turns $expiresAt into a date
+let snapshot = null;     // the fallback, when the RPC does not answer
+let current = GAMES[0][0];
+
+async function loadTiming() {
+  const t = await rpc("arkiv_getBlockTiming", []);
+  timing = { block: Number(t.current_block), time: Number(t.current_block_time), duration: Number(t.duration) || 2 };
+}
+function untilDate(expiresAt) {
+  if (expiresAt === null || !timing) return "?";
+  const s = timing.time + (expiresAt - timing.block) * timing.duration;
+  return "about " + new Date(s * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+/** The time cell, with its laps when the row has them, and "on the board until" where that column is hidden (phones). */
+function timeCell(r) {
+  const td = el("td", "time", fmt(r.frames));
+  const laps = splitsOf(r);
+  if (laps) td.append(el("span", "meta laps", `laps ${laps.map((f) => (Math.round(f * 100 / 60) / 100).toFixed(2)).join(" / ")}`));
+  td.append(el("span", "meta until-sm", `on the board until ${untilDate(r.expiresAt)}`));
+  return td;
+}
+function daysLeft(expiresAt) {
+  if (expiresAt === null || !timing) return null;
+  return Math.max(0, Math.ceil(((expiresAt - timing.block) * timing.duration) / 86400));
+}
+
+async function loadSnapshot() {
+  if (snapshot) return snapshot;
+  const url = /\/board\/?$/.test(location.pathname) ? location.pathname.replace(/\/?$/, "/snapshot.json") : "snapshot.json";
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error("no snapshot");
+  snapshot = await res.json();
+  timing = { block: Number(snapshot.block), time: Number(snapshot.block_time_s), duration: Number(snapshot.block_duration_s) || 2 };
+  return snapshot;
+}
+
+function setSource(block, fromSnapshot, extra) {
+  const s = $("source");
+  s.textContent = "";
+  s.className = fromSnapshot ? "source snap" : "source";
+  s.append(fromSnapshot ? `Arkiv did not answer: showing the snapshot at block ${block}, rows created by ` : `Read from Arkiv Rabdi at block ${block}, rows created by `);
+  const a = el("a", "", short(CHECKER)); a.href = `${EXPLORER}/address/${CHECKER}`; a.target = "_blank"; a.rel = "noopener"; a.title = CHECKER;
+  s.append(a, extra ? `. ${extra}` : ".");
+}
+
+// ---- The board: Q1 + Q2, merged as the console does ----------------------------------------
+async function readBoard(game) {
+  const any = $("anyWallet").checked, human = $("humanOnly").checked;
+  try {
+    const runQ = any ? Q.q8(game, SEASON) : human ? Q.q9(game, SEASON, CHECKER) : Q.q1(game, SEASON, CHECKER);
+    const [runs, listings] = await Promise.all([query(runQ, RUN_ATTRS), query(Q.q2(game, SEASON, CHECKER), LISTING_ATTRS), timing ? null : loadTiming()]);
+    const r = decodeAll(runs.data, RUN_TYPES, RUN_REQUIRED, "anypercent.run", any ? null : CHECKER);
+    const l = decodeAll(listings.data, LISTING_TYPES, LISTING_REQUIRED, "anypercent.listing", CHECKER);
+    const shown = any && human ? r.rows.filter((x) => x.human === true) : r.rows;
+    return { block: Number(BigInt(runs.blockNumber)), runs: shown, listings: l.rows, dropped: r.dropped + l.dropped, snap: false };
+  } catch (err) {
+    const s = await loadSnapshot();
+    const g = (s.games || {})[game] || { runs: [], listings: [] };
+    const r = decodeAll(g.runs, RUN_TYPES, RUN_REQUIRED, "anypercent.run", CHECKER);
+    const l = decodeAll(g.listings, LISTING_TYPES, LISTING_REQUIRED, "anypercent.listing", CHECKER);
+    const runs = human ? r.rows.filter((x) => x.human === true) : r.rows;
+    return { block: s.block, runs, listings: l.rows, dropped: r.dropped + l.dropped, snap: true };
+  }
+}
+
+function merge(runs, listings) {
+  const listingFor = new Map();
+  for (const l of listings) listingFor.set(l.run, l);
+  const out = [], seen = new Set();
+  for (const r of runs) {
+    const ours = r.creator === CHECKER.toLowerCase();
+    if (!ours) { out.push({ ...r, ignored: true }); continue; }
+    const who = r.book || (r.label ? `label:${r.label}` : `runner:${r.runner}`);
+    if (seen.has(who)) continue;           // one row per runner: the first is the fastest
+    seen.add(who);
+    const l = listingFor.get(r.key);
+    out.push({ ...r, listing: l && l.log_h === r.log_h && l.game === r.game ? l : null });
+  }
+  return out;
+}
+
+function runnerCell(r) {
+  const td = el("td", "who");
+  if (r.book) {
+    const a = el("a", "", r.book); a.href = `#book=${r.book}`; td.append(a);
+  } else td.append(el("span", "", r.label || r.runner));
+  const meta = el("span", "meta");
+  if (r.human === true) meta.append(el("span", "badge human", "HUMAN"));
+  else if (isBot(r)) {
+    const b = el("span", "badge bot", "BOT");
+    const house = r.listing && typeof r.listing.pay_to === "string" && ACCOUNT_RE.test(r.listing.pay_to) ? r.listing.pay_to : "0.0.N";
+    b.title = `generated by a program (dev/ghostgen.py), sold by the house account ${house}`;
+    meta.append(b);
+  } else if (!r.book) meta.append(el("span", "badge open", "OPEN"));
+  if (r.listing) meta.append(el("span", "badge listed", "LISTED"), `${r.listing.price} USDC`);
+  if (r.listing) hederaLinks(meta, r.listing);
+  arkivLinks(meta, r);
+  if (meta.childNodes.length) td.append(meta);
+  return td;
+}
+
+/** "on Arkiv" (the run's entity page on the explorer) and, for a listed run, "listing" (its listing's page). */
+function arkivLinks(parent, r) {
+  const run = entityUrl(r.key);
+  if (run) {
+    const a = el("a", "", "on Arkiv"); a.href = run; a.rel = "noopener"; a.target = "_blank"; a.title = `run ${r.key}`;
+    parent.append(" ", a);
+  }
+  const listing = r.listing ? entityUrl(r.listing.key) : null;
+  if (listing) {
+    const a = el("a", "", "listing"); a.href = listing; a.rel = "noopener"; a.target = "_blank"; a.title = `listing ${r.listing.key}`;
+    parent.append(" ", a);
+  }
+}
+
+/** "pays 0.0.N" (its HashScan account) and "approved on Hedera" (the market topic) when the row has them. */
+function hederaLinks(parent, l) {
+  if (typeof l.pay_to === "string" && ACCOUNT_RE.test(l.pay_to)) {
+    const a = el("a", "", `pays ${l.pay_to}`); a.href = `${HASHSCAN}/account/${l.pay_to}`; a.rel = "noopener"; a.target = "_blank";
+    parent.append(" ", a);
+  }
+  const m = typeof l.hcs === "string" ? HCS_RE.exec(l.hcs) : null;
+  if (m) {
+    const a = el("a", "", "approved on Hedera"); a.href = `${HASHSCAN}/topic/${m[1]}`; a.rel = "noopener"; a.target = "_blank";
+    a.title = `LISTING message #${l.hcs.split("/")[1]} on topic ${m[1]}`;
+    parent.append(" ", a);
+  }
+}
+
+async function showBoard(game) {
+  current = game;
+  for (const b of $("tabs").children) b.setAttribute("aria-pressed", String(b.dataset.game === game));
+  const body = $("rows");
+  body.textContent = "";
+  body.append(rowMsg("Reading...", 4));
+  const b = await readBoard(game).catch(() => null);
+  body.textContent = "";
+  if (!b) { setSource("?", true, "No snapshot either"); body.append(rowMsg("Arkiv did not answer and there is no snapshot.", 4)); return; }
+  const rows = merge(b.runs, b.listings);
+  setSource(b.block, b.snap, b.snap && $("anyWallet").checked ? "The snapshot holds only our checker's rows" : "");
+  let rank = 0;
+  const creds = new Set();
+  for (const r of rows) {
+    const tr = el("tr", r.ignored ? "ignored" : "");
+    tr.append(el("td", "rank", r.ignored ? "-" : String(++rank)));
+    const who = runnerCell(r);
+    if (r.ignored) who.append(el("span", "why", `not written by our checker: ignored (${short(r.creator)})`));
+    tr.append(who, timeCell(r), el("td", "until", untilDate(r.expiresAt)));
+    if (r.human && r.credential) creds.add(r.credential);
+    body.append(tr);
+  }
+  if (!rows.length) body.append(rowMsg("No runs on the board yet.", 4));
+  $("credLegend").textContent = creds.size ? [...creds].join(" or ") : "Orb";
+  // How many humans are on this board: one record book is one person, however many runs it has.
+  const ours = rows.filter((r) => !r.ignored);
+  const books = new Set(ours.filter((r) => r.human === true && r.book).map((r) => r.book));
+  const bots = ours.filter(isBot).length;
+  const open = ours.filter((r) => r.human !== true && !isBot(r)).length;
+  $("tiers").textContent = `Humans on this board: ${books.size} record book${books.size === 1 ? "" : "s"}` +
+    ($("humanOnly").checked ? " (HUMAN only)" : ` · BOT: ${bots}${open ? ` · OPEN: ${open}` : ""}`);
+  $("botLegend").hidden = !bots;
+  showLeaders(game, b.snap ? b.runs : null);
+  const d = $("dropped");
+  d.hidden = !b.dropped;
+  d.textContent = b.dropped ? `${b.dropped} row${b.dropped > 1 ? "s" : ""} did not fit the schema and ${b.dropped > 1 ? "were" : "was"} dropped.` : "";
+  showQuery(game);
+}
+
+// ---- Q10: the lap leaders, the fastest of each lap (one indexed split, one query) ---------------
+async function showLeaders(game, snapRuns) {
+  const box = $("leaders"), list = $("leaderList");
+  list.textContent = "";
+  const leaders = [];
+  for (const lap of [1, 2, 3]) {
+    let rows;
+    try {
+      if (snapRuns) throw new Error("snapshot");
+      const res = await query(Q.q10(game, SEASON, CHECKER, lap), RUN_ATTRS, 20);
+      rows = decodeAll(res.data, RUN_TYPES, RUN_REQUIRED, "anypercent.run", CHECKER).rows;
+    } catch {
+      rows = (snapRuns || []).slice().sort((a, b) => (a[`s${lap}`] ?? Infinity) - (b[`s${lap}`] ?? Infinity));
+    }
+    // Rows without splits (or with splits that do not check out) never lead a lap, wherever they sort.
+    const best = rows.find((r) => { const s = splitsOf(r); return s && s.length >= lap; });
+    if (best) leaders.push({ lap, r: best, f: splitsOf(best)[lap - 1] });
+  }
+  box.hidden = !leaders.length;
+  for (const { lap, r, f } of leaders) {
+    const li = el("li", "", `Lap ${lap}: ${(Math.round(f * 100 / 60) / 100).toFixed(2)} s by ${r.book || r.label || r.runner} `);
+    li.append(el("span", `badge ${r.human === true ? "human" : isBot(r) ? "bot" : "open"} meta`, r.human === true ? "HUMAN" : isBot(r) ? "BOT" : "OPEN"));
+    list.append(li);
+  }
+}
+
+function rowMsg(text, span) {
+  const tr = el("tr"); const td = el("td", "empty", text); td.colSpan = span; tr.append(td); return tr;
+}
+
+function showQuery(game) {
+  const q = Q.q1(game, SEASON, CHECKER);
+  $("q1Text").textContent = q;
+  const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "arkiv_query", params: [q, { select: select(RUN_ATTRS), limit: "0x64" }] });
+  $("curlText").textContent = `curl -s ${RPC} -H 'content-type: application/json' --data @- <<'EOF'\n${body}\nEOF`;
+}
+
+// ---- Q3: who is just ahead --------------------------------------------------------------
+async function justAhead(ev) {
+  ev.preventDefault();
+  const out = $("aheadOut");
+  const frames = parseTime($("aheadTime").value);
+  if (frames === null) { out.textContent = "write it as m:ss.cc"; return; }
+  out.textContent = "...";
+  let l = null;
+  try {
+    const res = await query(Q.q3(current, SEASON, frames, CHECKER), LISTING_ATTRS, 1);
+    l = decodeAll(res.data, LISTING_TYPES, LISTING_REQUIRED, "anypercent.listing", CHECKER).rows[0] || null;
+  } catch {
+    const s = await loadSnapshot().catch(() => null);
+    const g = s && (s.games || {})[current];
+    const all = g ? decodeAll(g.listings, LISTING_TYPES, LISTING_REQUIRED, "anypercent.listing", CHECKER).rows : [];
+    l = all.filter((x) => x.frames < frames).sort((a, b) => b.frames - a.frames)[0] || null;
+  }
+  if (!l) { out.textContent = `nobody listed is ahead of ${fmt(frames)}`; return; }
+  const days = daysLeft(l.expiresAt);
+  out.textContent = `${l.book || l.label} at ${fmt(l.frames)}, ${l.price} USDC${days !== null ? `, listing ends in ${days} day${days === 1 ? "" : "s"}` : ""}`;
+}
+
+// ---- Profile: Q4 + Q5 ---------------------------------------------------------------------
+async function showProfile(book) {
+  $("board-view").hidden = true; $("profile-view").hidden = false; $("tabs").hidden = true;
+  $("profileTitle").textContent = book;
+  const runsBody = $("profileRuns"), listBody = $("profileListings");
+  runsBody.textContent = ""; listBody.textContent = "";
+  let runs = [], listings = [], block = "?", snap = false;
+  try {
+    const [r, l] = await Promise.all([query(Q.q4(book, CHECKER), [...RUN_ATTRS, "season"]), query(Q.q5(book, CHECKER), LISTING_ATTRS), timing ? null : loadTiming()]);
+    runs = decodeAll(r.data, RUN_TYPES, RUN_REQUIRED, "anypercent.run", CHECKER).rows;
+    listings = decodeAll(l.data, LISTING_TYPES, LISTING_REQUIRED, "anypercent.listing", CHECKER).rows;
+    block = Number(BigInt(r.blockNumber));
+  } catch {
+    const s = await loadSnapshot().catch(() => null);
+    snap = true; block = s ? s.block : "?";
+    for (const g of Object.values((s && s.games) || {})) {
+      runs.push(...decodeAll(g.runs, RUN_TYPES, RUN_REQUIRED, "anypercent.run", CHECKER).rows.filter((x) => x.book === book));
+      listings.push(...decodeAll(g.listings, LISTING_TYPES, LISTING_REQUIRED, "anypercent.listing", CHECKER).rows.filter((x) => x.book === book));
+    }
+    runs.sort((a, b) => a.frames - b.frames);
+    listings.sort((a, b) => (a.expiresAt || 0) - (b.expiresAt || 0));
+  }
+  setSource(block, snap, "");
+  const badge = $("profileBadge");
+  badge.textContent = "";
+  if (!runs.length) {
+    badge.textContent = "No runs on the board yet.";
+  } else if (runs.every((r) => r.human === true)) {
+    badge.append(el("span", "badge human", "HUMAN"), `record book opened with World ID (${runs[0].credential || "Orb"})`);
+  }
+  const title = (id) => (GAMES.find((g) => g[0] === id) || [id, id])[1];
+  for (const r of runs) {
+    const tr = el("tr");
+    tr.append(el("td", "", title(r.game)), timeCell(r), el("td", "until", untilDate(r.expiresAt)));
+    runsBody.append(tr);
+  }
+  if (!runs.length) runsBody.append(rowMsg("No runs on the board yet.", 3));
+  for (const l of listings) {
+    const tr = el("tr");
+    const days = daysLeft(l.expiresAt);
+    const price = el("td", "", `${l.price} USDC`);
+    hederaLinks(price, l);
+    tr.append(el("td", "", title(l.game)), el("td", "time", fmt(l.frames)), price, el("td", "", days === null ? "?" : `in ${days} day${days === 1 ? "" : "s"}`));
+    listBody.append(tr);
+  }
+  if (!listings.length) listBody.append(rowMsg("No listed ghosts.", 4));
+}
+
+// ---- Routing ----------------------------------------------------------------------------
+function route() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  const book = (h.get("book") || "").toUpperCase();
+  if (BOOK_RE.test(book)) return showProfile(book);
+  $("board-view").hidden = false; $("profile-view").hidden = true; $("tabs").hidden = false;
+  const game = h.get("game");
+  return showBoard(GAMES.some((g) => g[0] === game) ? game : current);
+}
+
+function init() {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(CHECKER) || /^0x0{40}$/.test(CHECKER)) {
+    $("source").textContent = "CHECKER is not set at the top of board.html: set it to the checker's address.";
+    return;
+  }
+  for (const [id, name] of GAMES) {
+    const b = el("button", "", name); b.type = "button"; b.dataset.game = id;
+    b.addEventListener("click", () => { location.hash = `game=${id}`; });
+    $("tabs").append(b);
+  }
+  $("anyWallet").addEventListener("change", () => showBoard(current));
+  $("humanOnly").addEventListener("change", () => showBoard(current));
+  $("aheadForm").addEventListener("submit", justAhead);
+  $("backToBoard").addEventListener("click", (e) => { e.preventDefault(); location.hash = `game=${current}`; });
+  $("copyCurl").addEventListener("click", () => navigator.clipboard && navigator.clipboard.writeText($("curlText").textContent));
+  window.addEventListener("hashchange", route);
+  route();
+}
+init();
+</script>
+</body>
+</html>
