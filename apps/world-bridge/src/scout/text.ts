@@ -65,7 +65,15 @@ const r2 = (v: number) => Math.round(v * 100) / 100;
  */
 export function factCheck(reason: unknown, c: FactContext): { ok: true; text: string } | { ok: false; why: string } {
   if (typeof reason !== "string") return { ok: false, why: "no reason" };
-  const text = reason.trim();
+  // Models write typographic spaces, dashes, quotes and ellipses (gpt-oss puts U+202F between a number and "s"):
+  // plain ASCII equivalents, so a good reason is not thrown away for its punctuation. Anything else stays refused.
+  const text = reason
+    .replace(/[     ]/g, " ")
+    .replace(/[‐-―−]/g, "-")
+    .replace(/[‘’]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/…/g, "...")
+    .trim();
   if (text === "") return { ok: false, why: "empty" };
   if (!/^[\x20-\x7e]+$/.test(text)) return { ok: false, why: "not printable ASCII" };
   if (text.length > c.max) return { ok: false, why: `over ${c.max} characters` };

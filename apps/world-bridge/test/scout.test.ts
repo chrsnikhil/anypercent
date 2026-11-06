@@ -200,6 +200,11 @@ describe("the fact check", () => {
     assert.equal(factCheck("BOT-A2 is 1.8 s slower in lap 1 but 2.9 s faster in lap 2.", ctx).ok, true, "absolute values and 1-decimal rounding");
     assert.equal(factCheck("BOT-A2 runs 1:43.93 to your 1:46.90.", ctx).ok, true, "m:ss.cc times of YOU and the pick");
   });
+  it("normalises the model's typographic spaces, dashes and quotes to ASCII (gpt-oss writes '2.85\\u202fs')", () => {
+    const fancy = "You lose 2.85 s in lap 2 – BOT‑A2’s lap is 33.23 s…";
+    assert.deepEqual(factCheck(fancy, ctx), { ok: true, text: "You lose 2.85 s in lap 2 - BOT-A2's lap is 33.23 s..." });
+    assert.match((factCheck("BOT-A2 é is faster in lap 2.", ctx) as { why: string }).why, /ASCII/, "other non-ASCII still refused");
+  });
   it("an invented number, another runner's name, a banned word, over 110 characters, not ASCII: refused", () => {
     assert.match((factCheck("You lose 3.50 s in lap 2.", ctx) as { why: string }).why, /3\.50/);
     assert.match((factCheck("BOT-A6 is faster in lap 2.", ctx) as { why: string }).why, /BOT-A6/);
@@ -210,7 +215,7 @@ describe("the fact check", () => {
     assert.match((factCheck("Pay for BOT-A2.", ctx) as { why: string }).why, /pay/);
     assert.match((factCheck("BOT-A2 at 1:44.00 beats you.", ctx) as { why: string }).why, /1:44\.00/);
     assert.match((factCheck(`Lap 2 ${"a".repeat(110)}`, ctx) as { why: string }).why, /over 110/);
-    assert.match((factCheck("Lap 2 is faster — BOT-A2.", ctx) as { why: string }).why, /ASCII/);
+    assert.match((factCheck("Lap 2 is faster → BOT-A2.", ctx) as { why: string }).why, /ASCII/);
     assert.match((factCheck("Pick c1 for lap 2.", ctx) as { why: string }).why, /candidate id/);
   });
 });
