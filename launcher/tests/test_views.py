@@ -524,8 +524,8 @@ def test_home_carries_the_sponsor_logo(screen):
     try:
         themes.apply("ethglobal")
         draw(screen, Nav(screen.games), "home_ethglobal")
-        themes.apply("chainlink")
-        draw(screen, Nav(screen.games), "home_chainlink")
+        themes.apply("hedera")
+        draw(screen, Nav(screen.games), "home_hedera")
     finally:
         themes.apply("anypercent")
 

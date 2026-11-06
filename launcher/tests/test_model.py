@@ -622,9 +622,9 @@ def test_b_closes_the_theme_menu_without_changing_anything():
 
 def test_the_theme_menu_opens_on_the_current_theme():
     from arca_launcher.themes import THEMES
-    nav = Nav(GAMES, theme="chainlink")
+    nav = Nav(GAMES, theme="hedera")
     nav.apply(A.THEMES)
-    assert THEMES[nav.theme_index].id == "chainlink"
+    assert THEMES[nav.theme_index].id == "hedera"
 
 
 def test_the_theme_menu_by_touch():

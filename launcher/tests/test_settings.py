@@ -56,9 +56,9 @@ def test_theme_round_trips_and_junk_gives_the_default(tmp_path):
     path = str(tmp_path / "s.json")
     p = settings.Prefs()
     assert p.theme == "anypercent"
-    p.theme = "chainlink"
+    p.theme = "hedera"
     settings.save(path, p)
-    assert settings.load(path).theme == "chainlink"
+    assert settings.load(path).theme == "hedera"
     import json
     json.dump({"theme": 42}, open(path, "w"))
     assert settings.load(path).theme == "anypercent"

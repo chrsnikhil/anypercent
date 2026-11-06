@@ -22,8 +22,7 @@ THEMES = [
     Theme("anypercent", "Any%", (11, 13, 18), (22, 24, 30), (240, 102, 61), 0, (240, 102, 61)),
     Theme("world", "World", (6, 6, 7), (26, 26, 28), (255, 255, 255), 90, (255, 255, 255), "logo-world.png"),
     Theme("arkiv", "Arkiv", (10, 14, 58), (26, 32, 96), (246, 244, 239), 110, (24, 30, 169), "logo-arkiv.png"),
-    Theme("arc", "Arc", (6, 20, 40), (20, 40, 66), (205, 221, 242), 110, (80, 150, 255), "logo-arc.png"),
-    Theme("chainlink", "Chainlink", (8, 18, 56), (24, 42, 100), (55, 91, 210), 110, (55, 91, 210), "logo-chainlink.png", True),
+    Theme("hedera", "Hedera", (13, 11, 24), (30, 26, 50), (130, 89, 239), 110, (130, 89, 239), "logo-hedera.png"),
     Theme("ethglobal", "ETHGlobal Mumbai", (46, 4, 24), (76, 16, 40), (255, 133, 0), 110, (255, 108, 0), "logo-ethglobal.png", True),
 ]
 BY_ID = {t.id: t for t in THEMES}

@@ -17,8 +17,7 @@ HEIGHT = 64
 LOGOS = {                                   # theme id -> source SVG (the same art as the printed panels)
     "world": "assets/logos/world_logo.svg",
     "arkiv": "assets/logos/arkiv_lockup_white.svg",
-    "arc": "cad2/logos/arc.svg",
-    "chainlink": "cad2/logos/chainlink.svg",
+    "hedera": "cad2/logos/hedera.svg",
     "ethglobal": "cad2/logos/ethglobal_mumbai_logomark.svg",
 }
 
