@@ -196,12 +196,6 @@ key. PB's choice is the board's runner just ahead, not a model's. The intent is 
 we do not claim it reached consensus first. World binds the record book, not whose hands played. The laptop service must
 be on for a purchase.
 
-## AI use
-
-_Owner: confirm or rewrite._ This project was built with AI assistance. Claude (Anthropic), through Claude Code, wrote
-and reviewed much of the code, tests and documentation, including the Arkiv and Hedera modules, under the team's direction. The
-team designed the console and the integrations, made every decision, and tested the result on the hardware.
-
 ## License
 
 _Owner: add an OSS `LICENSE` file at the repository root and name it here._
