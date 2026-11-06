@@ -1856,6 +1856,17 @@ def _signing(rig, log=None, payload=LIST_PAYLOAD, **issued):
     return call, log
 
 
+def test_the_console_signs_through_its_own_configured_rpc_not_the_issued_one(tmp_path):
+    """The issued RPC only has to name the configured host; the transaction goes through the console's own URL, which
+    may carry the owner's access key (Rabdi's public endpoint answers 429 under load)."""
+    rig = Rig(tmp_path)
+    rig.sponsors._rpc_url = rpc.RABDI_RPC + "/the-owners-access-key"
+    _signing(rig)
+    rig.step()
+    (signed,) = rig.signer.calls
+    assert signed["rpc"] == rpc.RABDI_RPC + "/the-owners-access-key"
+
+
 def test_the_console_signs_what_was_issued_tells_the_service_and_lists_it_stamped(tmp_path):
     rig = Rig(tmp_path)
     call, log = _signing(rig)
@@ -2222,7 +2233,7 @@ def test_the_console_signs_only_for_rabdi_on_the_configured_rpc_host(tmp_path, c
     keyed = dict(issue(log), rpc=rpc.RABDI_RPC + "/some/path?key=x")     # the same host: taken
     rig.service.move("sign", data={"issue": keyed})
     rig.step()
-    assert len(rig.signer.calls) == 1 and rig.signer.calls[0]["rpc"] == keyed["rpc"]
+    assert len(rig.signer.calls) == 1 and rig.signer.calls[0]["rpc"] == rpc.RABDI_RPC   # sent via its own URL
 
 
 def test_the_signer_never_gets_more_time_than_the_publish_has_left(tmp_path):

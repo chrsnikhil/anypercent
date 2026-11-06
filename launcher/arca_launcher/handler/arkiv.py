@@ -162,7 +162,8 @@ class ArkivSponsors:
         self._signer = signer if signer is not None else Signer()
         self._signed = {}          # the service's publish job id -> what this console's wallet wrote for it
         self._chain_id = chain_id
-        self._rpc_host = urllib.parse.urlsplit(rpc if isinstance(rpc, str) else rpc_url).hostname
+        self._rpc_url = rpc if isinstance(rpc, str) else rpc_url
+        self._rpc_host = urllib.parse.urlsplit(self._rpc_url).hostname
         self._send = transport or http_transport(service_url)
         self._rpc = rpc if callable(rpc) else arkiv_rpc.rpc_transport(rpc)
         self._checker = arkiv_rpc.checker_address(checker)
@@ -631,7 +632,9 @@ class ArkivSponsors:
             log.info("Arkiv publish: %.0f s of the budget left, too little to sign; nothing signed", left_s)
             return Result(ok=False, failure="ls_publish_fail")
         try:
-            wrote = self._signer.write(arkiv_wallet.key_file(self._state_dir), issue["rpc"], issue["chain_id"],
+            # the issued RPC only had to name the configured host (checked above): the console signs through its own
+            # configured URL, which may carry the owner's access key (Rabdi's public endpoint rate-limits, 429)
+            wrote = self._signer.write(arkiv_wallet.key_file(self._state_dir), self._rpc_url, issue["chain_id"],
                                        issue["run"], issue["listing"], timeout_s=min(SIGN_TIMEOUT_S, left_s),
                                        run_key=issue["run_key"], replaces=issue["replaces"])
         except SignError as e:
