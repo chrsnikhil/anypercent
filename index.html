@@ -261,12 +261,19 @@ function eip55(address) {
 
 // ---- Arkiv JSON-RPC, straight from the browser: no key, no backend of ours. ----------------
 async function rpc(method, params) {
-  const res = await fetch(RPC, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined,
-  });
+  // The public endpoint rate-limits (429) bursts from one address (a venue's shared Wi-Fi): wait and ask again a few
+  // times before the page falls back to its snapshot.
+  let res;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(RPC, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined,
+    });
+    if ((res.status !== 429 && res.status < 500) || attempt >= 4) break;
+    await new Promise((r) => setTimeout(r, 700 * (attempt + 1) + Math.random() * 400));
+  }
   if (!res.ok) throw new Error(`RPC ${res.status}`);
   const j = await res.json();
   if (j.error) throw new Error(j.error.message || "RPC error");
