@@ -2,21 +2,36 @@
  * An in-memory Arkiv behind the ArkivPort interface, and a scripted checker, for the publish and
  * ghost tests. Rows are kept with the values, flags and expiry they were written with, so tests can
  * assert every column. Nothing here touches the network.
+ *
+ * The console's half of a publish lives here too: `consoleWrite` writes what a sign stage issued
+ * from a console's wallet (as the launcher's signer would), `linkWallet` binds a console with an
+ * approved wallet to a book (as an approved link leaves it), and `consoleFinish` drives a job
+ * through sign -> written -> done.
  */
-import { createHash } from "node:crypto";
-import type { ArkivPort, CreateSpec, HousePair, ListingRow, ListingValues, RunRow, RunValues } from "../src/arkiv/client.js";
+import { createHash, randomBytes } from "node:crypto";
+import type { ArkivPort, CreateSpec, EntityRow, HousePair, ListingRow, ListingValues, RunRow, RunValues, StampRow, StampValues, TypedValue } from "../src/arkiv/client.js";
 import { ArkivError } from "../src/arkiv/client.js";
+import type { Publisher, PublishView } from "../src/arkiv/publish.js";
 import { splitsOf } from "../src/arkiv/rows.js";
+import { LISTING_SCHEMA, RUN_SCHEMA, STAMP_SCHEMA, toSdkValues } from "../src/arkiv/schema.js";
+import { fromSpecJson } from "../src/arkiv/spec-json.js";
 import { CheckerError, type CheckerPort, type ReplayResult } from "../src/arkiv/checker.js";
+import type { Store } from "../src/store.js";
+import { waitFor } from "./helpers.js";
 
 export const CHECKER = "0x1111111111111111111111111111111111111111";
 export const STRANGER = "0x2222222222222222222222222222222222222222";
+/** Two console wallets (lowercase, as the bridge keeps them). */
+export const WALLET_A = `0x${"a1".repeat(20)}`;
+export const WALLET_B = `0x${"b2".repeat(20)}`;
 
 export interface StoredRun {
   key: string;
   creator: string;
   spec: CreateSpec<RunValues>;
   live: boolean;
+  /** Who owns it now, when not its creator (ownership moved). */
+  owner?: string;
 }
 export interface StoredListing {
   key: string;
@@ -24,7 +39,26 @@ export interface StoredListing {
   run: string;
   spec: CreateSpec<ListingValues>;
   live: boolean;
+  owner?: string;
 }
+export interface StoredStamp {
+  key: string;
+  creator: string;
+  spec: CreateSpec<StampValues>;
+  live: boolean;
+}
+
+/** What a sign stage issues (publish.ts), as the console receives it. */
+export interface Issue {
+  chain_id: number;
+  rpc: string;
+  run: unknown;
+  run_key: string | null;
+  listing: unknown;
+  replaces: string | null;
+}
+
+const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
 let counter = 0;
 function newKey(): string {
@@ -35,7 +69,15 @@ function newKey(): string {
 export class FakeArkiv implements ArkivPort {
   runs: StoredRun[] = [];
   listings: StoredListing[] = [];
-  batches: { kind: "run+listing" | "listing" | "run" | "house"; tx: string; creates?: number }[] = [];
+  stamps: StoredStamp[] = [];
+  /** The checker's transactions (the bridge's writes). */
+  batches: { kind: "run+listing" | "listing" | "run" | "house" | "stamp"; tx: string; creates?: number }[] = [];
+  /** Transactions a console's wallet signed (consoleWrite). */
+  consoleTxs: { tx: string; creator: string; creates: number; deletes: number }[] = [];
+  /** The block every entity expires at (getEntity's expiresAt). */
+  expiresAtBlock = 4_321_000n;
+  /** getEntity answers null for this many more calls (a node that has not seen the block yet). */
+  lagEntityReads = 0;
   /** A house transaction with more creates than this is refused (gas or size), as Arkiv would. */
   maxCreates = Infinity;
   chain = 7794095;
@@ -97,10 +139,97 @@ export class FakeArkiv implements ArkivPort {
     };
   }
 
-  async runByLogHash(logH: string): Promise<RunRow | null> {
+  async runByLogHash(logH: string, owner = CHECKER): Promise<RunRow | null> {
     if (this.readsDown) throw new ArkivError("down");
-    const r = this.runs.find((x) => x.live && x.creator === CHECKER && x.spec.values.log_h === logH);
+    const r = this.runs.find((x) => x.live && same(x.creator, owner) && x.spec.values.log_h === logH);
     return r ? this.runRow(r, false) : null;
+  }
+
+  async stampByLogHash(logH: string): Promise<StampRow | null> {
+    if (this.readsDown) throw new ArkivError("down");
+    const s = this.stamps.find((x) => x.live && same(x.creator, CHECKER) && x.spec.values.log_h === logH);
+    if (!s) return null;
+    const v = s.spec.values;
+    return {
+      key: s.key,
+      creator: s.creator,
+      expiresAt: this.expiresAtBlock,
+      run: v.run,
+      console: v.console,
+      game: v.game,
+      season: v.season,
+      frames: BigInt(v.frames),
+      log_h: v.log_h,
+      ...(v.book !== undefined ? { book: v.book } : {}),
+      ...(v.label !== undefined ? { label: v.label } : {}),
+      human: v.human,
+      ...(v.final_hash !== undefined ? { final_hash: BigInt(v.final_hash) } : {}),
+      tool: v.tool,
+    };
+  }
+
+  /** Every live entity by key, whoever created it, typed as the SDK reads it back. */
+  async getEntity(key: string): Promise<EntityRow | null> {
+    if (this.readsDown) throw new ArkivError("down");
+    if (this.lagEntityReads > 0) {
+      this.lagEntityReads -= 1;
+      return null;
+    }
+    const k = key.toLowerCase();
+    const row = (kind: "run" | "listing" | "stamp", e: { key: string; creator: string; owner?: string; spec: CreateSpec<object> }, extra: Record<string, unknown> = {}): EntityRow => ({
+      key: e.key,
+      creator: e.creator.toLowerCase(),
+      owner: (e.owner ?? e.creator).toLowerCase(),
+      expiresAt: this.expiresAtBlock,
+      flags: { ...e.spec.flags },
+      schema: kind === "run" ? RUN_SCHEMA : kind === "listing" ? LISTING_SCHEMA : STAMP_SCHEMA,
+      values: toSdkValues(kind, { ...(e.spec.values as Record<string, unknown>), ...extra }) as Record<string, TypedValue>,
+    });
+    const r = this.runs.find((x) => x.live && x.key === k);
+    if (r) return row("run", r);
+    const l = this.listings.find((x) => x.live && x.key === k);
+    if (l) return row("listing", l, { run: l.run });
+    const s = this.stamps.find((x) => x.live && x.key === k);
+    return s ? row("stamp", s) : null;
+  }
+
+  async writeStamp(spec: CreateSpec<StampValues>) {
+    await this.gate();
+    const key = newKey();
+    this.stamps.push({ key, creator: CHECKER, spec, live: true });
+    const tx = newKey();
+    this.batches.push({ kind: "stamp", tx });
+    return { stamp: key, tx };
+  }
+
+  /**
+   * The console's signer: write what a sign stage issued, in one transaction from `wallet` (the
+   * run, then its listing naming the run; or, for a relist, the listing alone for the stamped run,
+   * deleting the one it replaces). `edit` changes the values before they go out (a console that
+   * writes something else).
+   */
+  consoleWrite(wallet: string, issue: Issue, edit: { run?: (v: Record<string, unknown>) => void; listing?: (v: Record<string, unknown>) => void } = {}): { tx: string; run: string; listing: string } {
+    const creator = wallet.toLowerCase();
+    let runKey: string;
+    if (issue.run !== null) {
+      const spec = fromSpecJson<RunValues>(issue.run);
+      edit.run?.(spec.values as unknown as Record<string, unknown>);
+      runKey = newKey();
+      this.runs.push({ key: runKey, creator, spec, live: true });
+    } else {
+      runKey = String(issue.run_key);
+    }
+    const lspec = fromSpecJson<ListingValues>(issue.listing);
+    edit.listing?.(lspec.values as unknown as Record<string, unknown>);
+    const listingKey = newKey();
+    this.listings.push({ key: listingKey, creator, run: runKey, spec: lspec, live: true });
+    if (issue.replaces) {
+      const old = this.listings.find((x) => x.key === issue.replaces && same(x.creator, creator));
+      if (old) old.live = false;
+    }
+    const tx = newKey();
+    this.consoleTxs.push({ tx, creator, creates: issue.run !== null ? 2 : 1, deletes: issue.replaces ? 1 : 0 });
+    return { tx, run: runKey, listing: listingKey };
   }
 
   private listingRow(l: StoredListing): ListingRow {
@@ -124,9 +253,9 @@ export class FakeArkiv implements ArkivPort {
     };
   }
 
-  async liveListingFor(runKey: string): Promise<ListingRow | null> {
+  async liveListingFor(runKey: string, owner = CHECKER): Promise<ListingRow | null> {
     if (this.readsDown) throw new ArkivError("down");
-    const l = this.listings.find((x) => x.live && x.creator === CHECKER && x.run === runKey);
+    const l = this.listings.find((x) => x.live && same(x.creator, owner) && x.run === runKey);
     return l ? this.listingRow(l) : null;
   }
 
@@ -261,4 +390,42 @@ export function makeLog(game = "MDGP", rules = 4, frames = 6461, extra = 64, see
   b.writeUInt32LE(0xcafebabe, 20);
   for (let i = 32; i < b.length; i++) b[i] = (i * 7 + seed) & 0xff;
   return Uint8Array.from(b);
+}
+
+let tags = 0;
+/**
+ * A console bound to `book` with `wallet` approved, as an approved link leaves it (consoles.ts).
+ * Returns its store key.
+ */
+export function linkWallet(store: Store, book: string, wallet: string = WALLET_A): string {
+  tags += 1;
+  const key = randomBytes(32).toString("hex");
+  const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const tag = `C-${[0, 1, 2, 3].map((i) => alphabet[Math.floor(tags / alphabet.length ** i) % alphabet.length]).join("")}`;
+  const nowS = Math.floor(Date.now() / 1000);
+  store.registerConsole(key, tag, nowS);
+  store.setConsole(key, { book, state: "bound", by: "link", wallet: wallet.toLowerCase() }, nowS);
+  return key;
+}
+
+/**
+ * The console's half of one publish job: wait for the sign stage (or done), write what it issued
+ * from `wallet`, report it with `written`, and wait for done. `report` changes what the console
+ * tells the bridge.
+ */
+export async function consoleFinish(
+  pub: Publisher,
+  arkiv: FakeArkiv,
+  id: string,
+  wallet: string = WALLET_A,
+  opts: { edit?: Parameters<FakeArkiv["consoleWrite"]>[2]; report?: (w: { tx: string; run: string; listing: string }) => Record<string, unknown> } = {},
+): Promise<PublishView> {
+  await waitFor(() => pub.view(id)?.stage === "sign" || pub.view(id)?.stage === "done");
+  const v = pub.view(id)!;
+  if (v.stage === "sign") {
+    const w = arkiv.consoleWrite(wallet, v.data.issue as Issue, opts.edit);
+    pub.written(id, opts.report ? opts.report(w) : w);
+    await waitFor(() => pub.view(id)?.stage === "done");
+  }
+  return pub.view(id)!;
 }

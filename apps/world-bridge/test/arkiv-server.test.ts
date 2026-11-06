@@ -12,12 +12,13 @@ import { ArkivService } from "../src/arkiv/service.js";
 import { nullifierKey } from "../src/hmac.js";
 import { buildServer, makeHealth } from "../src/server.js";
 import { Store } from "../src/store.js";
-import { CHECKER, FakeArkiv, FakeChecker, makeLog } from "./fake-arkiv.js";
+import { CHECKER, FakeArkiv, FakeChecker, linkWallet, makeLog, WALLET_A, type Issue } from "./fake-arkiv.js";
 import { SECRET, tempDir } from "./helpers.js";
 
 const GHOST = "ef".repeat(32);
 const DAY = 86_400_000;
 const TEXT = actionText("MARINE DRIVE GP", 6170, 10);
+const RPC = "https://rpc.rabdi.db-chain.testnet.arkiv.network";
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
 let server: Server;
@@ -30,7 +31,7 @@ const lines: string[] = [];
 const dir = tempDir();
 
 function makeService(over: Partial<ConstructorParameters<typeof ArkivService>[0]> = {}) {
-  const publisher = new Publisher({ arkiv, checker: new FakeChecker(6170), store, season: 1, runExpiry: new Date(Date.now() + 60 * DAY), priceC: 10, ghostSecret: GHOST, gate: () => svc.gate() });
+  const publisher = new Publisher({ arkiv, checker: new FakeChecker(6170), store, season: 1, runExpiry: new Date(Date.now() + 60 * DAY), priceC: 10, ghostSecret: GHOST, chainId: 7794095, rpc: RPC, verifyGapMs: 1, gate: () => svc.gate() });
   return new ArkivService({
     publicRpc: "https://rpc.rabdi.db-chain.testnet.arkiv.network",
     chainId: 7794095,
@@ -53,6 +54,7 @@ before(async () => {
   arkiv = new FakeArkiv();
   store = new Store(tempDir(), SECRET);
   book = store.claimBook(nullifierKey(SECRET, "a", "n-srv"), "Orb", "0123456789abcdef", 1, "session_s").record.book;
+  linkWallet(store, book, WALLET_A);
   svc = makeService();
   await svc.probe();
   writeFileSync(join(dir, "board.html"), "<!doctype html><title>board</title>");
@@ -128,7 +130,7 @@ function svcOptions(): ConstructorParameters<typeof ArkivService>[0] {
     priceC: 10,
     checker: CHECKER,
     arkiv,
-    publisher: new Publisher({ arkiv, checker: new FakeChecker(), store, season: 1, runExpiry: new Date(Date.now() + DAY), priceC: 10, ghostSecret: GHOST }),
+    publisher: new Publisher({ arkiv, checker: new FakeChecker(), store, season: 1, runExpiry: new Date(Date.now() + DAY), priceC: 10, ghostSecret: GHOST, chainId: 7794095, rpc: RPC }),
     payments: new MockPayments(true, store),
     ghostSecret: GHOST,
     problems: [],
@@ -147,7 +149,7 @@ describe("GET /arkiv/config", () => {
       explorer: "https://rabdi.explorer.arkiv.network",
       checker: CHECKER,
       season: 1,
-      schemas: { run: "anypercent.run", listing: "anypercent.listing" },
+      schemas: { run: "anypercent.run", listing: "anypercent.listing", stamp: "anypercent.stamp" },
       price: "0.10",
       listing_days: 7,
       split_columns: ["s1", "s2", "s3", "s4"],
@@ -158,24 +160,54 @@ describe("GET /arkiv/config", () => {
 });
 
 describe("POST /arkiv/publish and GET /arkiv/publish/{id}", () => {
-  it("200 {id, expires_s: 120}; the job runs to done with {run, listing, tx}; a repeat answers the same id", async () => {
+  async function until(id: string, stages: string[]): Promise<any> {
+    let v: any;
+    for (let i = 0; i < 300; i++) {
+      v = (await call("GET", `/arkiv/publish/${id}`)).json;
+      if (stages.includes(v.stage)) break;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    return v;
+  }
+
+  it("200 {id, expires_s: 120}; sign with the issue; written {tx, run, listing} -> {ok: true}; done with the stamp; a repeat answers the same id", async () => {
     store.recordApproval("srv-jti-1", book, sha(TEXT), Math.floor(Date.now() / 1000));
     const s = await call("POST", "/arkiv/publish", body());
     assert.equal(s.status, 200);
     assert.deepEqual(Object.keys(s.json).sort(), ["expires_s", "id"]);
     assert.equal(s.json.expires_s, 120);
     assert.match(s.json.id, /^[A-Za-z0-9_-]{16,}$/);
-    let v: any;
-    for (let i = 0; i < 300; i++) {
-      v = (await call("GET", `/arkiv/publish/${s.json.id}`)).json;
-      if (v.stage === "done") break;
-      await new Promise((r) => setTimeout(r, 5));
-    }
+    const sign = await until(s.json.id, ["sign", "done"]);
+    assert.deepEqual([sign.stage, sign.ok, sign.failure], ["sign", null, null], JSON.stringify(sign));
+    assert.deepEqual(Object.keys(sign.data.issue).sort(), ["chain_id", "listing", "replaces", "rpc", "run", "run_key"]);
+    assert.deepEqual([sign.data.issue.chain_id, sign.data.issue.rpc], [7794095, RPC]);
+    // The console signs what it was issued, exactly as it came over HTTP.
+    const w = arkiv.consoleWrite(WALLET_A, sign.data.issue as Issue);
+    const r = await call("POST", `/arkiv/publish/${s.json.id}/written`, w);
+    assert.deepEqual([r.status, r.json], [200, { ok: true }]);
+    const v = await until(s.json.id, ["done"]);
     assert.deepEqual(Object.keys(v).sort(), ["data", "failure", "ok", "stage"]);
-    assert.equal(v.ok, true);
-    assert.deepEqual(Object.keys(v.data).sort(), ["listing", "replay", "run", "tx"]);
-    assert.match(v.data.run, /^0x[0-9a-f]{64}$/);
+    assert.equal(v.ok, true, JSON.stringify(v));
+    assert.deepEqual(Object.keys(v.data).sort(), ["listing", "replay", "run", "stamp", "stamp_tx", "tx"]);
+    assert.deepEqual([v.data.run, v.data.listing, v.data.tx], [w.run, w.listing, w.tx]);
+    assert.match(v.data.stamp, /^0x[0-9a-f]{64}$/);
     assert.equal((await call("POST", "/arkiv/publish", body())).json.id, s.json.id);
+    const again = await call("POST", `/arkiv/publish/${s.json.id}/written`, w);
+    assert.deepEqual([again.status, again.json], [200, { ok: true }], "a repeat");
+  });
+
+  it("POST /arkiv/publish/{id}/written: 400 bad_body, 404 unknown_id, 409 not_signing, all ls_publish_fail", async () => {
+    const k = (c: string) => `0x${c.repeat(64)}`;
+    const good = { tx: k("a"), run: k("b"), listing: k("c") };
+    const u = await call("POST", "/arkiv/publish/nope/written", good);
+    assert.deepEqual([u.status, u.json], [404, { error: "unknown_id", failure: "ls_publish_fail" }]);
+    const failed = await call("POST", "/arkiv/publish", body({ jti: "never-approved-2" }));
+    await until(failed.json.id, ["done"]);
+    const n = await call("POST", `/arkiv/publish/${failed.json.id}/written`, good);
+    assert.deepEqual([n.status, n.json], [409, { error: "not_signing", failure: "ls_publish_fail" }]);
+    for (const r of [await call("POST", `/arkiv/publish/${failed.json.id}/written`, { ...good, tx: "0x1" }), await call("POST", `/arkiv/publish/${failed.json.id}/written`, undefined, "not json")]) {
+      assert.deepEqual([r.status, r.json], [400, { error: "bad_body", failure: "ls_publish_fail" }]);
+    }
   });
 
   it("a job's failure is one of the handler's names", async () => {
@@ -275,6 +307,7 @@ describe("the access log", () => {
     const all = lines.join("\n");
     assert.match(all, /POST \/arkiv\/publish 200/);
     assert.match(all, /POST \/arkiv\/publish\/:id 404/);
+    assert.match(all, /POST \/arkiv\/publish\/:id\/written 200/);
     for (const bad of ["srv-jti-1", "big-jti", GHOST, SECRET, Buffer.from(makeLog()).toString("base64").slice(0, 40)]) {
       assert.ok(!all.includes(bad), `leaked ${bad.slice(0, 6)}`);
     }

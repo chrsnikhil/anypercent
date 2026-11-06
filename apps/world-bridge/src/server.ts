@@ -13,7 +13,9 @@
  *   POST /agentpass/{id}/cancel  the console's Circle -> {"ok": true}; idempotent
  *   POST /idkit/{id}/cancel      the same for a sign-up (added for the launcher)
  *
- *   GET  /arkiv/config, POST /arkiv/publish, GET /arkiv/publish/{id}, POST /arkiv/ghost,
+ *   GET  /arkiv/config, POST /arkiv/publish, GET /arkiv/publish/{id},
+ *   POST /arkiv/publish/{id}/written {"tx", "run", "listing"} -> {"ok": true}  (the console's own
+ *                                transaction of what the job issued at stage "sign"), POST /arkiv/ghost,
  *   GET  /board, /board/snapshot.json   the Arkiv module (src/arkiv/service.ts); /health then
  *                                adds "arkiv", "arkiv_writes" and "checker"
  *
@@ -22,7 +24,9 @@
  *                                the Hedera module (src/hedera/service.ts); /health then adds
  *                                "hedera", "hedera_pay" and "hedera_record"
  *
- *   GET  /console/{console}      {"tag", "book", "state", "credential"}; registers an unseen console
+ *   GET  /console/{console}[?wallet=0x...]  {"tag", "book", "state", "credential", "wallet",
+ *                                "wallet_pending"}; registers an unseen console and the Arkiv wallet
+ *                                it reports (used only once a World-approved link names it)
  *   POST /console/op             {"op": "link"|"release", "console": tag, "book"?} -> {"id", "action",
  *                                "approval": {"id", "qr", "code", "expires_s"}}  (owner CLIs)
  *   GET  /console/op/{id}        {"stage", "ok", "failure", "data"};  POST /console/op/{id}/cancel
@@ -97,7 +101,7 @@ export type FullHealth = Health & Partial<ArkivHealth> & Partial<HederaHealth> &
 
 /** What the routes need of the console registry (Consoles). */
 export interface ConsoleRoutes {
-  view(id: string): ConsoleView;
+  view(id: string, wallet?: string): ConsoleView;
   startOp(body: Record<string, unknown>): Promise<{ id: string; action: string; approval: Record<string, unknown> }>;
   opView(id: string): OpView | undefined;
   cancelOp(id: string): boolean;
@@ -122,6 +126,7 @@ export interface ArkivRoutes {
   config(): Record<string, unknown>;
   publish(body: Record<string, unknown>): { id: string; expires_s: number };
   publishView(id: string): PublishView;
+  written(id: string, body: Record<string, unknown>): { ok: true };
   ghost(body: Record<string, unknown>): Promise<{ log: string; log_h: string }>;
   boardHtml(): Buffer | null;
   snapshot(): Buffer | null;
@@ -290,7 +295,7 @@ async function route(deps: ServerDeps, req: IncomingMessage): Promise<[number, u
   }
 
   if (parts[0] === "arkiv") return arkivRoute(deps, req, method, parts);
-  if (parts[0] === "console") return consoleRoute(deps, req, method, parts);
+  if (parts[0] === "console") return consoleRoute(deps, req, method, parts, url);
   if (parts[0] === "scout") return scoutRoute(deps, req, method, parts);
   if (parts[0] === "house") return houseRoute(deps, req, method, parts);
   if (parts[0] === "hedera") return hederaRoute(deps, req, method, parts, url);
@@ -339,6 +344,14 @@ async function arkivRoute(deps: ServerDeps, req: IncomingMessage, method: string
     if (method === "GET" && parts.length === 3 && parts[1] === "publish") {
       if (!a) throw new HttpError(404, { error: "unknown_id", failure: "ls_publish_fail" });
       return [200, a.publishView(parts[2])];
+    }
+    if (method === "POST" && parts.length === 4 && parts[1] === "publish" && parts[3] === "written") {
+      const bad = { error: "bad_body", failure: "ls_publish_fail" };
+      const body = await readJson(req, MAX_BODY, bad, 400).catch((err: unknown) => {
+        throw err instanceof HttpError && err.status === 400 ? new HttpError(400, bad) : err;
+      });
+      if (!a) throw new HttpError(404, { error: "unknown_id", failure: "ls_publish_fail" });
+      return [200, a.written(parts[2], body)];
     }
     if (method === "POST" && parts.length === 2 && parts[1] === "ghost") {
       const bad = { error: "bad_body", failure: "buy_load_fail" };
@@ -395,7 +408,7 @@ async function hederaRoute(deps: ServerDeps, req: IncomingMessage, method: strin
 }
 
 /** /console/*: failure id_offline (the launcher only GETs; the ops are the owner's CLIs). */
-async function consoleRoute(deps: ServerDeps, req: IncomingMessage, method: string, parts: string[]): Promise<[number, unknown]> {
+async function consoleRoute(deps: ServerDeps, req: IncomingMessage, method: string, parts: string[], url: URL): Promise<[number, unknown]> {
   const c = deps.consoles ?? null;
   const err = (status: number, error: string) => new HttpError(status, { error, failure: "id_offline" });
   try {
@@ -418,7 +431,8 @@ async function consoleRoute(deps: ServerDeps, req: IncomingMessage, method: stri
     if (method === "GET" && parts.length === 2) {
       if (!/^[A-Za-z0-9_-]{16,128}$/.test(parts[1])) throw err(400, "bad_console");
       if (!c) throw err(503, "consoles_not_configured");
-      return [200, c.view(parts[1])];
+      const wallet = url.searchParams.get("wallet");
+      return [200, wallet === null ? c.view(parts[1]) : c.view(parts[1], wallet)];
     }
   } catch (e) {
     if (e instanceof ConsoleOpRefused) throw err(e.status, e.error);

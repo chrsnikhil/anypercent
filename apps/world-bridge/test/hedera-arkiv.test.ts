@@ -20,7 +20,7 @@ import { ArkivService, RouteError } from "../src/arkiv/service.js";
 import { HederaPayments } from "../src/hedera/payments.js";
 import { nullifierKey } from "../src/hmac.js";
 import { Store } from "../src/store.js";
-import { CHECKER, FakeArkiv, FakeChecker, makeLog } from "./fake-arkiv.js";
+import { CHECKER, consoleFinish, FakeArkiv, FakeChecker, linkWallet, makeLog, WALLET_A } from "./fake-arkiv.js";
 import { SECRET, tempDir, waitFor } from "./helpers.js";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -36,7 +36,8 @@ function setup() {
   const store = new Store(dir, SECRET);
   const rec = store.claimBook(nullifierKey(SECRET, "act", `hk-${seq}`), "Orb", "0123456789abcdef", 1, "session_x").record;
   const arkiv = new FakeArkiv();
-  const pub = new Publisher({ arkiv, checker: new FakeChecker(6170), store, season: 1, runExpiry: new Date(Date.now() + 60 * 86_400_000), priceC: 10, ghostSecret: GHOST, writeTimeoutMs: 200 });
+  const pub = new Publisher({ arkiv, checker: new FakeChecker(6170), store, season: 1, runExpiry: new Date(Date.now() + 60 * 86_400_000), priceC: 10, ghostSecret: GHOST, chainId: 7794095, rpc: "https://rpc.example", writeTimeoutMs: 200, verifyGapMs: 1 });
+  linkWallet(store, rec.book, WALLET_A);
   const log = makeLog("MDGP", 4, 6461, 64, 500 + seq);
   const approve = (jti: string, text: string) => store.recordApproval(jti, rec.book, sha(text), Math.floor(Date.now() / 1000));
   const body = (over: Record<string, unknown> = {}) => ({
@@ -51,11 +52,8 @@ function setup() {
     log: Buffer.from(log).toString("base64"),
     ...over,
   });
-  const publish = async (over: Record<string, unknown> = {}): Promise<PublishView> => {
-    const { id } = pub.start(body(over));
-    await waitFor(() => pub.view(id)?.stage === "done");
-    return pub.view(id)!;
-  };
+  /** The whole listing: the checks, the console signing from its linked wallet, the stamp. */
+  const publish = async (over: Record<string, unknown> = {}): Promise<PublishView> => consoleFinish(pub, arkiv, pub.start(body(over)).id);
   return { dir, store, rec, arkiv, pub, log, approve, body, publish };
 }
 
@@ -123,10 +121,10 @@ describe("publish with a payout account", () => {
     const plain = actionText(TITLE, 6170, 10);
     s3.approve("jti-a", plain);
     assert.equal((await s3.publish({ action: plain, pay_to: undefined })).failure, "ls_mismatch", "registry names one, body none");
-    assert.equal(s3.arkiv.batches.length, 0);
+    assert.deepEqual([s3.arkiv.batches.length, s3.arkiv.consoleTxs.length], [0, 0]);
   });
 
-  it("a relist with a payout account replaces the run's old listing (no pay_to) in one batch", async () => {
+  it("a relist with a payout account replaces the run's old listing (no pay_to) in the console's one transaction; the run keeps its stamp", async () => {
     const s = setup();
     const plain = actionText(TITLE, 6170, 10);
     s.approve("jti-old", plain);
@@ -139,8 +137,10 @@ describe("publish with a payout account", () => {
     assert.equal(second.ok, true, JSON.stringify(second));
     assert.equal(second.data.run, first.data.run);
     assert.notEqual(second.data.listing, oldListing);
-    assert.deepEqual(s.arkiv.batches.map((b) => b.kind), ["run+listing", "listing"]);
-    assert.equal(s.arkiv.listings.find((l) => l.key === oldListing)?.live, false, "the old listing went in the same batch");
+    assert.equal(second.data.stamp, first.data.stamp);
+    assert.deepEqual(s.arkiv.consoleTxs.map((t) => [t.creates, t.deletes]), [[2, 0], [1, 1]]);
+    assert.deepEqual(s.arkiv.batches.map((b) => b.kind), ["stamp"], "one stamp for the run");
+    assert.equal(s.arkiv.listings.find((l) => l.key === oldListing)?.live, false, "the old listing went in the same transaction");
     assert.equal(s.arkiv.listings.filter((l) => l.live).length, 1);
     assert.equal(s.arkiv.listings.find((l) => l.live)?.spec.values.pay_to, ACCT);
   });
@@ -153,7 +153,7 @@ describe("publish with a payout account", () => {
     s.approve("jti-b", actionText(TITLE, 6170, 10, ACCT));
     const second = await s.publish({ jti: "jti-b" });
     assert.equal(second.data.listing, first.data.listing);
-    assert.equal(s.arkiv.batches.length, 1);
+    assert.deepEqual([s.arkiv.batches.length, s.arkiv.consoleTxs.length], [1, 1]);
   });
 });
 

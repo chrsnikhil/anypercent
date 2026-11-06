@@ -281,3 +281,108 @@ describe("the service's real port reads live-shaped rows", () => {
     assert.equal(l?.price, "0.1");
   });
 });
+
+describe("the real port reads a console's entity and the checker's stamp (console-owned records)", () => {
+  const W = "0xA1a1a1A1a1a1a1a1a1A1a1a1a1a1a1a1a1a1a1A1"; // a console wallet, as the node checksums it
+
+  it("SdkArkiv.getEntity: any creator, the flags, the schema tag, every attribute typed as toSdkValues types it", async () => {
+    const { SdkArkiv } = await import("../src/arkiv/client.js");
+    const { toSdkValues } = await import("../src/arkiv/schema.js");
+    const { createServer } = await import("node:http");
+    const runKey = `0x${"1a7d".repeat(16)}`;
+    const asked: Array<{ method: string; params: string[] }> = [];
+    const reply = {
+      key: K,
+      owner: W.toLowerCase(),
+      creator: W.toLowerCase(),
+      expiresAt: "0x41eee8",
+      creationFlags: { readonly: true, permissionlessExtension: false, raw: 1 },
+      attributes: [
+        { name: "arkiv.schema", type: "str", value: "anypercent.listing" },
+        { name: "run", type: "bytes32", value: runKey },
+        { name: "game", type: "str", value: "MDGP" },
+        { name: "season", type: "i32", value: 1 },
+        { name: "frames", type: "u64", value: "0x181a" },
+        { name: "log_h", type: "str", value: H },
+        { name: "price", type: "dec", value: "0.1" },
+        { name: "seller", type: "str", value: "5a5a5a5a5a5a5a5a" },
+        { name: "book", type: "str", value: "ANY-6PS" },
+        { name: "human", type: "bool", value: true },
+      ],
+    };
+    // A node on loopback that answers arkiv_getEntity as Rabdi does (null for no live entity).
+    const node = createServer((req, res) => {
+      let raw = "";
+      req.on("data", (c) => (raw += c));
+      req.on("end", () => {
+        const call = JSON.parse(raw) as { id: number; method: string; params: string[] };
+        asked.push(call);
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: call.id, result: call.params[0] === K ? reply : null }));
+      });
+    });
+    await new Promise<void>((r) => node.listen(0, "127.0.0.1", r));
+    try {
+      const { port: p } = node.address() as { port: number };
+      const port = new SdkArkiv({ rpcUrl: `http://127.0.0.1:${p}`, accessKey: "unused-in-tests", checkerAddress: C });
+      const e = await port.getEntity(K);
+      assert.equal(asked[0].method, "arkiv_getEntity");
+      assert.ok(e);
+      assert.deepEqual([e.key, e.creator, e.owner, e.expiresAt, e.schema], [K, W.toLowerCase(), W.toLowerCase(), 4_321_000n, "anypercent.listing"]);
+      assert.deepEqual(e.flags, { readonly: true, permissionlessExtension: false });
+      assert.equal("arkiv.schema" in e.values, false);
+      const want = toSdkValues("listing", { run: runKey, game: "MDGP", season: 1, frames: 6170, log_h: H, price: "0.1", seller: "5a5a5a5a5a5a5a5a", book: "ANY-6PS", human: true }) as Record<string, { type: string; value: unknown }>;
+      assert.deepEqual(Object.keys(e.values).sort(), Object.keys(want).sort());
+      for (const [name, w] of Object.entries(want)) {
+        const got: { type: string; value: unknown } = e.values[name];
+        assert.equal(got.type, w.type, name);
+        assert.equal(typeof got.value === "string" ? got.value.toLowerCase() : got.value, typeof w.value === "string" ? w.value.toLowerCase() : w.value, name);
+      }
+      assert.equal(await port.getEntity(`0x${"9".repeat(64)}`), null, "no live entity: null");
+    } finally {
+      await new Promise<void>((r) => node.close(() => r()));
+    }
+  });
+
+  it("SdkArkiv.stampByLogHash: Q7 on stamps, pinned to the checker, decoded with its console and copied splits", async () => {
+    const { SdkArkiv } = await import("../src/arkiv/client.js");
+    const runKey = `0x${"1a7d".repeat(16)}`;
+    const sent: string[] = [];
+    class Stub extends SdkArkiv {
+      override async query(query: string) {
+        sent.push(query);
+        const attributes = [
+          { name: "arkiv.schema", type: "str", value: "anypercent.stamp" },
+          { name: "run", type: "bytes32", value: runKey },
+          { name: "console", type: "str", value: W.toLowerCase() },
+          { name: "game", type: "str", value: "MDGP" },
+          { name: "season", type: "i32", value: 1 },
+          { name: "frames", type: "u64", value: "0x181a" },
+          { name: "log_h", type: "str", value: H },
+          { name: "book", type: "str", value: "ANY-6PS" },
+          { name: "human", type: "bool", value: true },
+          { name: "s1", type: "u64", value: "0x827" },
+          { name: "s2", type: "u64", value: "0x7cb" },
+          { name: "s3", type: "u64", value: "0x828" },
+          { name: "split_kind", type: "str", value: "lap" },
+          { name: "final_hash", type: "u64", value: "0x225d59fd" },
+          { name: "tool", type: "str", value: "arcade_replay sha256:a992006e6280" },
+        ];
+        return { data: [{ key: K, creator: C_LOWER, expiresAt: "0x10", attributes }], blockNumber: 1n };
+      }
+    }
+    const port = new Stub({ rpcUrl: "http://127.0.0.1:9", accessKey: "unused-in-tests", checkerAddress: C });
+    const st = await port.stampByLogHash(H);
+    assert.equal(sent[0], Q.qStampByLogHash(H, C));
+    assert.equal(sent[0], `arkiv.schema = str('anypercent.stamp') AND log_h = str('${H}') AND $creator = addr(${C})`);
+    assert.ok(st);
+    assert.deepEqual([st.run, st.console, st.book, st.frames, st.final_hash, st.splits], [runKey, W.toLowerCase(), "ANY-6PS", 6170n, 576543229n, [2087, 1995, 2088]]);
+  });
+
+  it("Q7 on stamps renders as the SDK's own builder would", () => {
+    const sel = () => createPublicClient({ chain: rabdi({ accessKey: "x" }), transport: custom({ request: async () => null }) }).select({ $key: true });
+    return import("../src/arkiv/schema.js").then(({ Stamp }) => {
+      assert.equal(sel().from(Stamp).where(eq("log_h", str(H))).createdBy(C).toString(), Q.qStampByLogHash(H, C));
+    });
+  });
+});

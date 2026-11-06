@@ -41,7 +41,7 @@ export interface BookRecord {
   session_id?: string;
 }
 
-/** What one listing approval allows: exactly one run row plus one listing row, for this book. */
+/** What one listing approval allows: one run and its listing (the console writes them, the checker stamps), for this book. */
 export interface ApprovalRecord {
   book: string;
   /** sha256 (hex) of the action text World App showed. */
@@ -50,10 +50,23 @@ export interface ApprovalRecord {
   at: number;
   /** Set when spent: the log (sha256 hex) this approval put on Arkiv. */
   log_h?: string;
-  /** Set once the write landed: what /arkiv/publish answered. Keys and tx hashes are public. */
-  result?: { run: string; listing: string; tx: string | null };
+  /**
+   * Set once the listing is done: what /arkiv/publish answered. Keys and tx hashes are public. `tx`
+   * is the console's transaction (null when the bridge found its entities without being told),
+   * `stamp`/`stamp_tx` the checker's stamp; results from before console-owned records have none.
+   */
+  result?: PublishResult;
   /** Set when spent on an owner op instead of a listing: "console-link:C-7QZP", "house:3f9c0a", ... */
   used_for?: string;
+}
+
+/** What one listing approval's publish answered (keys and transaction hashes, all public). */
+export interface PublishResult {
+  run: string;
+  listing: string;
+  tx: string | null;
+  stamp?: string;
+  stamp_tx?: string | null;
 }
 
 export type ConsoleState = "unbound" | "bound" | "released";
@@ -68,6 +81,10 @@ export interface ConsoleRecord {
   by: "signup" | "signin" | "link" | "release" | null;
   /** Unix seconds of the last change. */
   at: number;
+  /** The Arkiv wallet the console last reported (lowercase 0x address); unauthenticated, like the id. */
+  wallet_reported?: string;
+  /** The wallet a World-approved link named (lowercase): the only one its runs are stamped from. */
+  wallet?: string;
 }
 
 export type HouseStatus = "staged" | "approved" | "written";
@@ -358,16 +375,16 @@ export class Store {
     return "spent";
   }
 
-  /** Remember what a spent approval's write answered, so a retry answers the same. */
-  setApprovalResult(jti: string, result: { run: string; listing: string; tx: string | null }): void {
+  /** Remember what a spent approval's publish answered, so a retry answers the same. */
+  setApprovalResult(jti: string, result: PublishResult): void {
     const rec = this.state.approvals[approvalKey(jti)];
     if (!rec) return;
     rec.result = result;
     this.write();
   }
 
-  /** What an earlier write of this log answered, if this bridge made it. */
-  resultForLog(logH: string): { run: string; listing: string; tx: string | null } | undefined {
+  /** What an earlier publish of this log answered, if this bridge made it. */
+  resultForLog(logH: string): PublishResult | undefined {
     for (const rec of Object.values(this.state.approvals)) {
       if (rec.log_h === logH && rec.result) return rec.result;
     }
@@ -578,16 +595,38 @@ export class Store {
     return rec;
   }
 
-  /** Change a console's binding (the caller has checked the rules). */
-  setConsole(key: string, change: Pick<ConsoleRecord, "book" | "state" | "by">, nowS: number): ConsoleRecord | undefined {
+  /**
+   * Change a console's binding (the caller has checked the rules). `wallet`: the approved wallet
+   * (a link names it), null to clear it (a release); absent leaves it as it is.
+   */
+  setConsole(key: string, change: Pick<ConsoleRecord, "book" | "state" | "by"> & { wallet?: string | null }, nowS: number): ConsoleRecord | undefined {
     const rec = this.state.consoles[key];
     if (!rec) return undefined;
     rec.book = change.book;
     rec.state = change.state;
     rec.by = change.by;
+    if (change.wallet === null) delete rec.wallet;
+    else if (change.wallet !== undefined) rec.wallet = change.wallet.toLowerCase();
     rec.at = nowS;
     this.write();
     return rec;
+  }
+
+  /** The wallet a console reports (lowercased). True when it changed. */
+  reportConsoleWallet(key: string, wallet: string): boolean {
+    const rec = this.state.consoles[key];
+    const w = wallet.toLowerCase();
+    if (!rec || rec.wallet_reported === w) return false;
+    rec.wallet_reported = w;
+    this.write();
+    return true;
+  }
+
+  /** The approved wallets of the consoles bound to this book, each once: whose runs may be stamped for it. */
+  consoleWalletsFor(book: string): string[] {
+    const out = new Set<string>();
+    for (const c of Object.values(this.state.consoles)) if (c.state === "bound" && c.book === book && c.wallet) out.add(c.wallet);
+    return [...out];
   }
 
   // ---- the house's BOT batches ---------------------------------------------------------------

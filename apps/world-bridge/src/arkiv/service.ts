@@ -3,7 +3,10 @@
  *
  *   GET  /arkiv/config        chain id, public RPC, explorer, checker, season, schemas, price, listing days
  *   POST /arkiv/publish       a World-approved listing -> {id, expires_s}        (publish.ts)
- *   GET  /arkiv/publish/{id}  {stage, ok, failure, data}
+ *   GET  /arkiv/publish/{id}  {stage, ok, failure, data}; at stage "sign", data.issue is what the
+ *                             console signs from its own wallet
+ *   POST /arkiv/publish/{id}/written  {tx, run, listing}: the console's transaction -> {ok: true};
+ *                             the job then checks its entities, stamps and reaches done
  *   POST /arkiv/ghost         {run, receipt} -> {log, log_h}: a listed ghost, decrypted here
  *   GET  /board, /board/snapshot.json   the web board and its fallback snapshot
  *
@@ -20,7 +23,7 @@ import { decryptGhost, sha256Hex } from "./ghost.js";
 import type { PaymentCheck } from "./payments.js";
 import { PublishRefused, priceText, type Publisher, type PublishView, type WriteGate } from "./publish.js";
 import { KEY_RE } from "./queries.js";
-import { LISTING_DAYS, LISTING_SCHEMA, RUN_SCHEMA, SPLIT_COLUMNS } from "./schema.js";
+import { LISTING_DAYS, LISTING_SCHEMA, RUN_SCHEMA, SPLIT_COLUMNS, STAMP_SCHEMA } from "./schema.js";
 
 export class RouteError extends Error {
   constructor(public readonly status: number, public readonly body: { error: string; failure: string }) {
@@ -140,7 +143,7 @@ export class ArkivService {
       explorer: ARKIV_EXPLORER,
       checker: this.opts.checker,
       season: this.opts.season,
-      schemas: { run: RUN_SCHEMA, listing: LISTING_SCHEMA },
+      schemas: { run: RUN_SCHEMA, listing: LISTING_SCHEMA, stamp: STAMP_SCHEMA },
       price: Number.isInteger(this.opts.priceC) ? priceText(this.opts.priceC) : null,
       listing_days: LISTING_DAYS,
       split_columns: [...SPLIT_COLUMNS],
@@ -163,6 +166,17 @@ export class ArkivService {
     const v = this.opts.publisher?.view(id);
     if (!v) throw new RouteError(404, { error: "unknown_id", failure: PUBLISH_FAILURE });
     return v;
+  }
+
+  /** The console's report of its transaction: 404 unknown_id, 400 bad_body, 409 not_signing. */
+  written(id: string, body: Record<string, unknown>): { ok: true } {
+    if (!this.opts.publisher) throw new RouteError(404, { error: "unknown_id", failure: PUBLISH_FAILURE });
+    try {
+      return this.opts.publisher.written(id, body);
+    } catch (err) {
+      if (err instanceof PublishRefused) throw new RouteError(err.status, { error: err.error, failure: PUBLISH_FAILURE });
+      throw err;
+    }
   }
 
   /**

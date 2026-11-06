@@ -6,7 +6,7 @@
  * - its creator is not the pinned checker (when a checker is pinned);
  * - its `arkiv.schema` is not the expected one;
  * - (runs, when both ghost columns were asked for) it has neither or both of `log` and `log_enc`;
- * - (listings, when both were asked for) it has neither or both of `book` and `label`.
+ * - (listings and stamps, when both were asked for) it has neither or both of `book` and `label`.
  *
  * A run's lap splits (`s1`..`s4`, `split_kind`) are read with `splitsOf`: splits that do not check
  * out (not contiguous from s1, another kind, a zero, a sum other than `frames`) are treated as absent
@@ -119,7 +119,7 @@ export function decodeRow(
   if (asked.includes("log") && asked.includes("log_enc") && (values.log === undefined) === (values.log_enc === undefined)) {
     return { dropped: "needs exactly one of log and log_enc" };
   }
-  if ("seller" in spec && asked.includes("book") && asked.includes("label") && (values.book === undefined) === (values.label === undefined)) {
+  if (("seller" in spec || "console" in spec) && asked.includes("book") && asked.includes("label") && (values.book === undefined) === (values.label === undefined)) {
     return { dropped: "needs exactly one of book and label" };
   }
   let expiresAt: bigint | null = null;

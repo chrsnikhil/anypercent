@@ -5,6 +5,8 @@
  *
  * Arkiv (src/arkiv/*): the checker's key lives only in this .env. A probe every 30 s checks
  * eth_chainId against ARKIV_CHAIN_ID and the checker's balance, so /health never waits on Arkiv.
+ * Players' runs and listings are written by each console's own wallet; the checker only stamps
+ * them (src/arkiv/publish.ts). No console key ever reaches this process.
  *
  * Hedera (src/hedera/*): the operator and agent keys live only in this .env. A probe every 30 s
  * reads the mirror (HEDERA_USDC once, the agent's USDC, the operator's HBAR) and the
@@ -186,6 +188,9 @@ const publisher: Publisher | null =
         runExpiry: expiry,
         priceC: ak.priceC,
         ghostSecret: ak.ghostSecret,
+        // Issued to the console with the specs it signs: the chain, and the RPC without the access key.
+        chainId: ak.chainId,
+        rpc: ak.rpc,
         // Called per request, after `arkiv` below exists: config, chain and balance as last probed.
         gate: () => arkiv.gate(),
         log,

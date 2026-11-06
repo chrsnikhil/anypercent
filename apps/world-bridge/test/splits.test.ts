@@ -22,7 +22,7 @@ import { LISTING_TYPES, Run, RUN_TYPES } from "../src/arkiv/schema.js";
 import { defaultSplitsTool, explorerLinks, loadConfig, splitsReady } from "../src/config.js";
 import { nullifierKey } from "../src/hmac.js";
 import { Store } from "../src/store.js";
-import { FakeArkiv, FakeChecker, makeLog } from "./fake-arkiv.js";
+import { consoleFinish, FakeArkiv, FakeChecker, linkWallet, makeLog, WALLET_A } from "./fake-arkiv.js";
 import { FakeSplits } from "./fake-splits.js";
 import { SECRET, tempDir, waitFor } from "./helpers.js";
 
@@ -49,8 +49,12 @@ function setup(splits: FakeSplits | null = new FakeSplits(), frames = 6170) {
     runExpiry: new Date(Date.now() + 60 * 86_400_000),
     priceC: 10,
     ghostSecret: GHOST,
+    chainId: 7794095,
+    rpc: "https://rpc.example",
+    verifyGapMs: 1,
     log: (l) => lines.push(l),
   });
+  linkWallet(store, rec.book, WALLET_A);
   const action = actionText("MARINE DRIVE GP", frames, 10);
   store.recordApproval("jti-split", rec.book, sha(action), Math.floor(Date.now() / 1000));
   const log = makeLog("MDGP", 4, frames);
@@ -58,13 +62,12 @@ function setup(splits: FakeSplits | null = new FakeSplits(), frames = 6170) {
   return { store, arkiv, checker, splits, lines, pub, body };
 }
 
+/** The listing through the console (its linked wallet signs what was issued) to the stamp. */
 async function publish(s: ReturnType<typeof setup>): Promise<PublishView> {
-  const { id } = s.pub.start(s.body);
-  await waitFor(() => s.pub.view(id)?.stage === "done");
-  return s.pub.view(id)!;
+  return consoleFinish(s.pub, s.arkiv, s.pub.start(s.body).id);
 }
 
-describe("publish writes lap splits on the run row", () => {
+describe("publish issues lap splits on the run (and the stamp copies them)", () => {
   it("the happy path: s1..s3 and split_kind, from arcade_splits, and explorer links in the done view", async () => {
     const s = setup();
     const v = await publish(s);
@@ -76,6 +79,8 @@ describe("publish writes lap splits on the run row", () => {
       tx: `https://rabdi.explorer.arkiv.network/tx/${v.data.tx}`,
       run: `https://rabdi.explorer.arkiv.network/entity/${v.data.run}`,
       listing: `https://rabdi.explorer.arkiv.network/entity/${v.data.listing}`,
+      stamp: `https://rabdi.explorer.arkiv.network/entity/${v.data.stamp}`,
+      stamp_tx: `https://rabdi.explorer.arkiv.network/tx/${v.data.stamp_tx}`,
     });
   });
 

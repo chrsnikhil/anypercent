@@ -6,12 +6,16 @@
  * Each op starts one World session approval of the book's owner on the running bridge, with the
  * exact text World App shows:
  *
- *   link:    Link console C-7QZP to record book ANY-6PS: PB on it spends this book's coach budget
+ *   link:    Link console C-7QZP (wallet 0x1a2b…9f3e) to record book ANY-6PS: PB on it spends this book's coach budget
  *   release: Release console C-7QZP from record book ANY-6PS
  *
  * and changes the binding only after that approval is recorded (checked as publish checks one, then
  * spent on this op). Ctrl-C cancels it. The console follows within 5 s. Prints the text, the QR and
  * the code, the stages, and the console's binding at the end. [--bridge http://HOST:PORT]
+ *
+ * The link names the Arkiv wallet the console reported (its runs are stamped only from that wallet;
+ * a console that reported none is linked with the text above minus the wallet). A bound console
+ * that reports a new wallet takes one more link to its own book.
  */
 import { arg, bridgeBase, call, die, follow, loadEnv, row, showApproval } from "./approve-common.js";
 

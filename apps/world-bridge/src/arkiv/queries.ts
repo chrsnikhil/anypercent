@@ -106,7 +106,11 @@ export function q6Run(key: string, checker: string, names: SchemaNames = REAL): 
   return `arkiv.schema = ${sv(names.run)} AND $key = key(${entityKey(key)}) AND $creator = addr(${checksum(checker)})`;
 }
 
-/** Q7: the live run with this log, if any (the service's dedupe before a write; limit 1). */
+/**
+ * Q7: the live run with this log, if any (limit 1). Pinned to the checker it finds the old rows the
+ * checker wrote itself; pinned to a console's wallet, a run that console wrote (publish looks for a
+ * run whose transaction landed while the console was not told).
+ */
 export function q7RunByLogHash(logH: string, checker: string, names: SchemaNames = REAL): string {
   need(LOG_H_RE.test(logH), "log_h");
   return `arkiv.schema = ${sv(names.run)} AND log_h = ${sv(logH)} AND $creator = addr(${checksum(checker)})`;
@@ -131,10 +135,22 @@ export function q10LapLeaders(g: string, s: number, checker: string, lap = 2, na
   return `arkiv.schema = ${sv(names.run)} AND game = ${sv(game(g))} AND season = i32(${season(s)}) AND $creator = addr(${checksum(checker)}) ORDER BY s${lap}:u64 ASC`;
 }
 
-/** The service's own: the live listing of one run (dedupe: write a listing only when none is live). */
+/**
+ * The service's own: the live listing of one run (dedupe: write a listing only when none is live).
+ * `checker` is the creator pin: the checker for its old rows, a console's wallet for its own.
+ */
 export function qListingForRun(runKey: string, checker: string, names: SchemaNames = REAL): string {
   return `arkiv.schema = ${sv(names.listing)} AND run = key(${entityKey(runKey)}) AND $creator = addr(${checksum(checker)})`;
 }
+
+/** Q7 on stamps: the checker's live stamp of the run with this log, if any (publish's dedupe; limit 1). */
+export function qStampByLogHash(logH: string, checker: string, names: SchemaNames = REAL): string {
+  need(LOG_H_RE.test(logH), "log_h");
+  return `arkiv.schema = ${sv(names.stamp)} AND log_h = ${sv(logH)} AND $creator = addr(${checksum(checker)})`;
+}
+
+/** What a stamp read selects: every column (a stamp has no blob). */
+export const STAMP_ATTRS = ["run", "console", "game", "season", "frames", "log_h", "book", "label", "human", "s1", "s2", "s3", "s4", "split_kind", "final_hash", "tool"] as const;
 
 /** The `select` of an arkiv_query request (RpcSelect). */
 export interface RpcSelect {

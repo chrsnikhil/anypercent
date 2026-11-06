@@ -9,21 +9,45 @@
  *   queue: one wallet, one entity nonce, so a batch's predicted keys hold;
  * - the access key rides in the RPC URL's last path segment and never reaches a log line: every
  *   error is reduced to a short reason with the key and anything key-shaped removed.
+ *
+ * Console-owned records (spec: the console owns its records): a player's run and listing are
+ * written by the console's own wallet, never here. The checker writes the stamp (`writeStamp`) once
+ * `getEntity` read the console's entities back and they were exactly what publish issued.
+ * `writeRunAndListing` and `writeListing` are the checker-signed paths from before; publish no
+ * longer calls them.
  */
 import {
   createPublicClient,
   createWalletClient,
   ExpirationTime,
+  NoEntityFoundError,
   type PublicArkivClient,
   type WalletArkivClient,
 } from "@arkiv-network/sdk";
 import { rabdi } from "@arkiv-network/sdk/chains";
-import { bool, bytes, dec, i32, key as keyValue, str, u64 } from "@arkiv-network/sdk/schema";
 import { http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { queryParams, qListingForRun, q1Board, q2Listings, q6Listing, q6Run, q7RunByLogHash, LISTING_ATTRS, RUN_ALL_ATTRS, RUN_BOARD_ATTRS, selectOf, type RpcSelect } from "./queries.js";
+import {
+  queryParams,
+  qListingForRun,
+  q1Board,
+  q2Listings,
+  q6Listing,
+  q6Run,
+  q7RunByLogHash,
+  qStampByLogHash,
+  LISTING_ATTRS,
+  RUN_ALL_ATTRS,
+  RUN_BOARD_ATTRS,
+  SCHEMA_ATTR,
+  STAMP_ATTRS,
+  selectOf,
+  type RpcSelect,
+} from "./queries.js";
 import { decodePage, splitsOf, type DecodedRow } from "./rows.js";
-import { LISTING_TYPES, Listing, REAL, Run, RUN_TYPES, SmokeListing, SmokeRun, type SchemaNames } from "./schema.js";
+import { LISTING_TYPES, Listing, REAL, Run, RUN_TYPES, SmokeListing, SmokeRun, SmokeStamp, Stamp, STAMP_TYPES, toSdkValues, type SchemaNames } from "./schema.js";
+
+export { toSdkValues };
 
 export interface RunRow {
   key: string;
@@ -124,6 +148,99 @@ export interface ListingValues {
   hcs?: string;
 }
 
+/**
+ * What a stamp is written with (spec: Entities, anypercent.stamp): the run it names, the wallet
+ * that created that run (lowercase), the run's copied columns, and what replayed it.
+ */
+export interface StampValues {
+  run: string;
+  console: string;
+  game: string;
+  season: number;
+  frames: number;
+  log_h: string;
+  /** Exactly one of book (a person's run) and label (the house's). */
+  book?: string;
+  label?: string;
+  human: boolean;
+  s1?: number;
+  s2?: number;
+  s3?: number;
+  s4?: number;
+  split_kind?: string;
+  /** The replay's final hash as the tool printed it; absent when it printed none. */
+  final_hash?: number;
+  tool: string;
+}
+
+/**
+ * The stamp for one run: its key, the console wallet that created it (lowercased here), the copied
+ * columns (game, season, frames, log_h, book or label, human, the splits), the replay's final hash
+ * (left out when null) and the replay tool's tag.
+ */
+export function stampValues(run: RunValues, runKey: string, consoleWallet: string, finalHash: number | null, tool: string): StampValues {
+  return {
+    run: runKey.toLowerCase(),
+    console: consoleWallet.toLowerCase(),
+    game: run.game,
+    season: run.season,
+    frames: run.frames,
+    log_h: run.log_h,
+    ...(run.book !== undefined ? { book: run.book } : {}),
+    ...(run.label !== undefined ? { label: run.label } : {}),
+    human: run.human,
+    ...(run.s1 !== undefined ? { s1: run.s1 } : {}),
+    ...(run.s2 !== undefined ? { s2: run.s2 } : {}),
+    ...(run.s3 !== undefined ? { s3: run.s3 } : {}),
+    ...(run.s4 !== undefined ? { s4: run.s4 } : {}),
+    ...(run.split_kind !== undefined ? { split_kind: run.split_kind } : {}),
+    ...(finalHash !== null ? { final_hash: finalHash } : {}),
+    tool,
+  };
+}
+
+/** A stamp as the readers decode it. */
+export interface StampRow {
+  key: string;
+  creator: string | null;
+  expiresAt: bigint | null;
+  run: string;
+  console: string;
+  game: string;
+  season: number;
+  frames: bigint;
+  log_h: string;
+  book?: string;
+  label?: string;
+  human: boolean;
+  /** The copied lap splits when they check out (rows.splitsOf), else absent. */
+  splits?: number[];
+  final_hash?: bigint;
+  tool: string;
+}
+
+/** One attribute as the SDK types it: u64 a bigint, i32 a number, key and bytes 0x hex, dec its canonical string. */
+export interface TypedValue {
+  type: string;
+  value: string | number | bigint | boolean;
+}
+
+/** One live entity by key, as `arkiv_getEntity` answers: who made it, its flags and every attribute. */
+export interface EntityRow {
+  key: string;
+  /** Lowercase; null when the node did not say. */
+  creator: string | null;
+  owner: string | null;
+  /** The block it expires at. */
+  expiresAt: bigint | null;
+  /** Its creation flags (fixed for its life), or null when the node did not say. */
+  flags: Flags | null;
+  /** Its `arkiv.schema` tag, or null when it has none. */
+  schema: string | null;
+  /** Every other attribute, by name. */
+  values: Record<string, TypedValue>;
+}
+
 /** One house pair: a BOT run and its listing (the listing's `run` is filled in by the writer). */
 export interface HousePair {
   run: CreateSpec<RunValues>;
@@ -158,15 +275,21 @@ export interface ArkivPort {
   chainId(): Promise<number>;
   /** An address's balance, in wei of tGLM. */
   balance(address: string): Promise<bigint>;
-  /** Q7: the live run the checker wrote with this log, if any. */
-  runByLogHash(logH: string): Promise<RunRow | null>;
-  /** The live listing the checker wrote for this run, if any. */
-  liveListingFor(runKey: string): Promise<ListingRow | null>;
+  /** Q7: the live run with this log, if any, created by `owner` (default: the checker). */
+  runByLogHash(logH: string, owner?: string): Promise<RunRow | null>;
+  /** The live listing of this run, if any, created by `owner` (default: the checker). */
+  liveListingFor(runKey: string, owner?: string): Promise<ListingRow | null>;
+  /** Q7 on stamps: the checker's live stamp of the run with this log, if any. */
+  stampByLogHash(logH: string): Promise<StampRow | null>;
+  /** One live entity by key, whoever created it (null: none, deleted or expired). */
+  getEntity(key: string): Promise<EntityRow | null>;
+  /** One stamp, signed by the checker. */
+  writeStamp(spec: CreateSpec<StampValues>): Promise<{ stamp: string; tx: string }>;
   /** Q6 on runs: one live run the checker wrote, with its ghost bytes when `withLog`. */
   getRun(runKey: string, withLog: boolean): Promise<RunRow | null>;
   /** Q6 on listings: one live listing the checker wrote, with `pay_to` and `hcs`. */
   getListing(listingKey: string): Promise<ListingRow | null>;
-  /** One batch: the run, then its listing (run = the run's predicted key). */
+  /** One batch: the run, then its listing (run = the run's predicted key). The smoke script's only. */
   writeRunAndListing(run: CreateSpec<RunValues>, listing: CreateSpec<ListingValues>): Promise<Written>;
   /**
    * A listing for a run already on Arkiv. With `replaces`, the same batch deletes that (older) live
@@ -247,42 +370,26 @@ export function listingFromRow(r: DecodedRow): ListingRow {
   };
 }
 
-const TYPES = { run: RUN_TYPES, listing: LISTING_TYPES } as const;
-
-/** Plain values -> the SDK's typed values, by the schema's column types. */
-export function toSdkValues(kind: "run" | "listing", values: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [name, v] of Object.entries(values)) {
-    if (v === undefined) continue;
-    const col = TYPES[kind][name];
-    if (!col) throw new ArkivError(`unknown column ${name}`);
-    switch (col.type) {
-      case "str":
-        out[name] = str(v as string);
-        break;
-      case "i32":
-        out[name] = i32(v as number);
-        break;
-      case "u64":
-        out[name] = u64(BigInt(v as number | bigint));
-        break;
-      case "bool":
-        out[name] = bool(v as boolean);
-        break;
-      case "dec":
-        out[name] = dec(String(v));
-        break;
-      case "key":
-        out[name] = keyValue(v as Hex);
-        break;
-      case "bytes":
-        out[name] = bytes(v as Uint8Array);
-        break;
-      default:
-        throw new ArkivError(`unhandled type ${col.type}`);
-    }
-  }
-  return out;
+export function stampFromRow(r: DecodedRow): StampRow {
+  const v = r.values;
+  const splits = splitsOf(v);
+  return {
+    key: r.key,
+    creator: r.creator,
+    expiresAt: r.expiresAt,
+    run: v.run as string,
+    console: (v.console as string).toLowerCase(),
+    game: v.game as string,
+    season: v.season as number,
+    frames: v.frames as bigint,
+    log_h: v.log_h as string,
+    ...(typeof v.book === "string" ? { book: v.book } : {}),
+    ...(typeof v.label === "string" ? { label: v.label } : {}),
+    human: v.human as boolean,
+    ...(splits ? { splits } : {}),
+    ...(typeof v.final_hash === "bigint" ? { final_hash: v.final_hash } : {}),
+    tool: v.tool as string,
+  };
 }
 
 export function toExpiration(e: ExpirySpec) {
@@ -384,18 +491,73 @@ export class SdkArkiv implements ArkivPort {
     return this.checker;
   }
 
-  async runByLogHash(logH: string): Promise<RunRow | null> {
+  async runByLogHash(logH: string, owner?: string): Promise<RunRow | null> {
+    const by = owner ?? this.pinned();
     const asked = [...RUN_ALL_ATTRS];
-    const res = await this.query(q7RunByLogHash(logH, this.pinned(), this.names), selectOf(asked), 1);
-    const page = decodePage(res.data, RUN_TYPES, asked, this.names.run, this.pinned());
+    const res = await this.query(q7RunByLogHash(logH, by, this.names), selectOf(asked), 1);
+    const page = decodePage(res.data, RUN_TYPES, asked, this.names.run, by);
     return page.rows[0] ? runFromRow(page.rows[0]) : null;
   }
 
-  async liveListingFor(runKey: string): Promise<ListingRow | null> {
+  async liveListingFor(runKey: string, owner?: string): Promise<ListingRow | null> {
+    const by = owner ?? this.pinned();
     const asked = [...LISTING_ATTRS];
-    const res = await this.query(qListingForRun(runKey, this.pinned(), this.names), selectOf(asked), 1);
-    const page = decodePage(res.data, LISTING_TYPES, asked, this.names.listing, this.pinned());
+    const res = await this.query(qListingForRun(runKey, by, this.names), selectOf(asked), 1);
+    const page = decodePage(res.data, LISTING_TYPES, asked, this.names.listing, by);
     return page.rows[0] ? listingFromRow(page.rows[0]) : null;
+  }
+
+  async stampByLogHash(logH: string): Promise<StampRow | null> {
+    const asked = [...STAMP_ATTRS];
+    const res = await this.query(qStampByLogHash(logH, this.pinned(), this.names), selectOf(asked), 1);
+    const page = decodePage(res.data, STAMP_TYPES, asked, this.names.stamp, this.pinned());
+    return page.rows[0] ? stampFromRow(page.rows[0]) : null;
+  }
+
+  /** `arkiv_getEntity` through the SDK, which types each attribute by the tag the node gives it. */
+  async getEntity(entityKey: string): Promise<EntityRow | null> {
+    let e: Record<string, unknown>;
+    try {
+      e = (await this.pub.getEntity(entityKey as Hex)) as unknown as Record<string, unknown>;
+    } catch (err) {
+      if (err instanceof NoEntityFoundError) return null;
+      throw this.fail(err);
+    }
+    const attrs = { ...((e.$attributes ?? {}) as Record<string, TypedValue>) };
+    const tag = attrs[SCHEMA_ATTR];
+    delete attrs[SCHEMA_ATTR];
+    const flags = e.$creationFlags as { readonly?: boolean; permissionlessExtension?: boolean } | undefined;
+    const lower = (v: unknown) => (typeof v === "string" ? v.toLowerCase() : null);
+    return {
+      key: (lower(e.$key) ?? entityKey).toLowerCase(),
+      creator: lower(e.$creator),
+      owner: lower(e.$owner),
+      expiresAt: typeof e.$expiresAt === "bigint" ? e.$expiresAt : null,
+      flags: flags && typeof flags.readonly === "boolean" && typeof flags.permissionlessExtension === "boolean" ? { readonly: flags.readonly, permissionlessExtension: flags.permissionlessExtension } : null,
+      schema: tag?.type === "str" && typeof tag.value === "string" ? tag.value : null,
+      values: attrs,
+    };
+  }
+
+  writeStamp(spec: CreateSpec<StampValues>): Promise<{ stamp: string; tx: string }> {
+    return this.serial(async () => {
+      const wallet = this.needWallet();
+      try {
+        const res = await wallet.executeBatch({
+          creates: [
+            {
+              schema: this.schemas().stamp,
+              values: toSdkValues("stamp", spec.values as unknown as Record<string, unknown>) as never,
+              expiration: toExpiration(spec.expiry),
+              flags: spec.flags,
+            },
+          ],
+        } as never);
+        return { stamp: res.createdEntities[0].toLowerCase(), tx: res.txHash };
+      } catch (err) {
+        throw err instanceof ArkivError ? err : this.fail(err);
+      }
+    });
   }
 
   async getRun(runKey: string, withLog: boolean): Promise<RunRow | null> {
@@ -420,7 +582,7 @@ export class SdkArkiv implements ArkivPort {
   }
 
   private schemas() {
-    return this.names === REAL || this.names.run === REAL.run ? { run: Run, listing: Listing } : { run: SmokeRun, listing: SmokeListing };
+    return this.names === REAL || this.names.run === REAL.run ? { run: Run, listing: Listing, stamp: Stamp } : { run: SmokeRun, listing: SmokeListing, stamp: SmokeStamp };
   }
 
   private needWallet(): WalletArkivClient {

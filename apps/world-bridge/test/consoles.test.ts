@@ -69,7 +69,7 @@ describe("console ids, keys and tags", () => {
 
   it("GET registers an unseen console as unbound, and the raw id is never stored or logged", () => {
     const s = setup();
-    assert.deepEqual({ ...s.consoles.view(PI), tag: "x" }, { tag: "x", book: null, state: "unbound", credential: null });
+    assert.deepEqual({ ...s.consoles.view(PI), tag: "x" }, { tag: "x", book: null, state: "unbound", credential: null, wallet: null, wallet_pending: false });
     assert.ok(s.store.consoleFor(consoleKey(SECRET, PI)));
     const state = JSON.stringify((s.store as unknown as { state: unknown }).state);
     assert.ok(!state.includes(PI), "no raw console id on disk");
@@ -98,7 +98,7 @@ describe("the binding at sign-up", () => {
     assert.equal(v.ok, true);
     const tag = s.consoles.view(PI).tag;
     assert.equal(v.data.console, tag);
-    assert.deepEqual(s.consoles.view(PI), { tag, book: v.data.book, state: "bound", credential: "Selfie Check" });
+    assert.deepEqual(s.consoles.view(PI), { tag, book: v.data.book, state: "bound", credential: "Selfie Check", wallet: null, wallet_pending: false });
     assert.equal(s.store.consoleFor(consoleKey(SECRET, PI))?.by, "signup");
   });
 
@@ -177,7 +177,7 @@ describe("link and release: owner ops on one World approval each", () => {
     assert.deepEqual(s.approvals.started.at(-1), { id: started.approval.id, book, action: started.action, cancelled: false });
     await waitFor(() => s.consoles.opView(started.id)?.stage === "done");
     assert.deepEqual(s.consoles.opView(started.id), { stage: "done", ok: true, failure: null, data: { tag, book: null, state: "released" } });
-    assert.deepEqual(s.consoles.view(PI), { tag, book: null, state: "released", credential: null });
+    assert.deepEqual(s.consoles.view(PI), { tag, book: null, state: "released", credential: null, wallet: null, wallet_pending: false });
     assert.equal(s.store.approvalFor(`jti-${started.approval.id}`)?.used_for, `console-release:${tag}`);
 
     const link = await s.consoles.startOp({ op: "link", console: tag, book });
@@ -275,7 +275,7 @@ describe("an approval spent on an op is refused by publish and record", () => {
     store.recordApproval("jti-op-pub", rec.book, sha(text), Math.floor(Date.now() / 1000));
     store.spendApprovalFor("jti-op-pub", "console-link:C-7QZP");
     assert.equal(store.spendApproval("jti-op-pub", "a".repeat(64)), "other");
-    const pub = new Publisher({ arkiv: new FakeArkiv(), checker: new FakeChecker(6170), store, season: 1, runExpiry: new Date(Date.now() + 864e5 * 60), priceC: 10, ghostSecret: "ab".repeat(32) });
+    const pub = new Publisher({ arkiv: new FakeArkiv(), checker: new FakeChecker(6170), store, season: 1, runExpiry: new Date(Date.now() + 864e5 * 60), priceC: 10, ghostSecret: "ab".repeat(32), chainId: 7794095, rpc: "https://rpc.example" });
     const { id } = pub.start({ book: rec.book, jti: "jti-op-pub", action: text, game: "MDGP", title: "MARINE DRIVE GP", frames: 6170, price_c: 10, log: Buffer.from(makeLog()).toString("base64") });
     await waitFor(() => pub.view(id)?.stage === "done");
     assert.equal(pub.view(id)?.failure, "ls_reused");
@@ -310,7 +310,7 @@ describe("the console routes", () => {
       };
       const g = await call("GET", `/console/${PI}`);
       assert.equal(g.status, 200);
-      assert.deepEqual(Object.keys(g.json).sort(), ["book", "credential", "state", "tag"]);
+      assert.deepEqual(Object.keys(g.json).sort(), ["book", "credential", "state", "tag", "wallet", "wallet_pending"]);
       assert.equal(g.json.book, book);
       assert.deepEqual(await call("GET", "/console/pi-booth"), { status: 400, json: { error: "bad_console", failure: "id_offline" } });
       const o = await call("POST", "/console/op", { op: "release", console: g.json.tag });

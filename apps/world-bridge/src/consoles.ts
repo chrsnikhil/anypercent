@@ -17,8 +17,19 @@
  * - Spending follows the binding: /scout and /hedera/buy with a console need it bound to the buying
  *   book.
  *
+ * The console's Arkiv wallet (spec: Console registration; the ruling: the wallet is part of the
+ * World-approved link). A console reports its wallet when it registers (GET /console/{id}?wallet=),
+ * unauthenticated like its id: that is `wallet_reported`, and nothing more. A link's text names the
+ * reported wallet ("Link console C-FMHE (wallet 0x1a2b...9f3e) to record book ANY-6PS: ..."), and
+ * only that approval makes it `wallet`, the one wallet whose runs the checker stamps for the book. A
+ * console that later reports another wallet (a reflashed Pi, a new key) is `wallet_pending` and is
+ * not linked for stamping until the owner approves a new link, which a bound console may take for
+ * its own book (one scan). A release clears the wallet. A console that reports no wallet is linked
+ * with the text it always had: it can spend, its runs are never stamped.
+ *
  * The bridge has no client authentication: anyone who can reach it can name a console id. Logged:
- * tags, books and outcomes. Never a console id, a jti or an approval id.
+ * tags, books, outcomes and wallets in short form (public addresses). Never a console id, a jti or
+ * an approval id.
  */
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { BOOK_RE, StartFailure, type ApprovalProvider } from "./approvals.js";
@@ -44,9 +55,19 @@ export function tagCandidate(secret: string, key: string, attempt: number): stri
   return `C-${out}`;
 }
 
-/** What World App shows for a link, word for word. */
-export function linkText(tag: string, book: string): string {
-  return `Link console ${tag} to record book ${book}: PB on it spends this book's coach budget`;
+/** An Arkiv wallet address as a console reports it. */
+export const WALLET_RE = /^0x[0-9a-fA-F]{40}$/;
+
+/** A wallet's short form, lowercase: "0x" and 4 hex, an ellipsis, the last 4 hex (0x1a2b...9f3e). */
+export function shortWallet(wallet: string): string {
+  const w = wallet.toLowerCase();
+  return `${w.slice(0, 6)}…${w.slice(-4)}`;
+}
+
+/** What World App shows for a link, word for word: it names the console's wallet when it reported one. */
+export function linkText(tag: string, book: string, wallet?: string | null): string {
+  const named = wallet ? ` (wallet ${shortWallet(wallet)})` : "";
+  return `Link console ${tag}${named} to record book ${book}: PB on it spends this book's coach budget`;
 }
 
 /** What World App shows for a release, word for word. */
@@ -59,6 +80,10 @@ export interface ConsoleView {
   book: string | null;
   state: ConsoleState;
   credential: string | null;
+  /** The approved wallet (lowercase), or null. */
+  wallet: string | null;
+  /** The console reported a wallet the approved link does not name: it needs a new link. */
+  wallet_pending: boolean;
 }
 
 export type OpFailure = LsFailure | "already_bound" | "not_bound";
@@ -97,6 +122,8 @@ interface Op {
   key: string;
   tag: string;
   book: string;
+  /** The wallet a link's text names (null: none reported), bound exactly as World App showed it. */
+  wallet: string | null;
   action: string;
   approvalId: string;
   view: OpView;
@@ -107,6 +134,11 @@ interface Op {
 
 /** Wait for the approval's verdict at most this long past its own lifetime. */
 const OP_GRACE_MS = 30_000;
+
+/** The wallet a console reported that no approved link names yet, or null. */
+function pendingWallet(record: ConsoleRecord): string | null {
+  return record.wallet_reported && record.wallet_reported !== record.wallet ? record.wallet_reported : null;
+}
 
 export class Consoles {
   private readonly ops = new Map<string, Op>();
@@ -126,35 +158,51 @@ export class Consoles {
     return Math.floor(this.now() / 1000);
   }
 
-  /** The console's record, registered as unbound when unseen. The id must match CONSOLE_ID_RE. */
-  register(id: string): { key: string; record: ConsoleRecord } {
+  /**
+   * The console's record, registered as unbound when unseen. The id must match CONSOLE_ID_RE; a
+   * `wallet`, when given, must be an address (400 bad_wallet) and is kept as the reported one.
+   */
+  register(id: string, wallet?: string): { key: string; record: ConsoleRecord } {
     if (!CONSOLE_ID_RE.test(id)) throw new ConsoleOpRefused(400, "bad_console");
+    if (wallet !== undefined && !WALLET_RE.test(wallet)) throw new ConsoleOpRefused(400, "bad_wallet");
     const key = consoleKey(this.opts.secret, id);
-    const held = this.opts.store.consoleFor(key);
-    if (held) return { key, record: held };
-    const taken = this.opts.store.consoleTags();
-    let tag = "";
-    for (let attempt = 0; ; attempt++) {
-      tag = tagCandidate(this.opts.secret, key, attempt);
-      if (!taken.has(tag)) break;
+    let record = this.opts.store.consoleFor(key);
+    if (!record) {
+      const taken = this.opts.store.consoleTags();
+      let tag = "";
+      for (let attempt = 0; ; attempt++) {
+        tag = tagCandidate(this.opts.secret, key, attempt);
+        if (!taken.has(tag)) break;
+      }
+      record = this.opts.store.registerConsole(key, tag, this.nowS());
+      this.opts.log?.(`console ${tag}: registered (unbound)`);
     }
-    const record = this.opts.store.registerConsole(key, tag, this.nowS());
-    this.opts.log?.(`console ${tag}: registered (unbound)`);
+    if (wallet !== undefined && this.opts.store.reportConsoleWallet(key, wallet)) {
+      const pending = record.wallet !== record.wallet_reported;
+      this.opts.log?.(`console ${record.tag}: reports wallet ${shortWallet(wallet)}${pending ? " (not linked yet: it needs a World-approved link)" : ""}`);
+    }
     return { key, record };
   }
 
-  /** GET /console/{id}: {tag, book, state, credential}; registers an unseen console. */
-  view(id: string): ConsoleView {
-    const { record } = this.register(id);
+  /** GET /console/{id}[?wallet=0x...]: {tag, book, state, credential, wallet, wallet_pending}; registers an unseen console. */
+  view(id: string, wallet?: string): ConsoleView {
+    const { record } = this.register(id, wallet);
     const credential = record.state === "bound" && record.book ? (this.opts.store.recordForBook(record.book)?.credential ?? null) : null;
-    return { tag: record.tag, book: record.state === "bound" ? record.book : null, state: record.state, credential };
+    return {
+      tag: record.tag,
+      book: record.state === "bound" ? record.book : null,
+      state: record.state,
+      credential,
+      wallet: record.wallet ?? null,
+      wallet_pending: pendingWallet(record) !== null,
+    };
   }
 
-  /** The book this console is bound to (the sign-up hook asks before the portal), or null. */
-  boundTo(id: string): { book: string; tag: string } | null {
+  /** The book this console is bound to and its approved wallet (the sign-up hook asks before the portal), or null. */
+  boundTo(id: string): { book: string; tag: string; wallet: string | null } | null {
     if (!CONSOLE_ID_RE.test(id)) return null;
     const { record } = this.register(id);
-    return record.state === "bound" && record.book ? { book: record.book, tag: record.tag } : null;
+    return record.state === "bound" && record.book ? { book: record.book, tag: record.tag, wallet: record.wallet ?? null } : null;
   }
 
   /**
@@ -198,8 +246,11 @@ export class Consoles {
     if (!found) throw new ConsoleOpRefused(404, "unknown_console");
     const rec = found.record;
     let target: string;
+    // A link names the wallet the console reported; a bound console may take one to its own book
+    // only to approve a wallet it reported since (a reflashed console, or its first wallet).
+    const wallet = op === "link" ? (rec.wallet_reported ?? null) : null;
     if (op === "link") {
-      if (rec.state === "bound") throw new ConsoleOpRefused(409, "already_bound");
+      if (rec.state === "bound" && !(rec.book === book && pendingWallet(rec) !== null)) throw new ConsoleOpRefused(409, "already_bound");
       target = book as string;
       if (!this.opts.store.recordForBook(target)) throw new ConsoleOpRefused(404, "unknown_book");
     } else {
@@ -209,7 +260,7 @@ export class Consoles {
     }
     const approvals = this.opts.approvals;
     if (!approvals) throw new ConsoleOpRefused(503, "approvals_not_configured");
-    const action = op === "link" ? linkText(tag, target) : releaseText(tag, target);
+    const action = op === "link" ? linkText(tag, target, wallet) : releaseText(tag, target);
     let started;
     try {
       started = await approvals.start(target, action);
@@ -224,6 +275,7 @@ export class Consoles {
       key: found.key,
       tag,
       book: target,
+      wallet,
       action,
       approvalId: started.id,
       view: { stage: "scan", ok: null, failure: null, data: {} },
@@ -232,7 +284,7 @@ export class Consoles {
       cancelled: false,
     };
     this.ops.set(o.id, o);
-    this.opts.log?.(`console ${tag}: ${op} to ${target} waits for the owner's World approval`);
+    this.opts.log?.(`console ${tag}: ${op} to ${target}${wallet ? ` with wallet ${shortWallet(wallet)}` : ""} waits for the owner's World approval`);
     this.schedule(o);
     return { id: o.id, action, approval: { id: started.id, qr: started.qr, code: started.code, expires_s: started.expires_s } };
   }
@@ -309,17 +361,20 @@ export class Consoles {
 
     const now = store.consoleFor(o.key);
     if (!now) return this.finish(o, "ls_world_down", "the console is gone");
-    if (o.op === "link" && now.state === "bound") return this.finish(o, "already_bound", `bound to ${now.book} meanwhile`);
+    const relink = now.state === "bound" && now.book === o.book && o.wallet !== null && now.wallet !== o.wallet;
+    if (o.op === "link" && now.state === "bound" && !relink) return this.finish(o, "already_bound", `bound to ${now.book} meanwhile`);
     if (o.op === "release" && (now.state !== "bound" || now.book !== o.book)) return this.finish(o, "not_bound", "not bound to this book any more");
 
     const spent = store.spendApprovalFor(jti, purpose);
     if (spent === "unknown") return this.finish(o, "ls_expired", "approval unknown to this bridge");
     if (spent === "other") return this.finish(o, "ls_reused", "approval already spent");
+    // The wallet bound is the one the approved text named, whatever the console reported since.
     const after =
       o.op === "link"
-        ? store.setConsole(o.key, { book: o.book, state: "bound", by: "link" }, this.nowS())
-        : store.setConsole(o.key, { book: null, state: "released", by: "release" }, this.nowS());
-    this.finish(o, null, o.op === "link" ? `linked to ${o.book}, the owner's World approval` : `released from ${o.book}, the owner's World approval`, {
+        ? store.setConsole(o.key, { book: o.book, state: "bound", by: "link", wallet: o.wallet }, this.nowS())
+        : store.setConsole(o.key, { book: null, state: "released", by: "release", wallet: null }, this.nowS());
+    const named = o.wallet ? ` with wallet ${shortWallet(o.wallet)}` : "";
+    this.finish(o, null, o.op === "link" ? `linked to ${o.book}${named}, the owner's World approval` : `released from ${o.book}, the owner's World approval`, {
       tag: o.tag,
       book: after?.book ?? null,
       state: after?.state ?? (o.op === "link" ? "bound" : "released"),

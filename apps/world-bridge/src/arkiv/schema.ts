@@ -1,12 +1,20 @@
 /**
- * The two Arkiv entities, as SDK 1.0.1 named schemas. A named schema tags every row it creates with
- * an indexed `arkiv.schema` str, and every reader filters on it (spec: Entities).
+ * The three Arkiv entities, as SDK 1.0.1 named schemas. A named schema tags every row it creates
+ * with an indexed `arkiv.schema` str, and every reader filters on it (spec: Entities).
  *
- * - anypercent.run: one checked run (the checker replayed its log before writing it).
- * - anypercent.listing: a World-approved offer of one run's ghost. Two optional columns came with
- *   the Hedera module: `pay_to` (the seller's Hedera account, exactly as World App showed it in the
- *   approved text; absent: not for sale) and `hcs` (`<topic>/<sequence number>` of the LISTING
- *   message; absent when Hedera was off). Rows written before them still fit the schema.
+ * - anypercent.run: one run, created by the console's own wallet from the spec the bridge issued
+ *   after it replayed the log (console-owned records; the house wallet creates the BOT runs).
+ * - anypercent.listing: a World-approved offer of one run's ghost, created by the same wallet as
+ *   its run. Two optional columns came with the Hedera module: `pay_to` (the seller's Hedera
+ *   account, exactly as World App showed it in the approved text; absent: not for sale) and `hcs`
+ *   (`<topic>/<sequence number>` of the LISTING message; absent when Hedera was off). Rows written
+ *   before them still fit the schema.
+ * - anypercent.stamp: the checker's word that one run is real, created by the checker once it read
+ *   the console's run back and found it exactly what it issued. `run` names the run, `console` the
+ *   wallet that created it (lowercase); game, season, frames, log_h, book or label, human and the
+ *   splits are copied from the run so the board and lap-leader queries can run on stamps alone, and
+ *   `final_hash` / `tool` say what replayed it. One stamp per run, never one per listing; read-only,
+ *   and it expires with its run.
  *
  * Splits and the house (scout and pivot): a run row may carry its lap splits, `s1`..`s4` (u64,
  * indexed, contiguous from s1, summing to `frames`) with `split_kind` "lap", and a BOT row carries
@@ -17,14 +25,21 @@
  * The anypercent.smoke.* twins have the same columns; only `npm run arkiv:smoke` writes them, with a
  * one-hour expiry, and deletes them again.
  *
- * Nothing about a person goes in either: no names, faces, raw World ids, device ids or free text.
+ * This module is the one source of truth for the columns (COLUMN_DEFS, plain data) and for
+ * `toSdkValues` (plain values -> the SDK's typed values): the console's signer keeps a copy of both
+ * that a test compares against these, so the run a console writes is the run the bridge issued.
+ *
+ * Nothing about a person goes in any of them: no names, faces, raw World ids, device ids or free
+ * text.
  */
 import { bool, bytes, dec, defineSchema, i32, key, str, u64 } from "@arkiv-network/sdk/schema";
 
 export const RUN_SCHEMA = "anypercent.run";
 export const LISTING_SCHEMA = "anypercent.listing";
+export const STAMP_SCHEMA = "anypercent.stamp";
 export const SMOKE_RUN_SCHEMA = "anypercent.smoke.run";
 export const SMOKE_LISTING_SCHEMA = "anypercent.smoke.listing";
+export const SMOKE_STAMP_SCHEMA = "anypercent.smoke.stamp";
 
 /** The arcade games, by id, with the title World App shows for a listing. */
 export const GAMES: Record<string, string> = {
@@ -81,65 +96,134 @@ function listingColumns() {
   };
 }
 
+function stampColumns() {
+  return {
+    run: key().indexed(),
+    console: str().indexed(),
+    game: str().indexed(),
+    season: i32().indexed(),
+    frames: u64().indexed(),
+    log_h: str().indexed(),
+    book: str().indexed().optional(),
+    label: str().optional(),
+    human: bool().indexed(),
+    s1: u64().indexed().optional(),
+    s2: u64().indexed().optional(),
+    s3: u64().indexed().optional(),
+    s4: u64().indexed().optional(),
+    split_kind: str().optional(),
+    final_hash: u64().optional(),
+    tool: str(),
+  };
+}
+
 export const Run = defineSchema(RUN_SCHEMA, runColumns());
 export const Listing = defineSchema(LISTING_SCHEMA, listingColumns());
+export const Stamp = defineSchema(STAMP_SCHEMA, stampColumns());
 export const SmokeRun = defineSchema(SMOKE_RUN_SCHEMA, runColumns());
 export const SmokeListing = defineSchema(SMOKE_LISTING_SCHEMA, listingColumns());
+export const SmokeStamp = defineSchema(SMOKE_STAMP_SCHEMA, stampColumns());
 
 export type RunSchema = typeof Run;
 export type ListingSchema = typeof Listing;
+export type StampSchema = typeof Stamp;
 
-/** Which pair of schemas a reader or writer works on: the real ones, or the smoke twins. */
+/** Which schemas a reader or writer works on: the real ones, or the smoke twins. */
 export interface SchemaNames {
   run: string;
   listing: string;
+  stamp: string;
 }
-export const REAL: SchemaNames = { run: RUN_SCHEMA, listing: LISTING_SCHEMA };
-export const SMOKE: SchemaNames = { run: SMOKE_RUN_SCHEMA, listing: SMOKE_LISTING_SCHEMA };
+export const REAL: SchemaNames = { run: RUN_SCHEMA, listing: LISTING_SCHEMA, stamp: STAMP_SCHEMA };
+export const SMOKE: SchemaNames = { run: SMOKE_RUN_SCHEMA, listing: SMOKE_LISTING_SCHEMA, stamp: SMOKE_STAMP_SCHEMA };
+
+export type EntityKind = "run" | "listing" | "stamp";
+
+/** One column as plain data: its type tag, and whether the node indexes it and a row may leave it out. */
+export interface ColumnDef {
+  type: string;
+  indexed: boolean;
+  optional: boolean;
+}
+
+function defsOf(columns: Record<string, { type: string; isIndexed: boolean; isOptional: boolean }>): Record<string, ColumnDef> {
+  const out: Record<string, ColumnDef> = {};
+  for (const [name, c] of Object.entries(columns)) out[name] = { type: c.type, indexed: c.isIndexed, optional: c.isOptional };
+  return out;
+}
+
+/**
+ * Every column of every entity, as plain data read off the SDK columns above: what the console's
+ * signer copy must equal (a test compares the two), and what the raw readers' validation is built
+ * from.
+ */
+export const COLUMN_DEFS: Record<EntityKind, Record<string, ColumnDef>> = {
+  run: defsOf(runColumns()),
+  listing: defsOf(listingColumns()),
+  stamp: defsOf(stampColumns()),
+};
+
+function typesOf(defs: Record<string, ColumnDef>): Record<string, { type: string; required: boolean }> {
+  const out: Record<string, { type: string; required: boolean }> = {};
+  for (const [name, d] of Object.entries(defs)) out[name] = { type: d.type, required: !d.optional };
+  return out;
+}
 
 /** The column types, for the raw readers' validation (the SDK checks these itself). */
-export const RUN_TYPES: Record<string, { type: string; required: boolean }> = {
-  game: { type: "str", required: true },
-  title: { type: "str", required: true },
-  season: { type: "i32", required: true },
-  rules: { type: "u64", required: true },
-  frames: { type: "u64", required: true },
-  log_h: { type: "str", required: true },
-  runner: { type: "str", required: true },
-  book: { type: "str", required: false },
-  label: { type: "str", required: false },
-  human: { type: "bool", required: true },
-  credential: { type: "str", required: false },
-  tool: { type: "str", required: true },
-  log: { type: "bytes", required: false },
-  log_enc: { type: "bytes", required: false },
-  s1: { type: "u64", required: false },
-  s2: { type: "u64", required: false },
-  s3: { type: "u64", required: false },
-  s4: { type: "u64", required: false },
-  split_kind: { type: "str", required: false },
-  gen: { type: "str", required: false },
-};
-export const LISTING_TYPES: Record<string, { type: string; required: boolean }> = {
-  run: { type: "key", required: true },
-  game: { type: "str", required: true },
-  season: { type: "i32", required: true },
-  frames: { type: "u64", required: true },
-  log_h: { type: "str", required: true },
-  price: { type: "dec", required: true },
-  seller: { type: "str", required: true },
-  book: { type: "str", required: false },
-  label: { type: "str", required: false },
-  human: { type: "bool", required: true },
-  pay_to: { type: "str", required: false },
-  hcs: { type: "str", required: false },
-};
+export const RUN_TYPES: Record<string, { type: string; required: boolean }> = typesOf(COLUMN_DEFS.run);
+export const LISTING_TYPES: Record<string, { type: string; required: boolean }> = typesOf(COLUMN_DEFS.listing);
+export const STAMP_TYPES: Record<string, { type: string; required: boolean }> = typesOf(COLUMN_DEFS.stamp);
 
 /** The split columns, in order. */
 export const SPLIT_COLUMNS = ["s1", "s2", "s3", "s4"] as const;
 /** The one kind of split this build writes: MDGP's laps. */
 export const SPLIT_KIND = "lap";
 
-/** Flags and expiry, by entity (spec: Entities). */
+/** Flags and expiry, by entity (spec: Entities). A stamp can be kept alive by anyone, as its run can. */
 export const RUN_FLAGS = { readonly: true, permissionlessExtension: true } as const;
 export const LISTING_FLAGS = { readonly: true, permissionlessExtension: false } as const;
+export const STAMP_FLAGS = { readonly: true, permissionlessExtension: true } as const;
+
+/** A value that does not fit its column (an unknown column, a type this build does not write). */
+export class SchemaValueError extends Error {}
+
+/**
+ * Plain values -> the SDK's typed values, by the entity's column types: str, i32 (a number), u64
+ * (a number or bigint), bool, dec (its decimal string), key (0x hex) and bytes (a Uint8Array). An
+ * undefined value is left out (the column stays unset).
+ */
+export function toSdkValues(kind: EntityKind, values: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const defs = COLUMN_DEFS[kind];
+  for (const [name, v] of Object.entries(values)) {
+    if (v === undefined) continue;
+    const col = defs[name];
+    if (!col) throw new SchemaValueError(`unknown column ${name}`);
+    switch (col.type) {
+      case "str":
+        out[name] = str(v as string);
+        break;
+      case "i32":
+        out[name] = i32(v as number);
+        break;
+      case "u64":
+        out[name] = u64(BigInt(v as number | bigint));
+        break;
+      case "bool":
+        out[name] = bool(v as boolean);
+        break;
+      case "dec":
+        out[name] = dec(String(v));
+        break;
+      case "key":
+        out[name] = key(v as `0x${string}`);
+        break;
+      case "bytes":
+        out[name] = bytes(v as Uint8Array);
+        break;
+      default:
+        throw new SchemaValueError(`unhandled type ${col.type}`);
+    }
+  }
+  return out;
+}
