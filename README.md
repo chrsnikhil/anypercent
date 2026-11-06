@@ -127,7 +127,7 @@ request builder is `realIdkitDeps` in `src/idkit.ts`); the console's adapter is 
 |---|---|
 | World ID | 4.0, IDKit, production environment, the real World App with an Orb credential |
 | Action (sign-up) | `anypercent-book` |
-| App id | TODO(owner): the public `app_...` id |
+| App id | `app_d20961b677d95de13db2f8fd4927bd79` |
 | The live take's console and book | handheld `C-FMHE`, record book `ANY-6PS` |
 
 **Limits.** World binds the record book, not whose hands played. The console id is a random file in the console's
