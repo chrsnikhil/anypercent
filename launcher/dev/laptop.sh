@@ -11,6 +11,10 @@
 # $creator every board read is pinned to); ARCA_ARKIV_RPC and ARCA_ARKIV_SEASON are optional (Rabdi's public RPC, 1):
 #   wsl -d Ubuntu-24.04 -u root -- env ARCA_WORLD_BRIDGE=http://127.0.0.1:8787 ARCA_ARKIV_CHECKER=0x... \
 #     bash .../launcher/dev/laptop.sh
+# Hedera for real on top of both (PB pays over x402 and the listing is recorded on HCS, through the same bridge): also
+# set ARCA_HEDERA=1. Without both of the above it stays mocked and the launcher's log says why.
+#   wsl -d Ubuntu-24.04 -u root -- env ARCA_WORLD_BRIDGE=http://127.0.0.1:8787 ARCA_ARKIV_CHECKER=0x... ARCA_HEDERA=1 \
+#     bash .../launcher/dev/laptop.sh
 set -euo pipefail
 source "$(dirname "$0")/../../sandbox/00_env.sh"
 HERE="$PROJECT/launcher"
@@ -37,6 +41,10 @@ fi
 if [ -n "${ARCA_ARKIV_SEASON:-}" ]; then
   ARKIV+=(--arkiv-season "$ARCA_ARKIV_SEASON")
 fi
+HEDERA=()
+if [ "${ARCA_HEDERA:-}" = "1" ]; then
+  HEDERA=(--hedera)
+fi
 cd "$HERE"
 exec "$PY" -m arca_launcher --library "$LIB" --testlogs "$SANDBOX/devicecheck" --state "$SANDBOX/laptop-state.json" --scale 2 \
-  "${WORLD[@]}" "${ARKIV[@]}" "$@"
+  "${WORLD[@]}" "${ARKIV[@]}" "${HEDERA[@]}" "$@"

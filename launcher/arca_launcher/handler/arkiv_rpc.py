@@ -13,7 +13,7 @@ import json
 import re
 import urllib.request
 
-from arca_launcher.handler.sponsors import RunRow
+from arca_launcher.handler.sponsors import PAY_TO, RunRow
 
 RABDI_RPC = "https://rpc.rabdi.db-chain.testnet.arkiv.network"   # the public endpoint: no key on the console
 RUN_SCHEMA, LISTING_SCHEMA = "anypercent.run", "anypercent.listing"
@@ -36,7 +36,9 @@ RUN_COLUMNS = {"game": "str", "title": "str", "frames": "u64", "runner": "str", 
                "human": "bool", "credential": "str", "log_h": "str", "rules": "u64"}
 RUN_OPTIONAL = frozenset({"book", "label", "credential", "log"})
 LISTING_COLUMNS = {"run": "key", "game": "str", "season": "i32", "frames": "u64", "log_h": "str", "price": "dec",
-                   "seller": "str", "book": "str", "human": "bool"}
+                   "seller": "str", "book": "str", "human": "bool", "pay_to": "str"}
+# A listing written before Hedera (or with Hedera off) has no pay_to: it is on the board, but not for sale.
+LISTING_OPTIONAL = frozenset({"pay_to"})
 
 
 class RpcError(Exception):
@@ -264,12 +266,14 @@ def decode_runs(data, game, checker, schema=RUN_SCHEMA, with_log=False):
 
 
 def decode_listings(data, game, checker, season=None, schema=LISTING_SCHEMA):
-    """(the valid listing rows of data, as dicts in data's order, how many were dropped). game, season None: any."""
+    """(the valid listing rows of data, as dicts in data's order, how many were dropped). game, season None: any. A
+    pay_to that is not a plain `0.0.N` account makes the row a misfit: PB never pays an account it cannot read."""
     checker = checker_address(checker)
     rows, dropped = [], 0
     for entity in data:
-        row = _row(entity, schema, LISTING_COLUMNS, frozenset(), checker)
-        if row is None or game not in (None, row["game"]) or season not in (None, row["season"]):
+        row = _row(entity, schema, LISTING_COLUMNS, LISTING_OPTIONAL, checker)
+        if (row is None or game not in (None, row["game"]) or season not in (None, row["season"])
+                or (row["pay_to"] is not None and not PAY_TO.fullmatch(row["pay_to"]))):
             dropped += 1
             continue
         rows.append(row)
@@ -282,7 +286,7 @@ def run_row(row, listing=None):
                   book=row["book"], label=row["label"], human=row["human"],
                   credential=row["credential"] if row["human"] else None, log_h=row["log_h"], rules=row["rules"],
                   expires_block=row["expires"], listing=listing["key"] if listing else None,
-                  price=listing["price"] if listing else None)
+                  price=listing["price"] if listing else None, pay_to=listing["pay_to"] if listing else None)
 
 
 # ---- the readers ---------------------------------------------------------------------------------------------------

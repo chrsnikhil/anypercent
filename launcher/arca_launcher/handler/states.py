@@ -217,7 +217,7 @@ STATES: dict[str, State] = {
     "buy_done": State(
         name="buy_done", mood="excited", kind="ok",
         card={"t": "done", "h": "Ghost loaded", "rows": ("{target} {target_time}, {ghost_look}",),
-              "what": (("Paid", "{price} USDC to {target}"), ("Receipt", "mock receipt"),
+              "what": (("Paid", "{price} USDC to {target}"), ("Receipt", "{receipt_text}"),
                         ("Budget left", "{budget_left} today"))},
         say="Got it. {target}'s ghost is {ghost_look}. Beat it and {new_rank} is yours. "
             "Cross to race, then *OPTIONS* on the title screen!",
@@ -271,7 +271,7 @@ STATES: dict[str, State] = {
     "buy_late": State(
         name="buy_late", mood="happy", kind="ok",
         card={"t": "done", "h": "Payment landed late",
-              "what": (("Paid", "{price} USDC to {target}"), ("Receipt", "mock receipt"),
+              "what": (("Paid", "{price} USDC to {target}"), ("Receipt", "{receipt_text}"),
                         ("Next", "load her ghost"))},
         say="{third} was slow, but your payment to {target} did land. Her ghost is yours. "
             "Cross to load it.",

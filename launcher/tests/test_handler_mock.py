@@ -310,13 +310,15 @@ def test_handler_code_has_no_network_or_sponsor_imports():
                 assert first not in BANNED_MODULES, f"{path} imports banned module {name}"
 
 
-# The real adapters, and the standard library each may use: World's bridge (world.py), and Arkiv's public RPC and our
-# service (arkiv_rpc.py, arkiv.py).
+# The real adapters, and the standard library each may use: World's bridge (world.py), Arkiv's public RPC and our
+# service (arkiv_rpc.py, arkiv.py), and Hedera through our service only (hedera.py: no Hedera SDK, key or account on
+# the console).
 REAL_ADAPTERS = {
     "world.py": {"json", "logging", "platform", "threading", "urllib", "arca_launcher"},
     "arkiv_rpc.py": {"functools", "json", "re", "urllib", "arca_launcher"},
     "arkiv.py": {"base64", "binascii", "dataclasses", "decimal", "hashlib", "json", "logging", "os", "re",
                  "threading", "urllib", "arca_launcher"},
+    "hedera.py": {"json", "logging", "os", "re", "threading", "urllib", "arca_launcher"},
 }
 
 

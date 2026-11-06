@@ -47,6 +47,7 @@ _SAMPLES = {
     "game": "Marine Drive GP", "runs": 14, "sold": 3, "jti": "5e1f09ab", "listing_days": 7,
     "ghost_kept": "RIA's ghost is still yours. ", "credential": "Orb", "approve_how": "Cross to go",
     "approve_via": "World App > World ID", "now_price": "0.50 USDC",
+    "receipt_text": "0.0.9185802@1762412349",
 }
 
 # The prototype states whose own S entry carries a `what` (handler-states.html). A fix round
@@ -364,7 +365,7 @@ def test_placeholders_constant_matches_what_the_table_uses():
         "world", "board", "third", "pay_rail", "record_rail", "target", "target_time", "gap",
         "rank", "new_rank", "run_time", "price", "budget_left", "book", "other_book", "code",
         "wallet", "buyer", "ghost_look", "split", "game", "runs", "sold", "jti", "listing_days",
-        "ghost_kept", "credential", "approve_how", "approve_via", "now_price",
+        "ghost_kept", "credential", "approve_how", "approve_via", "now_price", "receipt_text",
     }
     assert PLACEHOLDERS == expected
 

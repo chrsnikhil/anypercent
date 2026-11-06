@@ -2,8 +2,12 @@
 World, Arkiv and Hedera adapters built at the hackathon implement this same protocol so the
 flow engine and views never change; this module holds no behaviour, only the types.
 """
+import re
 from dataclasses import dataclass, field
 from typing import Protocol
+
+# A seller's Hedera account as a listing names it: a plain `0.0.N` id, the only form x402 pays (never an EVM alias).
+PAY_TO = re.compile(r"0\.0\.[0-9]{1,10}")
 
 
 @dataclass(frozen=True)
@@ -53,7 +57,8 @@ class RunRow:
     """One checked run on Arkiv's board: an `anypercent.run` row our checker created, with its live listing when it
     has one. book is the record book (None on an open-tier row, which carries a label instead); human and credential
     are the row's own fields, the only source of a HUMAN badge. expires_block is the row's `$expiresAt`; price is
-    the listing's price in USDC as Arkiv holds it (a decimal string such as "0.1")."""
+    the listing's price in USDC as Arkiv holds it (a decimal string such as "0.1"); pay_to the seller's Hedera account
+    the listing names (PAY_TO), None on a listing written without one: listed, but not for sale."""
     key: str
     game: str
     title: str
@@ -68,6 +73,7 @@ class RunRow:
     expires_block: int
     listing: str | None = None
     price: str | None = None
+    pay_to: str | None = None
 
 
 @dataclass(frozen=True)

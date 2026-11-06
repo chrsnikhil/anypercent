@@ -172,14 +172,16 @@ def test_you_still_rank_where_you_did():
 
 # ---- the real board: Arkiv's run rows (build_real) ------------------------------------------------------------------
 
-def run(name, frames, listed=False, human=None, credential=None, book=True, key=None):
-    """A run row as arkiv_rpc decodes it: name is the book (ANY-...) or, with book=False, an open-tier label."""
+def run(name, frames, listed=False, human=None, credential=None, book=True, key=None, pay_to=None):
+    """A run row as arkiv_rpc decodes it: name is the book (ANY-...) or, with book=False, an open-tier label; pay_to the
+    Hedera account its listing names."""
     human = book if human is None else human
     return RunRow(key=key or "0x%064x" % (hash((name, frames)) & (2 ** 256 - 1)), game="MDGP", title="MARINE DRIVE GP",
                   frames=frames, runner=name.lower().ljust(16, "0")[:16], book=name if book else None,
                   label=None if book else name, human=human, credential=(credential or "Orb") if human else None,
                   log_h=("%064x" % frames), rules=4, expires_block=8000000,
-                  listing=("0x%064x" % (frames + 1)) if listed else None, price="0.1" if listed else None)
+                  listing=("0x%064x" % (frames + 1)) if listed else None, price="0.1" if listed else None,
+                  pay_to=pay_to if listed else None)
 
 
 ROWS = (run("ANY-K2P", 6000), run("ANY-7QZ", 6100, listed=True), run("TEAM", 6150, book=False),
@@ -255,3 +257,30 @@ def test_human_comes_from_the_rows():
 def test_rows_from_arkiv_are_never_mock_runners():
     board = build_real(ROWS, 6290, None, None)
     assert not set(names(board)) & (set(MOCK_NAMES) - {BOT})             # BOT-7 here is a real open-tier label
+
+
+# ---- with Hedera real: PB pays only the account a listing names ----------------------------------------------------
+
+PAYS = (run("ANY-K2P", 6000), run("ANY-7QZ", 6100, listed=True, pay_to="0.0.7001"), run("TEAM", 6150, book=False),
+        run("ANY-2KD", 6200, listed=True), run("ANY-9MX", 6400, listed=True, pay_to="0.0.9001"))
+
+
+def test_a_listing_without_an_account_shows_listed_but_never_sells():
+    board = build_real(PAYS, 6290, None, None, need_pay_to=True)
+    rows = {row.name: row for row in board.rows}
+    assert (rows["ANY-2KD"].listed, rows["ANY-2KD"].sells, rows["ANY-2KD"].target) == (True, False, False)
+    assert [row.name for row in board.rows if row.sells] == ["ANY-7QZ", "ANY-9MX"]
+    assert board.case == "ok" and board.target.name == "ANY-7QZ"        # 2KD is closer, but nobody can pay her
+    assert build_real(PAYS, 6290, None, None).target.name == "ANY-2KD"  # Hedera mocked: any listing sells, as before
+    assert build_real(PAYS, None, None, None, need_pay_to=True).target.name == "ANY-9MX"   # the slowest that sells
+    unpaid = tuple(r for r in PAYS if r.pay_to is None)
+    board = build_real(unpaid, 6290, None, None, need_pay_to=True)
+    assert board.case == "nobody_ahead" and board.target is None and any(row.listed for row in board.rows)
+    assert names(build_real(PAYS, 6290, None, None, need_pay_to=True)) == names(build_real(PAYS, 6290, None, None))
+
+
+def test_your_own_listing_with_an_account_is_still_never_yours_to_buy():
+    board = build_real(PAYS, 6290, "ANY-7QZ", "Orb", need_pay_to=True)
+    you = next(row for row in board.rows if row.you)
+    assert (you.frames, you.listed, you.sells, you.target) == (6100, True, False, False)
+    assert board.case == "nobody_ahead"                                 # K2P's 6000 is not listed

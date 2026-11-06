@@ -67,8 +67,9 @@ class StubNode:
         self.block = 0x3fe90
 
     def run(self, name, frames, log=None, plain=False, listed=False, human=True, book=True, creator=CHECKER,
-            game="MDGP", price="0.1"):
-        """A run row (and its listing when listed). name: its book, or with book=False an open-tier label."""
+            game="MDGP", price="0.1", pay_to=None):
+        """A run row (and its listing when listed). name: its book, or with book=False an open-tier label. pay_to: the
+        seller's Hedera account the listing names (None: a listing written without one)."""
         log = log if log is not None else acl(name + str(frames))
         attrs = [_attr("arkiv.schema", "str", "anypercent.run"), _attr("game", "str", game),
                  _attr("title", "str", "MARINE DRIVE GP"), _attr("season", "i32", SEASON),
@@ -90,7 +91,8 @@ class StubNode:
                                       _attr("season", "i32", SEASON), _attr("frames", "u64", hex(frames)),
                                       _attr("log_h", "str", sha(log)), _attr("price", "dec", price),
                                       _attr("seller", "str", (name.lower() * 4)[:16]), _attr("book", "str", name),
-                                      _attr("human", "bool", True)]})
+                                      _attr("human", "bool", True)]
+                                  + ([_attr("pay_to", "str", pay_to)] if pay_to is not None else [])})
         return entity
 
     def listing_of(self, run):
@@ -356,7 +358,7 @@ def test_the_board_survives_a_restart_with_arkiv_down(tmp_path):
     assert again.board("MDGP").rows == first.rows and again.status()["board"] == "off"
 
 
-@pytest.mark.parametrize("change", ["checker", "season", "garbage", "a bad row"])
+@pytest.mark.parametrize("change", ["checker", "season", "garbage", "a bad row", "a bad account"])
 def test_a_cache_that_is_not_this_boards_is_not_shown(tmp_path, change):
     rig = Rig(tmp_path)
     rig.node.run("ANY-6PS", 6170, listed=True)
@@ -370,6 +372,8 @@ def test_a_cache_that_is_not_this_boards_is_not_shown(tmp_path, change):
         cached["season"] = 2
     elif change == "a bad row":
         cached["boards"]["MDGP"]["rows"][0]["log_h"] = "../../x"
+    elif change == "a bad account":
+        cached["boards"]["MDGP"]["rows"][0]["pay_to"] = "0x12"
     with open(path, "w", encoding="utf-8") as f:
         f.write("not json" if change == "garbage" else json.dumps(cached))
     assert rig.make().board("MDGP") is None
@@ -621,6 +625,51 @@ def test_the_action_is_the_approved_digest(tmp_path):
     from arca_launcher.handler.world import _digest
     assert _digest(LIST_PAYLOAD) == ACTION                              # what World App showed, to the character
     assert len(ACTION) <= 160
+
+
+def test_publish_names_the_account_the_approval_named(tmp_path):
+    """With Hedera real the listing's payload carries the seller's account (pinned at approve_scan): the action is the
+    digest World App showed with it, and the body sends it for the listing row. Anything but a plain account: none."""
+    rig = Rig(tmp_path)
+    rig.best("MDGP", acl("6ps"), 6170)
+    _publish(rig, dict(LIST_PAYLOAD, pay_to="0.0.5123456"))
+    body = rig.service.posts()[0][1]
+    assert body["pay_to"] == "0.0.5123456"
+    assert body["action"] == "List MARINE DRIVE GP 1:42.83 ghost for 0.10 USDC to 0.0.5123456 on the public board"
+    for bad in (None, "0x" + "ab" * 20, "0.0.12345678901"):
+        rig = Rig(tmp_path / str(bad))
+        rig.best("MDGP", acl("6ps"), 6170)
+        _publish(rig, dict(LIST_PAYLOAD, pay_to=bad))
+        body = rig.service.posts()[0][1]
+        assert "pay_to" not in body and body["action"] == ACTION, bad
+
+
+def test_the_board_reads_the_account_each_listing_pays(tmp_path):
+    rig = Rig(tmp_path)
+    rig.node.run("ANY-6PS", 6170, listed=True, pay_to="0.0.5123456")
+    rig.node.run("ANY-2KD", 6200, listed=True)                          # listed before payout accounts: none
+    rig.node.run("ANY-9MX", 6250, listed=True, pay_to="0x" + "ab" * 20)  # an EVM alias: the listing is a misfit
+    rig.prefetch()
+    rows = rig.sponsors.board("MDGP").rows
+    assert [(r.book, r.listing is not None, r.pay_to) for r in rows] == [
+        ("ANY-6PS", True, "0.0.5123456"), ("ANY-2KD", True, None), ("ANY-9MX", False, None)]
+    rig.node.down = True
+    assert rig.make().board("MDGP").rows == rows                        # the cache keeps the accounts too
+
+
+def test_a_board_cached_before_payout_accounts_still_shows(tmp_path):
+    rig = Rig(tmp_path)
+    rig.node.run("ANY-6PS", 6170, listed=True)
+    rig.prefetch()
+    path = os.path.join(rig.state_dir, arkiv.CACHE_FILE)
+    with open(path, encoding="utf-8") as f:
+        cached = json.load(f)
+    for row in cached["boards"]["MDGP"]["rows"]:
+        del row["pay_to"]
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cached, f)
+    read = rig.make().board("MDGP")
+    assert read.stale and read.rows[0].listing is not None and read.rows[0].pay_to is None
 
 
 def test_publish_finds_the_run_in_the_queue_when_it_is_not_the_best(tmp_path):

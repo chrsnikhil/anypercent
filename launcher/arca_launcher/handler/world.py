@@ -18,7 +18,7 @@ import urllib.parse
 import urllib.request
 
 from arca_launcher.handler.mock import MockSponsors
-from arca_launcher.handler.sponsors import TIMEOUT_MS, Result, SponsorNames
+from arca_launcher.handler.sponsors import PAY_TO, TIMEOUT_MS, Result, SponsorNames
 
 log = logging.getLogger(__name__)
 
@@ -355,14 +355,25 @@ def _title(payload):
     return _printable(payload.get("title")) or _printable(payload.get("game"))
 
 
+def _pay_to(payload):
+    """The seller's Hedera account the payload names (the Hedera adapter pins it at approve_scan), or None: only a
+    plain `0.0.N` id counts."""
+    value = payload.get("pay_to")
+    return value if isinstance(value, str) and PAY_TO.fullmatch(value) else None
+
+
 def _digest(payload):
     """What World App shows the person approving a listing: "List Marine Drive GP 1:42.83 ghost for 0.10 USDC on the
-    public board" (the approval says where the run goes: Arkiv's public board). The game's title (its id only when
-    there is none), no control characters, and within the bridge's ACTION_MAX (counted in UTF-16 units, as the
-    bridge's JavaScript does): a long title gives way, never the price or the board."""
+    public board" (the approval says where the run goes: Arkiv's public board), and "... USDC to 0.0.5123456 on the
+    public board" when the payload names the seller's Hedera account (sales are paid there). The game's title (its id
+    only when there is none), no control characters, and within the bridge's ACTION_MAX (counted in UTF-16 units, as
+    the bridge's JavaScript does): a long title gives way, never the price, the account or the board."""
     tail = " ".join(x for x in (_printable(payload.get("run_time")), "ghost") if x)
     if isinstance(payload.get("price"), int):
         tail += " for %.2f USDC" % (payload["price"] / 100)
+    account = _pay_to(payload)
+    if account is not None:
+        tail += " to " + account
     tail += BOARD_TAIL
     title = _title(payload)
     room = ACTION_MAX - _units(f"List  {tail}")

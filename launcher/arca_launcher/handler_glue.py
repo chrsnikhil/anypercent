@@ -1,7 +1,8 @@
 """PB the handler, wired into the launcher. The App owns one of these while the handler is on (nav.handler is the open
 flow, handler/flow.py; this is what feeds it).
 
-It builds a game's hub context (the board, the player's best, a made-up wallet), works out where the target is faster
+It builds a game's hub context (the board, the player's best, where sales go: the book's Hedera account when Hedera is
+real, a made-up wallet while it is mocked), works out where the target is faster
 in the background, turns the flow's RaceTarget into a launch with her ghost and reports the race back to the flow, and
 opens the flows nobody asked for (the day's record book offer, a new best's listing offer, a mock sale) once PB is
 quiet on Home.
@@ -24,7 +25,8 @@ from .handler import board, ledger
 from .handler.flow import CloseHandler, Flow
 from .model import Screen
 
-MOCK_WALLET = "0xDE40...0000"        # made up: the owner's real wallet is never shown
+MOCK_WALLET = "0xDE40...0000"        # made up, and shown only while Hedera is mocked: the owner's wallet never is
+NO_ACCOUNT = "no {third} account yet"   # where a book's sales go when Hedera is real but the book has no account
 SALE_AFTER_S = 60                    # a listing sells on the first return Home at least this long after listing
 # The pad as (low, high, ms) rumble: a sponsor step landed, was refused or backed out of, a ghost sold. A race's own
 # result screens are left out (a new best already rumbles as the game ends, app.py), and so is "nobody ahead sells",
@@ -140,6 +142,8 @@ class HandlerGlue:
                 flow.ctx.update(self._context(self._game), run_frames=None)
             elif real and flow.state.name in BOARD_STATES:
                 self._fresh_board(flow)
+            if not self.app.sponsors.mocked("third"):    # the book's account, once the service has said it
+                flow.ctx["wallet"] = self._wallet()
             if self._job is not None:
                 flow.ctx["split"] = _split_text(self._job)
             cmd = flow.tick(dt)
@@ -181,7 +185,7 @@ class HandlerGlue:
         """Every placeholder the app fills for game, built fresh (board, best, runs, split). Starts the comparison."""
         arcade = game.arcade if game is not None else None
         arcades = [arcade] if arcade else [g.arcade for g in self.app.nav.games if g.arcade]
-        ctx = {"game": game.title if game is not None else "this game", "buyer": "", "wallet": MOCK_WALLET,
+        ctx = {"game": game.title if game is not None else "this game", "buyer": "", "wallet": self._wallet(),
                "arcade": bool(arcade), "arcade_id": arcade.get("id") if arcade else None,
                "game_titles": {g.id: g.title for g in self.app.nav.games},
                "other_book": ledger.make_book(random.Random()),
@@ -201,17 +205,31 @@ class HandlerGlue:
                    split=self._split(arcade, best, log_frames, board_ctx["target_log_h"]))
         return ctx
 
+    def _wallet(self):
+        """Where the book's sales go, as the listing's cards say it: its Hedera account when Hedera is real (the
+        sponsors' pay_to, asked here first when the hub opens, well before a listing pins it), the made-up wallet only
+        while Hedera is mocked."""
+        sponsors = self.app.sponsors
+        if sponsors.mocked("third"):
+            return MOCK_WALLET
+        pay_to = getattr(sponsors, "pay_to", None)
+        account = pay_to(self.ledger.book) if pay_to is not None else None
+        return account or sponsors.names.fill(NO_ACCOUNT)
+
     def _board(self, log_frames, best_frames):
         """The mock board, its mock runners HUMAN only while World is mocked (a real World vouches for none of them).
         YOU's own mark is the flow's: it follows the record book."""
         return board.build(log_frames, best_frames, mock_humans=self.app.sponsors.mocked("world"))
 
     def _real_board(self, arcade, best_frames):
-        """(the real board for arcade from its last Arkiv read, that read). No read yet: no board, never made up."""
-        read = self.app.sponsors.board(arcade["id"]) if arcade else None
+        """(the real board for arcade from its last Arkiv read, that read). No read yet: no board, never made up. With
+        Hedera real, PB pays only the account a listing names: a listing without one never sells."""
+        sponsors = self.app.sponsors
+        read = sponsors.board(arcade["id"]) if arcade else None
         led = self.ledger
         you = led.credential if led.book and led.world_verified else None
-        return board.build_real(read.rows if read else (), best_frames, led.book, you), read
+        return board.build_real(read.rows if read else (), best_frames, led.book, you,
+                                need_pay_to=not sponsors.mocked("third")), read
 
     def _board_for(self, arcade, log_frames, best_frames):
         return self._real_board(arcade, best_frames)[0] if self._real() else self._board(log_frames, best_frames)

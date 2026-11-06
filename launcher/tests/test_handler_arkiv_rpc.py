@@ -151,7 +151,7 @@ def test_the_board_is_one_page_of_each_with_no_ghost_bytes():
     assert set(o1["select"]["attributes"]) == {"arkiv.schema", "game", "title", "frames", "runner", "book", "label",
                                                "human", "credential", "log_h", "rules"}
     assert set(o2["select"]["attributes"]) == {"arkiv.schema", "run", "game", "season", "frames", "log_h", "price",
-                                               "seller", "book", "human"}
+                                               "seller", "book", "human", "pay_to"}
 
 
 def test_the_fixture_decodes():
@@ -314,9 +314,32 @@ def test_a_listing_by_its_key():
     got = rpc.read_listing(stub, k("l-6ps"), CHECKER)
     assert got == {"key": k("l-6ps"), "creator": CHECKER, "expires": 0x46a1d0, "run": k("6ps-fast"), "game": "MDGP",
                    "season": 1, "frames": 6170, "log_h": h("6ps-fast"), "price": "0.1", "seller": "3f9a0c21d4e5b6a7",
-                   "book": "ANY-6PS", "human": True}
+                   "book": "ANY-6PS", "human": True, "pay_to": None}
     method, (query, options), _ = stub.requests[0]
     assert query == rpc.q6(rpc.LISTING_SCHEMA, k("l-6ps"), CHECKER) and options["limit"] == "0x1"
+
+
+def _with_pay_to(value, kind="str"):
+    listing = next(e for e in entities(Q2_PAGE) if e["key"] == k("l-6ps"))
+    listing["attributes"].append({"name": "pay_to", "type": kind, "value": value})
+    return listing
+
+
+def test_a_listing_names_the_account_it_pays_when_it_has_one():
+    """pay_to is optional: rows written before Hedera have none (listed, not for sale) and still read."""
+    listing = _with_pay_to("0.0.5123456")
+    assert rpc.read_listing(StubRpc(page(listing)), k("l-6ps"), CHECKER)["pay_to"] == "0.0.5123456"
+    rows, _, _ = rpc.read_board(StubRpc(Q1_PAGE, page(listing, block="0x3fe91")), "MDGP", 1, CHECKER)
+    assert next(r for r in rows if r.key == k("6ps-fast")).pay_to == "0.0.5123456"
+    rows, _, _ = rpc.read_board(StubRpc(Q1_PAGE, Q2_PAGE), "MDGP", 1, CHECKER)
+    assert [(r.listing is not None, r.pay_to) for r in rows if r.book == "ANY-6PS"] == [(True, None), (False, None)]
+
+
+@pytest.mark.parametrize("value, kind", [("0x5B38Da6a701c568545dCfcB03FcB875f56beddC4", "str"), ("0.0.", "str"),
+                                         ("0.0.12345678901", "str"), ("1.2.3", "str"), ("0.0.5 ", "str"),
+                                         ("0.0.5123456", "key"), ("0x4e2d40", "u64")])
+def test_a_listing_naming_an_account_x402_cannot_pay_is_a_misfit(value, kind):
+    assert rpc.decode_listings([_with_pay_to(value, kind)], None, CHECKER) == ([], 1)
 
 
 def test_a_listing_that_is_gone_or_not_ours_is_none():

@@ -57,7 +57,8 @@ class Flow:
     """One handler session. `game` is the arcade game id (purchases, listings and targets are
     keyed by it); `ctx` is the public dict of placeholder values: the app fills the run and
     board ones, the engine adds code, qr, expires_s, jti (the mock's only: a real approval's id
-    is never shown), book, credential, price, budget_left, receipt, listing_days, approve_how,
+    is never shown), book, credential, price, budget_left, receipt, receipt_text (the receipt as
+    the card shows it), listing_days, approve_how,
     approve_via and ghost_kept (and other_book, when World names the book a duplicate owns),
     now_price (a changed listing's price) and ghost_log (a real target's checked log).
 
@@ -416,10 +417,22 @@ class Flow:
         # Where World App asks for a listing OK: World ID when the bridge runs approvals on IDKit.
         self.ctx["approve_via"] = ("World App > World ID" if self.sponsors.approvals == "idkit"
                                    else "World App > Agent Pass")
+        self.ctx["receipt_text"] = self._receipt_text()
         if self.ctx.get("board_rows"):   # YOU are HUMAN on the board only with a real World proof
             led = self.ledger
             self.ctx["board_rows"] = mark_you(self.ctx["board_rows"],
                                               led.credential if led.book and led.world_verified else None)
+
+    def _receipt_text(self):
+        """The receipt row of a bought ghost: "mock receipt" while Hedera is mocked (the mock's ids stand for no
+        payment), else the payment's own transaction id as HashScan finds it, its nanoseconds cut
+        ("0.0.9185802@1762412349")."""
+        if self.sponsors.mocked("third"):
+            return "mock receipt"
+        bought = self.ledger.purchases.get(f"{self.game}:{self._seller}") or {}
+        receipt = str(bought.get("receipt") or self.ctx.get("receipt") or "")
+        account, at, when = receipt.partition("@")
+        return account + at + when.split(".")[0] if at else receipt
 
     def _run_frames(self):
         """The run a listing is about: the one just raced, else the best."""

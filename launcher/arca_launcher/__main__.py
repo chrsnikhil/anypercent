@@ -1,5 +1,6 @@
 """python -m arca_launcher [--library DIR] [--scale 1|2|3] [--emulator mgba|retroarch] [--fullscreen] [--fps]
-[--no-handler] [--testlogs DIR] [--world-bridge URL] [--arkiv-checker 0x...] [--arkiv-rpc URL] [--arkiv-season N]"""
+[--no-handler] [--testlogs DIR] [--world-bridge URL] [--arkiv-checker 0x...] [--arkiv-rpc URL] [--arkiv-season N]
+[--hedera]"""
 import argparse
 import os
 import sys
@@ -38,8 +39,9 @@ def build_config(argv=None):
                         "beside the --state file; no file, no voice)")
     p.add_argument("--world-bridge", default=os.environ.get("ARCA_WORLD_BRIDGE") or None, metavar="URL",
                    help="the World bridge (apps/world-bridge), e.g. http://127.0.0.1:8787: PB's record book and "
-                        "listing approval go to World for real, Hedera stays mocked, Arkiv too unless "
-                        "--arkiv-checker is given (default: $ARCA_WORLD_BRIDGE; neither: every sponsor mocked)")
+                        "listing approval go to World for real, Arkiv stays mocked unless --arkiv-checker is given "
+                        "and Hedera unless --hedera is too (default: $ARCA_WORLD_BRIDGE; neither: every sponsor "
+                        "mocked)")
     p.add_argument("--arkiv-checker", type=checker, default=os.environ.get("ARCA_ARKIV_CHECKER") or None,
                    metavar="0x...", help="our checker's address, the $creator every Arkiv read is pinned to: with "
                                          "--world-bridge, PB's board, listing check, ghosts and listings go to Arkiv "
@@ -48,6 +50,12 @@ def build_config(argv=None):
                    help="Arkiv's RPC, read with no access key (default: $ARCA_ARKIV_RPC, else Rabdi's public one)")
     p.add_argument("--arkiv-season", type=int, default=os.environ.get("ARCA_ARKIV_SEASON") or "1", metavar="N",
                    help="the board's season (default: $ARCA_ARKIV_SEASON, else 1)")
+    p.add_argument("--hedera", action="store_true",
+                   default=os.environ.get("ARCA_HEDERA", "").strip().lower() in ("1", "true", "yes", "on"),
+                   help="Hedera for real: PB pays for a ghost (x402, testnet USDC) and records a listing on HCS "
+                        "through the World bridge. Needs --world-bridge and --arkiv-checker; without both it stays "
+                        "mocked and the log says why. No Hedera key or account is on the console "
+                        "(default: on when $ARCA_HEDERA=1)")
     a = p.parse_args(argv)
     return Config(library_dir=a.library, state_path=a.state, emulator=a.emulator, retroarch_core=a.retroarch_core,
                   retroarch_cfg=a.retroarch_cfg, scale=a.scale, fullscreen=a.fullscreen, show_fps=a.fps,
@@ -55,7 +63,7 @@ def build_config(argv=None):
                   haptics=a.haptics, coach=a.coach, handler=a.handler, handler_warm=a.handler, testlogs_dir=a.testlogs,
                   coach_voice_key=a.coach_voice_key or os.path.join(os.path.dirname(a.state), "coach-voice.key"),
                   world_bridge=a.world_bridge, arkiv_checker=a.arkiv_checker, arkiv_rpc=a.arkiv_rpc,
-                  arkiv_season=a.arkiv_season)
+                  arkiv_season=a.arkiv_season, hedera=a.hedera)
 
 
 def checker(text):

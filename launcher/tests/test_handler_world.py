@@ -228,6 +228,20 @@ def test_the_digest_world_app_shows_is_readable_and_fits_the_bridge():
         assert not any(ord(ch) < 32 or ord(ch) == 127 for ch in action)
 
 
+def test_the_digest_names_the_sellers_hedera_account_when_the_listing_does():
+    """With Hedera real, the listing names where its sales are paid, before the board: World App shows the account."""
+    named = dict(LIST_PAYLOAD, pay_to="0.0.5123456")
+    assert _digest(named) == "List Marine Drive GP 1:42.83 ghost for 0.10 USDC to 0.0.5123456 on the public board"
+    assert world._digest(named) == _digest(named)
+    for bad in (None, "", "0x5B38Da6a701c568545dCfcB03FcB875f56beddC4", "0.0.", "0.0.12345678901", "1.2.3",
+                " 0.0.5123456", "0.0.5123456 ", "0.0.５", 5123456):        # an EVM alias, a fullwidth digit
+        assert _digest(dict(LIST_PAYLOAD, pay_to=bad)) == DIGEST, bad
+    for title in ("Super " * 40, "\U0001F3CE" * 120, "x" * 500):        # the title gives way first, never the account
+        action = _digest(dict(LIST_PAYLOAD, title=title, pay_to="0.0.1234567890"))
+        assert len(action.encode("utf-16-le")) // 2 <= world.ACTION_MAX
+        assert action.endswith("... 1:42.83 ghost for 0.10 USDC to 0.0.1234567890 on the public board")
+
+
 def test_an_approve_stage_moves_the_scan_on_first():
     sponsors, clock, bridge = make()
     scan = sponsors.begin("approve_scan", LIST_PAYLOAD)

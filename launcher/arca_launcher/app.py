@@ -51,19 +51,30 @@ log = logging.getLogger(__name__)
 def make_sponsors(cfg, replay=None, games=None):
     """PB's sponsors: World for real through its bridge when one is given, and Arkiv for real too when the checker it
     pins every board read to is given as well (the bridge is also the service Arkiv's listings and listed ghosts go
-    through); Hedera still mocked. Neither: every sponsor mocked. replay(arcade_id, log_path) times a log with the
-    game's replay tool; games are the arcade ids whose boards are read at start."""
+    through), and Hedera for real on top of both when asked for (cfg.hedera: PB's payments and the listing's record go
+    through the same bridge). Hedera asked for without both stays mocked, and the log says why. Neither: every sponsor
+    mocked. replay(arcade_id, log_path) times a log with the game's replay tool; games are the arcade ids whose boards
+    are read at start."""
     def clock_ms():
         return int(time.monotonic() * 1000)
+    if cfg.hedera and not (cfg.world_bridge and cfg.arkiv_checker):
+        missing = " and ".join(name for name, value in (("--world-bridge", cfg.world_bridge),
+                                                        ("--arkiv-checker", cfg.arkiv_checker)) if not value)
+        log.warning("Hedera stays mocked: it runs only on real World and Arkiv (%s not given)", missing)
     if cfg.world_bridge:
         from .handler.world import WorldSponsors
         world = WorldSponsors(cfg.world_bridge, clock_ms)
         if not cfg.arkiv_checker:
             return world
         from .handler.arkiv import ARCADE_GAMES, ArkivSponsors
-        return ArkivSponsors(world, cfg.world_bridge, cfg.arkiv_rpc, cfg.arkiv_checker, cfg.arkiv_season,
-                             cfg.runs_dir, os.path.dirname(cfg.state_path) or ".", clock_ms, replay=replay,
-                             games=ARCADE_GAMES if games is None else games)
+        state_dir = os.path.dirname(cfg.state_path) or "."
+        arkiv = ArkivSponsors(world, cfg.world_bridge, cfg.arkiv_rpc, cfg.arkiv_checker, cfg.arkiv_season,
+                              cfg.runs_dir, state_dir, clock_ms, replay=replay,
+                              games=ARCADE_GAMES if games is None else games)
+        if not cfg.hedera:
+            return arkiv
+        from .handler.hedera import HederaSponsors
+        return HederaSponsors(arkiv, cfg.world_bridge, clock_ms, state_dir)
     return MockSponsors(clock_ms)
 
 
@@ -108,6 +119,7 @@ class Config:
     arkiv_checker: str | None = None               # with world_bridge: Arkiv for real, reads pinned to this $creator
     arkiv_rpc: str = RABDI_RPC                     # Arkiv's public RPC: no access key on the console
     arkiv_season: int = 1
+    hedera: bool = False                           # with world_bridge and arkiv_checker: Hedera for real (pay, record)
 
 
 class Display:

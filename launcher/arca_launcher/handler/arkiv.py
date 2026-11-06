@@ -1,6 +1,7 @@
 """The Arkiv adapter: PB's board, listing check, ghost and listing for real on Arkiv's Rabdi testnet (the spec:
 docs/superpowers/specs/*-arkiv-integration.md, Part B), wrapped around the World adapter, which keeps World's own
-steps. Hedera's steps (pay, record) stay the mock's.
+steps. Hedera's steps (pay, record) stay the mock's here; with Hedera real, the Hedera adapter (hedera.py) wraps this
+one and runs them.
 
 - Reads go straight to the public Arkiv RPC (arkiv_rpc.py: Q1, Q2 and Q6, every one pinned to our checker's
   `$creator`): the board, check_listing and a plain ghost. No key on the console, nothing of ours in the way.
@@ -29,8 +30,8 @@ from decimal import Decimal
 
 from arca_launcher.handler import arkiv_rpc
 from arca_launcher.handler.ledger import GHOST_PRICE
-from arca_launcher.handler.sponsors import TIMEOUT_MS, BoardRead, Result, RunRow
-from arca_launcher.handler.world import _digest, _title, http_transport
+from arca_launcher.handler.sponsors import PAY_TO, TIMEOUT_MS, BoardRead, Result, RunRow
+from arca_launcher.handler.world import _digest, _pay_to, _title, http_transport
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ _HASH = re.compile(r"[0-9a-f]{64}")
 _ROW_FIELDS = {"key": (str, False), "game": (str, False), "title": (str, False), "frames": (int, False),
                "runner": (str, False), "book": (str, True), "label": (str, True), "human": (bool, False),
                "credential": (str, True), "log_h": (str, False), "rules": (int, False),
-               "expires_block": (int, False), "listing": (str, True), "price": (str, True)}
+               "expires_block": (int, False), "listing": (str, True), "price": (str, True), "pay_to": (str, True)}
 
 
 class _Job:
@@ -475,22 +476,20 @@ class ArkivSponsors:
         return result
 
     def _publish_body(self, p):
-        """The contract's POST /arkiv/publish body, or None when the run's log is not on this console. action is the
-        very digest World App showed (world._digest of the same payload), so it hashes to what was approved."""
-        game, frames, price = _arcade(p), p.get("frames"), p.get("price")
-        if not (game and type(frames) is int and type(price) is int and isinstance(p.get("book"), str)
-                and isinstance(p.get("jti"), str) and p["book"] and p["jti"]):
+        """The contract's POST /arkiv/publish body, or None when the run's log is not on this console: listing_body
+        and the run's log."""
+        body = listing_body(p)
+        if body is None:
             return None
-        path = self._run_log(game, frames)
+        path = self._run_log(body["game"], body["frames"])
         if path is None:
-            log.info("Arkiv publish: no %s log of %d frames on this console", game, frames)
+            log.info("Arkiv publish: no %s log of %d frames on this console", body["game"], body["frames"])
             return None
         with open(path, "rb") as f:
             data = f.read(LOG_MAX + 1)
         if not LOG_MIN <= len(data) <= LOG_MAX:
             return None
-        return {"book": p["book"], "jti": p["jti"], "action": _digest(p), "game": game, "title": _title(p),
-                "frames": frames, "price_c": price, "log": base64.b64encode(data).decode("ascii")}
+        return dict(body, log=base64.b64encode(data).decode("ascii"))
 
     def _run_log(self, game, frames):
         """runs_dir/best/<ID>.acl when that best is this time, else the queued run of this time; None if neither."""
@@ -556,6 +555,23 @@ class ArkivSponsors:
         self._wanted_ms = now
 
 
+def listing_body(p):
+    """What the service is told about a World-approved listing (POST /arkiv/publish without its log, and POST
+    /hedera/record as it is), or None when the payload lacks any of it. action is the very digest World App showed
+    (world._digest of the same payload), so it hashes to what was approved; pay_to, the seller's Hedera account the
+    approval named, only when it named one."""
+    game, frames, price = _arcade(p), p.get("frames"), p.get("price")
+    if not (game and type(frames) is int and type(price) is int and isinstance(p.get("book"), str)
+            and isinstance(p.get("jti"), str) and p["book"] and p["jti"]):
+        return None
+    body = {"book": p["book"], "jti": p["jti"], "action": _digest(p), "game": game, "title": _title(p),
+            "frames": frames, "price_c": price}
+    account = _pay_to(p)
+    if account is not None:
+        body["pay_to"] = account
+    return body
+
+
 def _is_key(value):
     return isinstance(value, str) and _KEY.fullmatch(value.lower()) is not None
 
@@ -591,7 +607,10 @@ def _time_frames(path):
 
 
 def _cached_row(row):
-    """A RunRow from the cache file, or None when the entry is not one."""
+    """A RunRow from the cache file, or None when the entry is not one. A row cached before listings named a payout
+    account has no pay_to: not for sale."""
+    if isinstance(row, dict) and "pay_to" not in row:
+        row = dict(row, pay_to=None)
     if not isinstance(row, dict) or set(row) != set(_ROW_FIELDS):
         return None
     for name, (kind, optional) in _ROW_FIELDS.items():
@@ -599,7 +618,8 @@ def _cached_row(row):
         if not ((value is None and optional) or type(value) is kind):
             return None
     if not (_KEY.fullmatch(row["key"]) and _HASH.fullmatch(row["log_h"]) and _GAME.fullmatch(row["game"])
-            and (row["listing"] is None or _KEY.fullmatch(row["listing"])) and (row["book"] or row["label"])):
+            and (row["listing"] is None or _KEY.fullmatch(row["listing"])) and (row["book"] or row["label"])
+            and (row["pay_to"] is None or PAY_TO.fullmatch(row["pay_to"]))):
         return None
     return RunRow(**row)
 

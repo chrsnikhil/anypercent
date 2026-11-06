@@ -436,6 +436,60 @@ def test_a_late_receipt_past_the_budget_is_still_recorded(tmp_path):
     assert rig.flow.ctx["budget_left"] == "0.00"
 
 
+class HederaRealSponsors(ManualPaySponsors):
+    """Hedera real (its pay answers only when the test says, with a real transaction id); the rest the mock's."""
+
+    def mocked(self, service):
+        return service != "third"
+
+
+TX = "0.0.9185802@1762412349.000000123"
+
+
+def _what(flow):
+    return {flow.fill(label): flow.fill(value) for label, value in flow.state.card["what"]}
+
+
+def test_the_receipt_row_says_mock_receipt_until_hedera_is_real(tmp_path):
+    rig = Rig(tmp_path)                                                  # all mocked
+    rig.flow.start("buy_check")
+    rig.wait(1400 + 2000 + 1200)
+    assert rig.state == "buy_done" and rig.flow.ledger.purchases[f"{GAME}:RIA"]["receipt"].startswith("mock-")
+    assert _what(rig.flow)["Receipt"] == rig.flow.ctx["receipt_text"] == "mock receipt"
+    rig = Rig(tmp_path / "real", sponsors=HederaRealSponsors)
+    rig.flow.start("buy_check")
+    rig.wait(1400)
+    rig.sponsors.calls[-1].result = Result(ok=True, data={"receipt": TX})
+    rig.wait(16)
+    assert rig.state == "buy_load"
+    rig.wait(1200)
+    assert rig.state == "buy_done"
+    assert _what(rig.flow)["Receipt"] == "0.0.9185802@1762412349"     # the payment's own id, its nanoseconds cut
+
+
+def test_a_late_payments_receipt_row_is_its_transaction_id(tmp_path):
+    rig = Rig(tmp_path, sponsors=HederaRealSponsors)
+    rig.flow.start("buy_pay")
+    call = rig.sponsors.calls[-1]
+    rig.wait(8000)
+    assert rig.state == "buy_down"
+    call.result = Result(ok=True, data={"receipt": TX})
+    rig.wait(16)
+    assert rig.state == "buy_late" and _what(rig.flow)["Receipt"] == "0.0.9185802@1762412349"
+
+
+def test_a_ghost_bought_before_shows_its_own_receipt(tmp_path):
+    for receipt, shown in ((TX, "0.0.9185802@1762412349"), ("0.0.7162784@1762412000.5", "0.0.7162784@1762412000"),
+                           ("odd-receipt", "odd-receipt")):
+        bought = {f"{GAME}:RIA": {"price": GHOST_PRICE, "receipt": receipt, "at": 0}}
+        rig = Rig(tmp_path / shown, sponsors=HederaRealSponsors, ledger=Ledger(book="ANY-7QZ", purchases=bought))
+        rig.flow.start("target")
+        rig.flow.press("cross")
+        assert rig.state == "buy_load"                                  # owned: no check, no charge
+        rig.wait(1200)
+        assert rig.state == "buy_done" and _what(rig.flow)["Receipt"] == shown, receipt
+
+
 def test_square_picks_survive_the_status_pills(tmp_path):
     # Ruling 11: the view reads status() every frame; that must never resolve the call under an
     # open outcome list, or a pick made after the mock's delay would be ignored.
