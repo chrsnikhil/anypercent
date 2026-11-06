@@ -1,6 +1,6 @@
 # Any%
 
-![The Any% handheld: a CAD render of the printed shell](docs/readme/hero.jpg)
+![The Any% handheld (rev 3 CAD, shell shown clear): the Pi, the button boards and the heat-set inserts inside, the real console board on its screen](docs/readme/hero.jpg)
 
 **A handheld speedrun console where every run is provable.** The games record their inputs, and anyone can replay a
 run's log to re-derive its time: the log either replays to the claimed time (VERIFIED) or it doesn't (REJECTED).
@@ -59,6 +59,8 @@ The other games replay the same way: SHIP IT! is `game/`, RUSH HOUR `games/rushh
 `games/zip` (`make -f tools.mk replay`).
 
 ## The hardware
+
+![Assembly, step 9 of 12: the printed bay tray goes in over the Raspberry Pi 3B+; the bill of materials lists all 59 parts](docs/readme/assembly.jpg)
 
 | Part | What |
 |---|---|
