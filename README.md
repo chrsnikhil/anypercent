@@ -1,6 +1,6 @@
 # Any%
 
-![The Any% handheld (rev 3 CAD, shell shown clear): the Pi, the button boards and the heat-set inserts inside, the real console board on its screen](docs/readme/hero.jpg)
+![The Any% handheld (rev 3 CAD, shell shown clear): the Pi, the button boards and the heat-set inserts inside, the real console board on its screen](docs/readme/hero_rev3.jpg)
 
 **A handheld speedrun console where every run is provable.** The games record their inputs, and anyone can replay a
 run's log to re-derive its time: the log either replays to the claimed time (VERIFIED) or it doesn't (REJECTED).
