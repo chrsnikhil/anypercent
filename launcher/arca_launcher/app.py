@@ -19,7 +19,7 @@ from .input import Inputs
 from .library import LibraryError, load_library
 from . import themes
 from .handler.arkiv_rpc import RABDI_RPC
-from .handler.flow import RaceTarget
+from .handler.flow import OpenLink, RaceTarget
 from .handler.mock import MockSponsors
 from .handler_glue import HandlerGlue
 from .model import (CRASHED, Launch, Nav, OpenHub, PowerOff, Screen, SetBrightness, SetTheme, SetTouchControls,
@@ -45,6 +45,10 @@ IDLE_FPS = 30                                      # nothing pressed for a while
 IDLE_FPS_AFTER_MS = 4000
 ATTRACT_MS = 60000                                 # idle on Home this long and it becomes a booth display
 HANDLER_IDLE_MS = 180000                           # idle on PB's screens this long, no call live: back Home
+# A chain link on the handheld: these words, then the browser takes the screen and systemd stops the launcher.
+HANDOFF = ("Opening the explorer", "Hold PS for 2 seconds to come back to this screen.")
+HANDOFF_DELAY_MS = 1500                            # the words are read this long before the browser is asked for
+HANDOFF_MS = 10000                                 # still running this long after asking: the browser never came
 log = logging.getLogger(__name__)
 
 
@@ -156,7 +160,7 @@ class App:
         self._bridge = bridge
         self.voice = voice if voice is not None else self._load_voice(cfg)
         self._mascot_seq, self._mascot_ms, self._voice_future = -1, 0, None
-        self.hw = hw or Hardware()
+        self.hw = hw or Hardware(run_dir=cfg.run_dir)   # the run dir: where a chain link waits for the browser
         self.runner = runner or Runner(cfg.emulator, cfg.retroarch_core, cfg.retroarch_cfg,
                                        fullscreen=cfg.fullscreen, audio_sync=cfg.fullscreen, overlay=cfg.overlay,
                                        haptics=cfg.haptics)
@@ -197,6 +201,7 @@ class App:
         self._notice, self._notice_ms = None, 0
         self._status, self._status_at = None, -1.0
         self._warning, self._warning_at = None, -WARNING_EVERY
+        self._handoff = None                       # a chain link going to the browser (open_link): {url, ms, asked}
         self.quitting = False
         # systemd stops the launcher with SIGTERM. SDL would turn it into a QUIT event, and one that arrives while a
         # game runs used to be dropped with the game's leftover input (a 90 s wait for SIGKILL). A flag cannot be.
@@ -444,6 +449,52 @@ class App:
         elif isinstance(cmd, RaceTarget):
             if self.handler is not None:
                 self.handler.race_target(cmd)
+        elif isinstance(cmd, OpenLink):
+            self.open_link(cmd.url)
+
+    def open_link(self, url):
+        """A chain row's link (Triangle, or a tap on its QR code). On the laptop (WSL) it opens at once in a small Edge
+        window beside the launcher, which carries on. On the handheld the browser app takes the screen: this screen
+        first says how to come back (the launcher is stopped while the browser runs), and HANDOFF_DELAY_MS later
+        _handoff_frame keeps PB's chain card (handler_glue.save_resume) and asks for the browser, so the launcher
+        systemd starts again when it closes reopens that card. One hand-off at a time."""
+        if self._handoff is not None:
+            return
+        if not getattr(self.hw, "is_pi", lambda: False)():
+            how = getattr(self.hw, "open_url", lambda url: None)(url)
+            self.nav.notice = "Opened in a window" if how == "window" else "Links open on the handheld or the laptop"
+            return
+        self._handoff = {"url": url, "ms": 0, "asked": False}
+        self._draw_handoff()
+
+    def _handoff_frame(self, dt):
+        """A frame of the hand-off: only its words, nothing pressed. HANDOFF_DELAY_MS in, the card is kept and the
+        browser asked for; when it never takes the screen (no start, or still here HANDOFF_MS after asking) the card
+        comes back. A stop from systemd that lands meanwhile (quitting) is the browser coming: nothing is taken back."""
+        h = self._handoff
+        h["ms"] += dt
+        if not h["asked"] and h["ms"] >= HANDOFF_DELAY_MS:
+            h["asked"], h["ms"] = True, 0
+            if self.handler is not None:
+                self.handler.save_resume()
+            if getattr(self.hw, "open_url", lambda url: None)(h["url"]) != "handoff" and not self.quitting:
+                return self._handoff_failed()
+        elif h["asked"] and h["ms"] >= HANDOFF_MS and not self.quitting:
+            return self._handoff_failed()
+        self._draw_handoff()
+
+    def _draw_handoff(self):
+        """The hand-off's words, drawn as power_off draws its own."""
+        self.display.views.message(*HANDOFF, self.status())
+        self.display.renderer.present()
+
+    def _handoff_failed(self):
+        """The browser did not take the screen: the kept card and the link file go, and PB's card is back."""
+        self._handoff = None
+        if self.handler is not None:
+            self.handler.drop_resume()
+        getattr(self.hw, "cancel_handoff", lambda: None)()
+        self.nav.notice = "The browser could not start"
 
     def power_off(self):
         """Save everything, say so on screen, then shut down. In the sandbox it only shows a notice."""
@@ -573,6 +624,11 @@ class App:
                 elif isinstance(t, (Tap, Swipe)):
                     self.finger = None
             return self._splash_frame(dt, list(actions) + list(touches))
+        if self._handoff is not None:              # the browser is taking the screen: its words stay, nothing is pressed
+            self._handoff_frame(dt)
+            if self._handoff is not None:
+                return
+            actions, touches = (), ()              # it never came: PB's card again, from the next press on
         self._light_up()
         if actions or touches:
             self.idle_ms = self.handler_idle_ms = 0
@@ -592,9 +648,13 @@ class App:
         self._back_from_game = False
         for a in actions:
             self.handle(a)
+            if self._handoff is not None:          # a link handed to the browser: the rest of this frame is its words
+                return
         for t in touches:
             if not self.error:
                 self.handle_touch(t)
+            if self._handoff is not None:
+                return
         if self.nav.notice != self._notice:
             self._notice, self._notice_ms = self.nav.notice, 0
         elif self._notice:

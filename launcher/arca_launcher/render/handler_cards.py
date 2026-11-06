@@ -3,7 +3,7 @@
 drawer takes (gfx, spec, rect, t_ms, ctx): spec is the state's card with its text filled plus what the view adds,
 rect the card's content area (above the step strip), t_ms the ms since the state began (rows fade up, the new rank
 turns in, the sale toast slides in; the pictures move in handler_art), ctx the flow's context. A drawer returns the
-touch targets it drew (only the hub has any)."""
+touch targets it drew (the hub's rows, the chain card's QR code)."""
 import math
 
 import pygame
@@ -466,14 +466,17 @@ def pick(g, spec, rect, t_ms, ctx):
 
 def chain(g, spec, rect, t_ms, ctx):
     """A finished step's chain ids: up to three rows (a label over its id), the chosen one's link as a QR code on the
-    left (Up and Down choose). With none (the mock writes nothing anywhere) it is the done card."""
+    left (Up and Down choose). A tap on the QR opens its link, as Triangle does. With none (the mock writes nothing
+    anywhere) it is the done card."""
     rows = list(ctx.get("chain") or ())
     if not rows:
         done(g, spec, rect, t_ms, ctx)
-        return
+        return []
     i = max(0, min(len(rows) - 1, int(ctx.get("chain_i") or 0)))
     url = rows[i].get("url")
-    if not (url and art.qr(g, url, qr_box(rect), t_ms, beam=False)):
+    box = art.qr(g, url, qr_box(rect), t_ms, beam=False) if url else None
+    hits = [Hit(box, ("handler", "triangle"), box, 0)] if box else []
+    if not box:
         art.icon(g, "done", PICTURE.move(rect.topleft), t_ms)  # a row with no link to show: its text says it
     x, w = rect.x + SIDE, rect.w - SIDE - 20
     if spec.get("h"):
@@ -487,6 +490,7 @@ def chain(g, spec, rect, t_ms, ctx):
             g.text(ellipsize(row.get("label") or "", w, _m(g, CHAIN_LABEL)), CHAIN_LABEL, x, y, weight="pixel")
             g.text(ellipsize(row.get("value") or "", w, _m(g, CHAIN_VALUE)), CHAIN_VALUE, x, y + 23, weight="pixel",
                    color=SOFT)
+    return hits
 
 
 DRAWERS = {"status": status, "qr": qr, "wait": wait, "load": load, "done": done, "no": no, "warn": warn,

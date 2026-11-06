@@ -1212,3 +1212,351 @@ def test_with_world_mocked_there_is_no_console_line(tmp_path):
     app = make(tmp_path)
     app.frame(16, [A.Y])
     assert "console_tag" not in app.nav.handler.ctx and app.handler.ledger.book == "ANY-7QZ"
+
+
+# --- a chain link: Triangle (or a tap on the QR) opens it; on the handheld the card comes back after the browser ------
+LINK = "https://hashscan.io/testnet/transaction/0.0.9185802-1762412349-000000123"
+ROWS = [{"label": "Hedera INTENT #7", "value": "tx 0.0.9185802@1762412340",
+         "url": "https://hashscan.io/testnet/transaction/0.0.9185802-1762412340-000000001"},
+        {"label": "Paid 0.10 USDC", "value": "tx 0.0.9185802@1762412349", "url": LINK},
+        {"label": "Hedera RECEIPT", "value": "waiting for the mirror", "url": None}]
+OPENING = ("Opening the explorer", "Hold PS for 2 seconds to come back to this screen.")
+
+
+class PiHw(FakeHw):
+    """The handheld: open_url answers `how` ("handoff": the browser has the screen; None: it did not start), noting
+    whether the chain card was saved before it was called; on_open runs inside it (a SIGTERM landing mid-call).
+    cancel_handoff counts the links taken back."""
+
+    def __init__(self, how="handoff", resume=None, on_open=None):
+        super().__init__()
+        self.how, self.resume, self.on_open = how, resume, on_open
+        self.opened, self.saved_first, self.cancelled = [], [], 0
+
+    def is_pi(self):
+        return True
+
+    def open_url(self, url):
+        self.opened.append(url)
+        self.saved_first.append(os.path.exists(self.resume))
+        if self.on_open is not None:
+            self.on_open()
+        return self.how
+
+    def cancel_handoff(self):
+        self.cancelled += 1
+
+
+class LaptopHw(FakeHw):
+    def __init__(self, how="window"):
+        super().__init__()
+        self.how, self.opened = how, []
+
+    def is_pi(self):
+        return False
+
+    def open_url(self, url):
+        self.opened.append(url)
+        return self.how
+
+
+def resume_path(tmp_path):
+    return str(tmp_path / "handler-resume.json")
+
+
+def on_chain_card(app, state="buy_done", chain_i=1):
+    """PB's hub on Marine Drive GP, then the chain card `state` showing ROWS, row chain_i chosen, drawn once."""
+    app.frame(16, [A.Y])
+    flow = app.nav.handler
+    flow.start(state)
+    flow.ctx.update(chain=[dict(row) for row in ROWS], chain_i=chain_i)
+    app.frame(16)
+    return flow
+
+
+def said(monkeypatch):
+    """Every (title, body) the message screen shows from now on. Patched on the class: a spy on the instance would
+    keep the window's renderer alive past the window (conftest.py's screen fixture says why that breaks later tests)."""
+    from arca_launcher.render.views import Views
+    shown, real = [], Views.message
+    monkeypatch.setattr(Views, "message", lambda self, t, b, s: (shown.append((t, b)), real(self, t, b, s))[1])
+    return shown
+
+
+def hand_off(app, actions=(A.Y,)):
+    """Triangle (or actions) on the card, then the frames until the browser is asked (HANDOFF_DELAY_MS on)."""
+    from arca_launcher.app import HANDOFF_DELAY_MS
+    app.frame(16, list(actions))
+    for _ in range(HANDOFF_DELAY_MS // 100 + 1):
+        app.frame(100)
+
+
+def test_a_link_on_the_handheld_says_how_to_come_back_then_saves_the_card_and_asks_for_the_browser(tmp_path,
+                                                                                                  monkeypatch):
+    from arca_launcher.app import HANDOFF_DELAY_MS
+    hw = PiHw(resume=resume_path(tmp_path))
+    app = make(tmp_path, hw=hw)
+    flow = on_chain_card(app)
+    shown = said(monkeypatch)
+    app.frame(16, [A.Y])                                         # Triangle: the words first, read for a moment
+    assert shown == [OPENING] and hw.opened == [] and not os.path.exists(resume_path(tmp_path))
+    for _ in range(HANDOFF_DELAY_MS // 100 - 1):
+        app.frame(100, [A.B, A.DOWN])                            # nothing pressed while the words are up
+    assert hw.opened == [] and shown[-1] == OPENING
+    app.frame(100)
+    app.frame(100)
+    assert hw.opened == [LINK] and hw.saved_first == [True]      # saved right before the browser was asked
+    with open(resume_path(tmp_path), encoding="utf-8") as f:
+        saved = json.load(f)
+    assert (saved["v"], saved["game"], saved["state"], saved["chain_pay"]) == (1, GAME, "buy_done", None)
+    assert abs(saved["at"] - time.time()) < 60
+    assert saved["ctx"]["chain"] == ROWS and saved["ctx"]["chain_i"] == 1 and saved["ctx"]["target"] == "RIA"
+    assert "board_rows" not in saved["ctx"] and saved["ctx"]["game_titles"][GAME] == "Marine Drive GP"
+    app.frame(16, [A.B, A.DOWN])                                 # until systemd stops it: the message, nothing pressed
+    assert shown[-1] == OPENING and flow.ctx["chain_i"] == 1 and app.nav.screen is Screen.HANDLER
+    assert hw.opened == [LINK] and hw.cancelled == 0
+    app.close()
+
+
+def test_the_frame_that_starts_the_hand_off_does_nothing_more(tmp_path, monkeypatch):
+    """A second Triangle, a tap or a D-pad press in the same frame does nothing, and the card is not drawn over the
+    words."""
+    from arca_launcher.render.handler_view import HandlerView
+    hw = PiHw(resume=resume_path(tmp_path))
+    app = make(tmp_path, hw=hw)
+    flow = on_chain_card(app)
+    qr = next(h for h in app.display.views.hits if h.target == ("handler", "triangle"))
+    drawn, real = [], HandlerView.draw
+    monkeypatch.setattr(HandlerView, "draw", lambda self, *a: (drawn.append(1), real(self, *a))[1])
+    x, y = qr.shape.center
+    app.frame(16, [A.Y, A.Y, A.DOWN], touches=[Press(x, y), Tap(x, y)])
+    assert drawn == [] and flow.ctx["chain_i"] == 1
+    hand_off(app, actions=[A.Y])
+    assert hw.opened == [LINK] and drawn == []
+    app.close()
+
+
+def test_a_stop_landing_while_the_browser_is_asked_keeps_the_card_and_its_link(tmp_path):
+    """systemd's stop of the launcher can land before systemctl answers: the launcher is going, the browser is coming.
+    Nothing is taken back."""
+    app = make(tmp_path)
+    hw = PiHw(how=None, resume=resume_path(tmp_path), on_open=lambda: setattr(app, "quitting", True))
+    app.hw = hw
+    on_chain_card(app)
+    hand_off(app)
+    assert hw.opened == [LINK] and os.path.exists(resume_path(tmp_path))
+    assert hw.cancelled == 0 and app.nav.notice is None
+    app.close()
+
+
+def test_the_launcher_started_after_the_browser_reopens_the_same_chain_card(tmp_path):
+    app = make(tmp_path, hw=PiHw(resume=resume_path(tmp_path)))
+    flow = on_chain_card(app)
+    before = (list(flow.ctx["chain"]), flow.ctx["chain_i"], flow.line)
+    hand_off(app)
+    app.close()                                                  # systemd stops it; the browser closes; it starts again
+    again = make(tmp_path, book=None)                            # the same console
+    again.frame(16)
+    back = again.nav.handler
+    assert again.nav.screen is Screen.HANDLER and back.state.name == "buy_done"
+    assert (back.ctx["chain"], back.ctx["chain_i"], back.line) == before
+    assert not os.path.exists(resume_path(tmp_path))             # one shot
+    again.frame(16, [A.A])                                       # Cross still races the ghost
+    assert ("before", str(tmp_path / f"{GAME}.gba"), b"G") in again.bridge.calls
+    again.close()
+
+
+def test_a_listing_card_brought_back_is_never_listed_twice(tmp_path):
+    path = str(tmp_path / "handler.json")
+    app = make(tmp_path, hw=PiHw(resume=resume_path(tmp_path)))
+    on_chain_card(app, "ls_done", chain_i=0)
+    assert len(L.load(path).listings) == 1
+    hand_off(app)
+    app.close()
+    again = make(tmp_path, book=None)
+    again.frame(16)
+    assert again.nav.handler.state.name == "ls_done" and again.nav.handler.ctx["chain"] == ROWS
+    assert len(L.load(path).listings) == 1
+    again.close()
+
+
+def _resume_file(tmp_path, **change):
+    data = {"v": 1, "at": time.time(), "game": GAME, "state": "buy_done",
+            "ctx": {"chain": ROWS, "chain_i": 1, "target": "RIA"}, "chain_pay": None}
+    data.update(change)
+    with open(resume_path(tmp_path), "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+
+@pytest.mark.parametrize("change", [{"at": -601.0}, {"at": 30.0}, {"at": "now"}, {"v": 2},
+                                    {"v": True}, {"state": "hub"}, {"state": "racing"}, {"game": "gone"},
+                                    {"game": 7}, {"ctx": None}, {"ctx": {"chain": "rows"}},
+                                    {"ctx": {"chain": [{"label": 1}]}}, {"ctx": {"chain": ROWS, "chain_i": "1"}},
+                                    "not json", "a list"])
+def test_a_resume_file_that_does_not_fit_is_dropped_and_never_crashes(tmp_path, change):
+    if change == "not json":
+        with open(resume_path(tmp_path), "w", encoding="utf-8") as f:
+            f.write("{not json")
+    elif change == "a list":
+        with open(resume_path(tmp_path), "w", encoding="utf-8") as f:
+            json.dump([1, 2], f)
+    elif type(change.get("at")) is float:                        # seconds from now: saved too long ago, or later
+        _resume_file(tmp_path, at=time.time() + change["at"])
+    else:
+        _resume_file(tmp_path, **change)
+    app = make(tmp_path)
+    assert not os.path.exists(resume_path(tmp_path))             # read once and gone, stale and broken ones too
+    app.frame(16)
+    assert app.nav.screen is Screen.HOME and app.handler.pending is None
+    app.close()
+
+
+def test_a_resume_with_no_game_or_payment_opens_as_saved(tmp_path):
+    pay = {"receipt": "0.0.9185802@1762412349.000000123", "late": False, "receipt_msg": None}
+    _resume_file(tmp_path, game=None, chain_pay=pay)
+    app = make(tmp_path)
+    app.frame(16)
+    flow = app.nav.handler
+    assert app.nav.screen is Screen.HANDLER and flow.state.name == "buy_done" and flow.game is None
+    assert flow.ctx["chain"] == ROWS and flow.chain_pay == pay
+    app.close()
+
+
+def test_a_resume_wins_over_a_sale_pb_has_not_told_yet(tmp_path):
+    path = str(tmp_path / "handler.json")
+    L.save(path, L.Ledger(book="ANY-7QZ", pending_sale={"game": GAME, "buyer": "ARJUN", "frames": 6100}))
+    _resume_file(tmp_path)
+    app = make(tmp_path, book=None)
+    app.frame(16)
+    assert app.nav.handler.state.name == "buy_done"
+    assert L.load(path).pending_sale is not None                 # the sale stays in the ledger
+    app.close()
+
+
+def test_the_days_record_book_offer_waits_behind_a_resume(tmp_path):
+    _resume_file(tmp_path)
+    app = make(tmp_path, book=None)                              # no record book: the day's offer would open
+    app.frame(16)
+    assert app.nav.handler.state.name == "buy_done"
+    assert settings.load(str(tmp_path / "state.json")).handler_offered == ""   # offered on a later start
+    app.close()
+
+
+def test_a_browser_that_does_not_start_leaves_pb_on_the_card(tmp_path):
+    hw = PiHw(how=None, resume=resume_path(tmp_path))
+    app = make(tmp_path, hw=hw)
+    flow = on_chain_card(app)
+    hand_off(app)
+    assert hw.saved_first == [True] and not os.path.exists(resume_path(tmp_path)) and hw.cancelled == 1
+    assert app.nav.notice == "The browser could not start" and app.nav.screen is Screen.HANDLER
+    app.frame(16, [A.DOWN])                                      # the card answers again
+    assert flow.ctx["chain_i"] == 2
+    app.close()
+
+
+def test_a_hand_off_that_never_stops_the_launcher_gives_the_card_and_the_link_back(tmp_path, monkeypatch):
+    from arca_launcher.app import HANDOFF_MS
+    hw = PiHw(resume=resume_path(tmp_path))
+    app = make(tmp_path, hw=hw)
+    flow = on_chain_card(app)
+    shown = said(monkeypatch)
+    hand_off(app)
+    assert hw.opened == [LINK]
+    for _ in range(HANDOFF_MS // 100 - 2):                       # counted from the browser's start, not the press
+        app.frame(100)
+    assert shown[-1] == OPENING and app.nav.notice is None and hw.cancelled == 0
+    app.frame(100)
+    app.frame(100)
+    app.frame(100)
+    assert app.nav.notice == "The browser could not start" and not os.path.exists(resume_path(tmp_path))
+    assert hw.cancelled == 1                                     # the link file goes too: no stale page later
+    app.frame(16, [A.DOWN])
+    assert flow.ctx["chain_i"] == 2
+    app.close()
+
+
+def test_a_resumed_payment_is_followed_again_by_the_sponsors(tmp_path):
+    pay = {"receipt": "0.0.9185802@1762412349.000000123", "late": False, "receipt_msg": None, "job": "p-1a2b3c4d"}
+    _resume_file(tmp_path, chain_pay=pay)
+    app = make(tmp_path)
+    followed = []
+    app.sponsors.follow = followed.append
+    app.frame(16)
+    assert app.nav.handler.state.name == "buy_done" and followed == [pay]
+    app.close()
+    _resume_file(tmp_path)                                       # no payment kept: nothing to follow
+    app = make(tmp_path)
+    app.sponsors.follow = followed.append
+    app.frame(16)
+    assert app.nav.handler.state.name == "buy_done" and followed == [pay]
+    app.close()
+
+    def broken(pay):
+        raise ValueError("a follow that fails")
+    _resume_file(tmp_path, chain_pay=pay)
+    app = make(tmp_path)
+    app.sponsors.follow = broken
+    app.frame(16)                                                # never a crash: the card still comes back
+    assert app.nav.handler.state.name == "buy_done"
+    app.close()
+
+
+class PayToSponsors(MockSponsors):
+    """Hedera real as far as the glue can tell: the book's account is `account` (None: not read yet)."""
+    account = None
+
+    def mocked(self, service):
+        return service != "third" and super().mocked(service)
+
+    def pay_to(self, book):
+        return self.account
+
+
+def test_a_resumed_listing_keeps_its_wallet_until_the_account_is_read(tmp_path):
+    _resume_file(tmp_path, state="ls_done", ctx={"chain": ROWS, "chain_i": 0, "wallet": "0.0.9473064"})
+    app = make(tmp_path)
+    app.sponsors = PayToSponsors(lambda: app.clock[0])
+    app.frame(16)
+    flow = app.nav.handler
+    assert flow.state.name == "ls_done" and flow.ctx["wallet"] == "0.0.9473064"
+    app.frame(16)
+    assert flow.ctx["wallet"] == "0.0.9473064"                   # not "no Hedera account yet" while it is read
+    app.sponsors.account = "0.0.5550001"
+    app.frame(16)
+    assert flow.ctx["wallet"] == "0.0.5550001"                   # the account as read now
+    app.sponsors.account = None
+    app.frame(16)
+    assert flow.ctx["wallet"] == "no Hedera account yet"         # from then on as before
+    app.close()
+
+
+@pytest.mark.parametrize("hw, notice", [(LaptopHw("window"), "Opened in a window"),
+                                        (LaptopHw(None), "Links open on the handheld or the laptop"),
+                                        (FakeHw(), "Links open on the handheld or the laptop")])
+def test_a_link_off_the_handheld_opens_a_window_or_says_where_links_open(tmp_path, hw, notice):
+    app = make(tmp_path, hw=hw)
+    flow = on_chain_card(app)
+    app.frame(16, [A.Y])
+    assert getattr(hw, "opened", [LINK]) == [LINK] and app.nav.notice == notice
+    assert app.nav.screen is Screen.HANDLER and not os.path.exists(resume_path(tmp_path))
+    app.frame(16, [A.DOWN])                                      # the launcher carries on
+    assert flow.ctx["chain_i"] == 2
+    app.close()
+
+
+def test_a_tap_on_the_qr_opens_its_link_as_triangle_does(tmp_path):
+    hw = LaptopHw()
+    app = make(tmp_path, hw=hw)
+    on_chain_card(app)
+    qr = next(h for h in app.display.views.hits if h.target == ("handler", "triangle"))
+    x, y = qr.shape.center
+    app.frame(16, touches=[Press(x, y), Tap(x, y)])
+    assert hw.opened == [LINK] and app.nav.notice == "Opened in a window"
+    app.close()
+
+
+def test_only_a_chain_card_is_saved_for_the_browser(tmp_path):
+    app = make(tmp_path)
+    app.frame(16, [A.Y])                                         # the hub
+    assert app.handler.save_resume() is False and not os.path.exists(resume_path(tmp_path))
+    app.close()

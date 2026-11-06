@@ -10,6 +10,9 @@ one and runs them.
 - sales never reports a sale: real sales arrive with Hedera, and a real board shows no made-up ones.
 - A run row's lap times (splits) come with it and are kept in the cache; a listing is a person's (book) or the house's
   BOT ghost (label). The explorer's origin comes from the service's /arkiv/config: only links there are ever drawn.
+- Each run is replayed before the console calls it checked: publish passes on the checker's replay (its frames and
+  final hash), load_ghost says the frames this console's own replay gave (or that it was replayed when first loaded)
+  and links the bought run on the explorer, its link built from /arkiv/config's template as the service builds one.
 
 All network work and every replay runs on one background thread. begin(), poll(), status() and board() only read and
 mark what that thread last saw, so a slow or missing Arkiv never holds up a frame. The thread reads every arcade game's
@@ -143,6 +146,7 @@ class ArkivSponsors:
         self._config_due = 0       # when /arkiv/config is next asked; None once it answered
         self.pin_differs = None    # what the service's /arkiv/config says that this console's pin does not (or None)
         self.explorer_origin = None   # the Arkiv explorer's https origin /arkiv/config names: links there may be drawn
+        self._entity_link = None   # /arkiv/config's explorer_entity ({key}), on that origin: a bought run's link
         self._wanted_ms = clock_ms()
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -279,10 +283,12 @@ class ArkivSponsors:
             if reply.get("season") != self._season:
                 differs.append(f"season {reply.get('season')!r}")
         origin = _explorer_origin(reply) if isinstance(reply, dict) else None
+        entity = reply.get("explorer_entity") if origin is not None else None
         with self._lock:
             self._config_due = None
             self.pin_differs = ", ".join(differs) or None
             self.explorer_origin = origin
+            self._entity_link = entity if isinstance(entity, str) and "{key}" in entity else None
         if differs:
             log.warning("Arkiv: the service writes under %s, but this console reads %s season %s: its listings "
                         "will not show on this board", self.pin_differs, arkiv_rpc.eip55(self._checker), self._season)
@@ -405,6 +411,9 @@ class ArkivSponsors:
     # ---- load_ghost: the log from the row (plain) or the service (listed), checked against the row -------------------
 
     def _load(self, job):
+        """The ghost's checked log. Its data: ghost_log, replayed (the frames this console's replay gave, the row's own
+        time), and the run's explorer link when /arkiv/config named the template. A log already here was replayed when
+        it was first loaded: replayed is then the target's time, with replay_cached."""
         p = job.payload
         run_key, log_h, game = p.get("target_run"), p.get("target_log_h"), _arcade(p)
         fail = Result(ok=False, failure="buy_load_fail")
@@ -412,7 +421,9 @@ class ArkivSponsors:
             return fail
         path = os.path.join(self._runs_dir, "ghosts", log_h + ".acl")
         if _file_hash(path) == log_h:                   # checked and replayed when it was written: no network
-            return Result(ok=True, data={"ghost_log": path})
+            frames = p.get("target_frames")
+            done = {"replayed": frames, "replay_cached": True} if type(frames) is int and frames > 0 else {}
+            return Result(ok=True, data=self._loaded(path, run_key, done))
         run, _ = self._rpc_read(arkiv_rpc.read_run, run_key, self._checker, with_log=True)
         frames = p.get("target_frames")
         if run is None or run["log_h"] != log_h or (type(frames) is int and run["frames"] != frames):
@@ -433,7 +444,24 @@ class ArkivSponsors:
         finally:
             if os.path.exists(part):
                 os.unlink(part)
-        return Result(ok=True, data={"ghost_log": path})
+        return Result(ok=True, data=self._loaded(path, run_key, {"replayed": replayed}))
+
+    def _loaded(self, path, run_key, replay):
+        data = dict({"ghost_log": path}, **replay)
+        link = self._run_link(run_key)
+        if link is not None:
+            data["explorer"] = {"run": link}
+        return data
+
+    def _run_link(self, run_key):
+        """The run's Arkiv explorer link, built as the service builds its own (explorer_entity's {key}, the key in lower
+        case), only on the explorer origin /arkiv/config named; None before it answered."""
+        with self._lock:
+            template, origin = self._entity_link, self.explorer_origin
+        if template is None or origin is None:
+            return None
+        link = template.replace("{key}", run_key.lower())
+        return link if _link(link) and link.startswith(origin + "/") else None
 
     def _listed_ghost(self, run_key, receipt):
         """A listed run's plain log from the service (it holds the key), against the payment receipt; None if not."""
@@ -687,7 +715,8 @@ def _checked(reply):
 
 def _published(reply):
     """A done publish as the step's Result. A failure the handler has no screen for, or a success without both row
-    keys and the transaction, is "not listed yet": the console never shows a listing it cannot name."""
+    keys and the transaction, is "not listed yet": the console never shows a listing it cannot name. The checker's
+    replay (frames, final_hash: the game's u32 hash after the last step) is passed on only in that shape."""
     if reply["ok"] is not True:
         failure = reply["failure"]
         return Result(ok=False, failure=failure if failure in _PUBLISH_FAILURES else "ls_publish_fail")
@@ -701,6 +730,10 @@ def _published(reply):
         links = {name: links[name] for name in ("tx", "run", "listing") if _link(links.get(name))}
         if links:
             out["explorer"] = links
+    replay = data.get("replay")
+    if (isinstance(replay, dict) and type(replay.get("frames")) is int and replay["frames"] > 0
+            and type(replay.get("final_hash")) is int and 0 <= replay["final_hash"] <= 0xFFFFFFFF):
+        out["replay"] = {"frames": replay["frames"], "final_hash": replay["final_hash"]}
     return Result(ok=True, data=out)
 
 

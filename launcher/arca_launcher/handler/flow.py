@@ -5,7 +5,7 @@ the sponsors only through the `Sponsors` protocol (sponsors.py) and keeps the co
 Pure Python, driven once a frame by the app: buttons arrive through press()/pick() and time
 through tick(). There is no clock of its own: a call's deadline is read from the call's own
 `elapsed_ms`, the day from `today()`. A move that hands control back to the app returns a
-command (RaceTarget, CloseHandler); everything else returns None.
+command (RaceTarget, OpenLink, CloseHandler); everything else returns None.
 
 PB's scout: with the sponsors' `scouts` on, Cross on the board goes to the scout (the service
 compares your laps with the listed ghosts' and picks one); its pick becomes the target and is
@@ -15,8 +15,15 @@ board's own target, saying the scout did not answer.
 
 Every finished step keeps its chain ids in ctx["chain"] ([{label, value, url}], ctx["chain_i"]
 the one whose QR shows): the HCS record, the Arkiv rows, the payment with its INTENT and
-RECEIPT. A url is kept only on HashScan's testnet or the Arkiv explorer the service names.
+RECEIPT, and last the run's replay (the checker's for a listing, this console's for a bought
+ghost; never the mock's). A url is kept only on HashScan's testnet or the Arkiv explorer the
+service names. Triangle on a chain card opens the chosen row's link (OpenLink, for the app).
+
+A chain card can come back after the browser took the screen (handler_glue.py): restore() before
+start() lands on it as it was, its rows already in ctx, with nothing of arriving done again, and
+the payment data chain_pay gave so a RECEIPT still waiting for the mirror keeps filling in.
 """
+import copy
 import dataclasses
 import random
 import time
@@ -35,6 +42,12 @@ class RaceTarget:
     """Start the game, racing this seller's ghost (None: the player's own best)."""
     game_id: str
     seller: str | None
+
+
+@dataclass(frozen=True)
+class OpenLink:
+    """Open a chain row's link (HashScan's testnet or the Arkiv explorer: the flow's _allowed kept only those)."""
+    url: str
 
 
 @dataclass(frozen=True)
@@ -69,7 +82,9 @@ _TARGET_KEYS = ("target", "target_time", "target_frames", "target_run", "target_
                 "target_pay_to", "gap", "new_rank")
 _SCOUT_KEYS = ("scout_id", "scout_reason", "scout_by", "scout_model", "scout_note", "you_laps", "it_laps",
                "scout_lap", "you_time")
-_CHAIN_STATES = ("ls_done", "buy_done", "buy_late")   # the chain card's screens: Up and Down pick a row's QR
+CHAIN_STATES = ("ls_done", "buy_done", "buy_late")   # the chain card's screens: Up and Down pick a row's QR
+REPLAYED_CHECKER = "Replayed by the checker"   # a listing's last chain row: the checker's replay before it wrote
+REPLAYED_HERE = "Replayed on this console"     # a purchase's: this console's replay of the ghost it loaded
 HASHSCAN = "https://hashscan.io/testnet/"
 LINK_MAX = 300
 GROQ = "Groq"                  # where the scout's model runs, as its by-line says
@@ -119,6 +134,7 @@ class Flow:
         self._world_dup = None  # the book World named for a duplicate: signing in to it is World-verified
         self._board_target = None   # the board's target fields while a scout's pick stands in for them
         self._chain_pay = None      # the payment the chain rows show (its data), for the late HCS ids
+        self._restored = False      # restore(): the next start() lands on a chain card as it was
         ctx.setdefault("chain", [])
         ctx.setdefault("chain_i", 0)
         ctx.setdefault("humans_only", False)
@@ -185,11 +201,30 @@ class Flow:
 
     def start(self, entry: str):
         """Open at an entry ("book", "board", "list", "hub") or straight at a state name.
-        Returns the command that entry produced, as press() does."""
+        Returns the command that entry produced, as press() does. Right after restore(), a chain
+        card is shown as it was: nothing of arriving at it is done again (a listing is never
+        written twice)."""
         self._call = None
         self._seller = self.ctx.get("target") or None
         self._after_book = "home" if entry == "book" else None  # the day's offer: back Home after
+        restored, self._restored = self._restored, False
+        if restored and entry in CHAIN_STATES:
+            return self._enter(entry, arrive=False)
         return self._enter(self._entry(entry))
+
+    def restore(self, chain_pay=None):
+        """Before start(): the chain card it starts at was on screen before the browser took it
+        (handler_glue.py), its rows and chain_i are in ctx already. chain_pay is what chain_pay
+        said then (a payment's receipt and its HCS messages), so a RECEIPT still waiting for the
+        mirror keeps filling in; anything else is no payment. Counts for the next start() only."""
+        self._restored = True
+        usable = isinstance(chain_pay, dict) and isinstance(chain_pay.get("receipt"), str) and chain_pay["receipt"]
+        self._chain_pay = copy.deepcopy(chain_pay) if usable else None
+
+    @property
+    def chain_pay(self):
+        """The payment the chain rows show (a copy of its data, for restore()), or None."""
+        return copy.deepcopy(self._chain_pay)
 
     def press(self, event: str):
         if self.outcomes_open:
@@ -198,7 +233,7 @@ class Flow:
             move = -1 if event == "up" else 1
             if self.state.name == "hub":
                 self.hub_index = max(0, min(self.hub_count - 1, self.hub_index + move))
-            elif self.state.name in _CHAIN_STATES and self.ctx["chain"]:
+            elif self.state.name in CHAIN_STATES and self.ctx["chain"]:
                 self.ctx["chain_i"] = (self.ctx.get("chain_i", 0) + move) % len(self.ctx["chain"])
             return None
         if event == "square":
@@ -211,6 +246,8 @@ class Flow:
             return None
         if self.in_flight:
             return None
+        if event == "triangle":
+            return self._open_link()
         if event == "cross":
             if self.state.name == "hub":
                 return self.pick(self.hub_index)
@@ -247,7 +284,7 @@ class Flow:
         auto = self.state.auto_ms
         if auto is not None and self.ms_in_state >= auto and "auto" in self.state.on:
             return self._enter(self.state.on["auto"])
-        if self._chain_pay is not None and self.state.name in _CHAIN_STATES:
+        if self._chain_pay is not None and self.state.name in CHAIN_STATES:
             self._chain_refresh()
         if self._call is not None:
             self._show_request()  # a real adapter's code and link arrive a moment after begin()
@@ -307,7 +344,8 @@ class Flow:
         return (bool(getattr(self.sponsors, "scouts", False)) and self.ctx.get("best_frames") is not None
                 and bool(self.ledger.book))
 
-    def _enter(self, name, data=None):
+    def _enter(self, name, data=None, arrive=True):
+        """arrive=False: only show the state (a restored chain card), none of _arrive's effects."""
         name = self._route(name)
         previous = self.state.name
         if self.state.phone and self._call is not None:
@@ -319,7 +357,7 @@ class Flow:
         self.state = STATES[name]
         self.ms_in_state = 0
         self._close_list()
-        command = self._arrive(name, previous, data or {})
+        command = self._arrive(name, previous, data or {}) if arrive else None
         if self.state.call is not None:
             self._call = self.sponsors.begin(self.state.call, self._payload())
             self._show_request()
@@ -428,6 +466,8 @@ class Flow:
             self._chain_publish(data)
         if result.ok and step == "load_ghost" and data.get("ghost_log"):
             self.ctx["ghost_log"] = data["ghost_log"]   # a real target's log, checked: what the race draws it from
+        if result.ok and step == "load_ghost":
+            self._chain_replayed(data)
         if result.ok and step == "pay":
             charged = self._charge(data.get("receipt", ""))
             if not charged and not owns(self.ledger, self.game, self._seller):
@@ -529,13 +569,33 @@ class Flow:
         self.ctx["chain_i"] = 0
 
     def _chain_publish(self, data):
-        """The Arkiv rows: the listing's entity key and the write's transaction, each with its explorer link."""
+        """The Arkiv rows: the listing's entity key and the write's transaction, each with its explorer link; then,
+        when the service replayed the run for this listing, the checker's replay ("1:42.83 = 6170 frames · end
+        225d59fd": its time and the game's final hash), linked to the run."""
         if self.sponsors.mocked("board"):
             return
         board, links = self.sponsors.names.board, data.get("explorer") or {}
         rows = [self._row(f"{board} {name}", _short(data[key]), links.get(key))
                 for name, key in (("listing", "listing"), ("tx", "tx")) if isinstance(data.get(key), str)]
+        replay = data.get("replay")
+        if isinstance(replay, dict) and _frames(replay.get("frames")):
+            frames, end = replay["frames"], replay.get("final_hash")
+            if type(end) is int and 0 <= end <= 0xFFFFFFFF:
+                rows.append(self._row(REPLAYED_CHECKER, "%s = %d frames \u00b7 end %08x"
+                                      % (coach.fmt_time(frames), frames, end), links.get("run")))
         self.ctx["chain"] = list(self.ctx.get("chain") or []) + rows
+
+    def _chain_replayed(self, data):
+        """This console's replay of the ghost it loaded, last on the chain card: "1:43.93 = 6236 frames, same as the
+        board" ("checked when first loaded" for a log replayed when it was first loaded), linked to the run. Never
+        twice, never the mock's."""
+        frames = data.get("replayed")
+        if self.sponsors.mocked("board") or not _frames(frames):
+            return
+        how = "checked when first loaded" if data.get("replay_cached") else "same as the board"
+        links = data.get("explorer") if isinstance(data.get("explorer"), dict) else {}
+        row = self._row(REPLAYED_HERE, f"{coach.fmt_time(frames)} = {frames} frames, {how}", links.get("run"))
+        self.ctx["chain"] = [r for r in self.ctx.get("chain") or () if r.get("label") != REPLAYED_HERE] + [row]
 
     def _chain_paid(self, data):
         """The payment's rows: its INTENT on HCS, the payment itself, its RECEIPT (late: "waiting for the mirror"
@@ -559,8 +619,19 @@ class Flow:
             msg = data["receipt_msg"]
             rows.append(self._msg_row(f"{third} RECEIPT", msg) if isinstance(msg, dict)
                         else self._row(f"{third} RECEIPT", "waiting for the mirror"))
+        # This console's replay of the ghost stays last, as the RECEIPT fills in above it.
+        rows += [r for r in self.ctx.get("chain") or () if r.get("label") == REPLAYED_HERE][-1:]
         self.ctx["chain"] = rows
         self.ctx["chain_i"] = min(self.ctx.get("chain_i", 0), len(rows) - 1)
+
+    def _open_link(self):
+        """Triangle on a chain card: the chosen row's link (chain_i held to the rows, as the card draws it), or None
+        for a row with none."""
+        rows = self.ctx.get("chain") or []
+        if self.state.name not in CHAIN_STATES or not rows:
+            return None
+        url = rows[max(0, min(len(rows) - 1, int(self.ctx.get("chain_i") or 0)))].get("url")
+        return OpenLink(url) if isinstance(url, str) and url else None
 
     def _msg_row(self, label, msg):
         seq, tx = msg.get("seq"), msg.get("tx")
@@ -680,6 +751,11 @@ def _tx_id(text):
     """A Hedera transaction id as HashScan finds it, its nanoseconds cut ("0.0.9185802@1762412349")."""
     account, at, when = text.partition("@")
     return account + at + when.split(".")[0] if at else text
+
+
+def _frames(value):
+    """A replay's time: a positive whole number of frames."""
+    return type(value) is int and value > 0
 
 
 def _short(key):

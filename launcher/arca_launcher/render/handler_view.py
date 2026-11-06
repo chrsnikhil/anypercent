@@ -53,14 +53,19 @@ def has_outcomes(flow):
 
 def hint_items(flow):
     """The button hints: Cross and Circle (or "working..." while a call runs), Square's Humans only toggle on the
-    board, else its mock outcomes, and Up/Down on a chain card with more than one QR to show."""
+    board, else its mock outcomes, and on a chain card Up/Down with more than one row and Triangle when the chosen
+    row has a link to open. Four at most there, short enough to stay right of a notice (chrome.TOAST_MAX_W)."""
     items = [("", "working...")] if flow.in_flight else [("X", "OK"), ("O", "Back")]
     if flow.state.name in ("board", "board_new"):
         items.append(("S", "All runners" if flow.ctx.get("humans_only") else "Humans only"))
     elif has_outcomes(flow):
         items.append(("S", "Mock"))
-    if flow.state.card["t"] == "chain" and len(flow.ctx.get("chain") or ()) > 1:
-        items.append(("U/D", "Next QR"))
+    if flow.state.card["t"] == "chain":
+        rows = flow.ctx.get("chain") or ()
+        if len(rows) > 1:
+            items.append(("U/D", "Next"))
+        if rows and rows[max(0, min(len(rows) - 1, int(flow.ctx.get("chain_i") or 0)))].get("url"):
+            items.append(("Y", "Open link"))
     return items
 
 

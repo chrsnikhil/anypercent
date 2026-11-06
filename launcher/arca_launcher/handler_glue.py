@@ -15,7 +15,11 @@ beat and the record book's run count come from the rows too.
 One console, one person: the ledger follows the console's binding as World's bridge says it (_sync_console), checked
 every frame (a lock read; the bridge is asked on World's own worker). Bound to a book: the ledger's book is that book,
 World-verified. Released: no book (purchases and listings stay in the ledger file). Unbound: the ledger's book, if any,
-is kept ("not linked yet", and the service spends nothing from it until the owner links the console)."""
+is kept ("not linked yet", and the service spends nothing from it until the owner links the console).
+
+A chain link opened on the handheld hands the screen to the browser, and systemd stops the launcher until it closes.
+save_resume() keeps the chain card on screen in handler-resume.json beside the ledger first; the launcher started
+again reads it once (and removes it, whatever it holds) and reopens that card as it was, once PB is quiet on Home."""
 import json
 import logging
 import os
@@ -28,12 +32,14 @@ from concurrent.futures import ThreadPoolExecutor
 from . import coach, settings
 from .handler import board, ledger
 from .handler.board import ordinal
-from .handler.flow import CloseHandler, Flow
+from .handler.flow import CHAIN_STATES, CloseHandler, Flow
 from .model import Screen
 
 MOCK_WALLET = "0xDE40...0000"        # made up, and shown only while Hedera is mocked: the owner's wallet never is
 NO_ACCOUNT = "no {third} account yet"   # where a book's sales go when Hedera is real but the book has no account
 SALE_AFTER_S = 60                    # a listing sells on the first return Home at least this long after listing
+RESUME_FILE = "handler-resume.json"  # beside the ledger: the chain card on screen when the browser took it
+RESUME_MAX_S = 600                   # a saved chain card older than this is not reopened
 # The pad as (low, high, ms) rumble: a sponsor step landed, was refused or backed out of, a ghost sold. A race's own
 # result screens are left out (a new best already rumbles as the game ends, app.py), and so is "nobody ahead sells",
 # a board reading, not a sponsor step.
@@ -95,10 +101,17 @@ class HandlerGlue:
         self._real_ghosts = {}             # a real target's checked log -> her ghost bytes, drawn once
         self._times_ms = BOARD_TIMES_MS    # since attract mode's runs to beat were last taken from the real boards
         self._binding = None               # the console's binding the ledger last followed
+        self._resume = None                # (pending, chain_pay): the chain card save_resume kept, while it waits
+        self._held_wallet = None           # a card brought back: it keeps its saved wallet until the account is read
         # A sale counted before a restart, never told: PB tells it now. Only the mock counts sales, so a real board
         # never tells one (it stays in the ledger for a mocked run again).
         if self._ledger.pending_sale is not None and not self._real():
             self.pending = self._sale_offer(self._ledger.pending_sale)
+        resume = self._take_resume()       # the chain card the browser took the screen from: it comes first
+        if resume is not None:
+            game, state, ctx, chain_pay = resume
+            self.pending = (game, state, ctx)
+            self._resume = (self.pending, chain_pay)
 
     def _real(self):
         """The board is real (Arkiv): its rows, never the mock runners."""
@@ -111,18 +124,32 @@ class HandlerGlue:
         return flow.ledger if flow is not None else self._ledger
 
     # ---- opening a flow ---------------------------------------------------------------------------------------------
-    def open(self, game, entry="hub", extra=None):
+    def open(self, game, entry="hub", extra=None, restored=False, chain_pay=None):
         """A new flow for game (None: no game) on screen at entry, extra laid over its context (a sale for a game no
-        longer in the library brings its own "game"). Returns the command its start produced."""
+        longer in the library brings its own "game"). Returns the command its start produced. restored: entry is the
+        chain card save_resume kept, extra its context, chain_pay its payment data (Flow.restore): the sponsors follow
+        that payment's RECEIPT again (follow(), Hedera's), and the card keeps its saved wallet until the book's account
+        is read again."""
         ctx = self._context(game)
         ctx.update(extra or {})
         self._game, self._raced = game, False
         flow = Flow(self.app.sponsors, self.ledger, self.path, game.id if game is not None else None, ctx, _today)
+        self._held_wallet = flow if restored else None
+        if restored:
+            flow.restore(chain_pay)
+            if chain_pay is not None:
+                try:
+                    getattr(self.app.sponsors, "follow", lambda pay: None)(chain_pay)
+                except Exception:                  # never a crash: the card comes back, its RECEIPT may stay waiting
+                    log.exception("the payment's RECEIPT is not followed again")
         return self.app.nav.open_handler(flow, entry)
 
     def offer_book(self, today):
-        """The day's first start with no record book: PB offers one, once PB is quiet."""
+        """The day's first start with no record book: PB offers one, once PB is quiet. Not over a chain card waiting
+        to come back after the browser: it is offered on a later start."""
         prefs = self.app.prefs
+        if self._resuming():
+            return
         if self.ledger.book is None and prefs.handler_offered != today:
             self.pending = (None, "book", {})
             prefs.handler_offered = today
@@ -145,7 +172,7 @@ class HandlerGlue:
             elif real and flow.state.name in BOARD_STATES:
                 self._fresh_board(flow)
             if not self.app.sponsors.mocked("third"):    # the book's account, once the service has said it
-                flow.ctx["wallet"] = self._wallet()
+                self._follow_wallet(flow)
             if self._job is not None:
                 flow.ctx["split"] = _split_text(self._job)
             cmd = flow.tick(dt)
@@ -155,10 +182,12 @@ class HandlerGlue:
             self._feel(flow)
             return cmd
         if self.pending is not None and nav.mascot is None and nav.stack == [Screen.HOME] and not self.app.error:
+            restored = self._resuming()            # the chain card the browser took: back as it was
+            chain_pay = self._resume[1] if restored else None
             game, entry, extra = self.pending
-            self.pending = None
+            self.pending = self._resume = None
             try:
-                cmd = self.open(game, entry, extra)
+                cmd = self.open(game, entry, extra, restored=restored, chain_pay=chain_pay)
             except Exception:                      # nobody asked for it: never a crash, let alone one at every start
                 log.exception("could not open the %s flow", entry)
                 if nav.screen is Screen.HANDLER:
@@ -247,6 +276,17 @@ class HandlerGlue:
                    run_time=coach.fmt_time(best_frames) if best_frames is not None else "",
                    split=self._split(arcade, best, log_frames, board_ctx["target_log_h"]))
         return ctx
+
+    def _follow_wallet(self, flow):
+        """The card's wallet follows the book's account as read. A card brought back after the browser keeps the
+        wallet it was saved with until the restarted adapter has read the account again (never "no account yet" in
+        between); from then on it follows as any card does."""
+        if self._held_wallet is flow:
+            pay_to = getattr(self.app.sponsors, "pay_to", None)
+            if (pay_to(self.ledger.book) if pay_to is not None else None) is None:
+                return
+            self._held_wallet = None
+        flow.ctx["wallet"] = self._wallet()
 
     def _wallet(self):
         """Where the book's sales go, as the listing's cards say it: its Hedera account when Hedera is real (the
@@ -596,6 +636,103 @@ class HandlerGlue:
             extra["run_time"] = coach.fmt_time(sale["frames"])
         return game, "sale", extra
 
+    # ---- the browser's hand-off: the chain card comes back after it -------------------------------------------------
+    def save_resume(self):
+        """Before the browser takes the screen (app.open_link): the chain card on screen as it is, so the launcher
+        systemd starts again after the browser reopens it. Written whole (a temp file, then a rename): the version, when,
+        the game's id, the state, every context value that is JSON (the board's rows are built again) and the
+        flow's payment data. Only on a chain card. True when written."""
+        nav = self.app.nav
+        flow = nav.handler
+        if flow is None or nav.screen is not Screen.HANDLER or flow.state.name not in CHAIN_STATES:
+            return False
+        ctx = {}
+        for key, value in flow.ctx.items():
+            try:
+                json.dumps(value, allow_nan=False)
+            except (TypeError, ValueError):
+                continue
+            ctx[key] = value
+        data = {"v": 1, "at": time.time(), "game": flow.game, "state": flow.state.name, "ctx": ctx,
+                "chain_pay": flow.chain_pay}
+        path = self._resume_path()
+        try:
+            with open(path + ".tmp", "w", encoding="utf-8") as f:
+                json.dump(data, f, allow_nan=False)
+            os.replace(path + ".tmp", path)
+        except (OSError, TypeError, ValueError):
+            log.exception("the chain card was not kept for the browser's return")
+            return False
+        return True
+
+    def drop_resume(self):
+        """The browser did not take the screen after all: the kept chain card is not wanted."""
+        try:
+            os.remove(self._resume_path())
+        except OSError:
+            pass
+
+    def _resume_path(self):
+        return os.path.join(self.app.state_dir, RESUME_FILE)
+
+    def _resuming(self):
+        """The waiting flow is the chain card save_resume kept (not one that took its place)."""
+        return self._resume is not None and self.pending is self._resume[0]
+
+    def _take_resume(self):
+        """The chain card save_resume kept, as (game, state, ctx, chain_pay), or None. The file is read once and always
+        removed, stale and broken ones too, and never stops the launcher: anything wrong with it is logged and left."""
+        path = self._resume_path()
+        try:
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError):
+            log.exception("the kept chain card could not be read")
+            text = None
+        try:
+            os.remove(path)
+        except OSError:
+            log.exception("the kept chain card could not be removed")
+        if text is None:
+            return None
+        try:
+            return self._resume_from(json.loads(text))
+        except Exception:
+            log.exception("the kept chain card is not one")
+            return None
+
+    def _resume_from(self, data):
+        """What the file said, if it still counts: version 1, saved at most RESUME_MAX_S ago (and not later than now),
+        a chain card with its rows, for a game still in the library or none."""
+        if not (isinstance(data, dict) and type(data.get("v")) is int and data["v"] == 1):
+            log.warning("the kept chain card is not one this launcher reads")
+            return None
+        at, state, ctx, gid = data.get("at"), data.get("state"), data.get("ctx"), data.get("game")
+        if type(at) not in (int, float) or not 0 <= time.time() - at <= RESUME_MAX_S:
+            log.info("the kept chain card is too old to reopen")
+            return None
+        if state not in CHAIN_STATES or not isinstance(ctx, dict) or not _chain_rows(ctx):
+            log.warning("the kept chain card is not a chain card")
+            return None
+        game = None
+        if gid is not None:
+            game = next((g for g in self.app.nav.games if g.id == gid), None) if isinstance(gid, str) else None
+            if game is None:
+                log.info("the kept chain card's game is not in the library")
+                return None
+        pay = data.get("chain_pay")
+        return game, state, ctx, pay if isinstance(pay, dict) else None
+
     def close(self):
         for pool in (self._pool, self._warm_pool):
             pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _chain_rows(ctx):
+    """ctx's chain rows are rows the chain card can draw: [{label, value, url or None}], with a whole chain_i."""
+    rows, i = ctx.get("chain"), ctx.get("chain_i", 0)
+    return (isinstance(rows, list) and type(i) is int
+            and all(isinstance(r, dict) and isinstance(r.get("label"), str) and isinstance(r.get("value"), str)
+                    and (r.get("url") is None or isinstance(r["url"], str)) for r in rows))

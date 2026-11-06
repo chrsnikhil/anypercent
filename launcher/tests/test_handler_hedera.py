@@ -208,7 +208,7 @@ def test_pay_starts_a_buy_and_follows_its_stages(tmp_path):
     assert rig.hedera.gets("/hedera/buy/")[-1] == "/hedera/buy/p-00000000"
     rig.hedera.move("done", ok=True, data=dict(PAID, extra="never passed on"))
     rig.step(call)
-    assert call.poll() == Result(ok=True, data=PAID)
+    assert call.poll() == Result(ok=True, data=dict(PAID, job="p-00000000"))   # the job: followed after a restart
     assert rig.sponsors.status()["third"] == "ok"
 
 
@@ -318,7 +318,7 @@ def test_a_service_silent_mid_payment_is_waited_out(tmp_path):
     rig.hedera.down = False
     rig.hedera.move("done", ok=True, data=dict(PAID, late=True))
     rig.step(call)
-    assert call.poll() == Result(ok=True, data=dict(PAID, late=True))
+    assert call.poll() == Result(ok=True, data=dict(PAID, late=True, job="p-00000000"))
 
 
 def test_a_job_the_service_no_longer_knows_is_hedera_down(tmp_path):
@@ -1030,7 +1030,7 @@ def test_a_slow_service_never_holds_up_a_frame(tmp_path):
             worst = max(worst, time.monotonic() - t0)
             time.sleep(0.01)
         assert worst < 0.05
-        assert call.poll() == Result(ok=True, data=PAID)
+        assert call.poll() == Result(ok=True, data=dict(PAID, job="p-00000000"))
         assert sponsors.pay_to("ANY-6PS") == SELLER
     finally:
         sponsors.close()
@@ -1297,7 +1297,7 @@ def test_a_payment_names_its_intent_and_its_receipt_fills_in_later(tmp_path):
     call = _pay(rig)
     rig.hedera.move("done", ok=True, data=dict(PAID, intent=INTENT, receipt_msg=None))
     rig.step(call)
-    assert call.poll() == Result(ok=True, data=dict(PAID, intent=INTENT, receipt_msg=None))
+    assert call.poll() == Result(ok=True, data=dict(PAID, intent=INTENT, receipt_msg=None, job="p-00000000"))
     assert rig.sponsors.chain_update() == {"receipt": TX, "intent": INTENT, "receipt_msg": None}
     asked = len(rig.hedera.gets("/hedera/buy/"))
     rig.step(ms=1000)
@@ -1371,8 +1371,53 @@ def test_the_scout_picks_and_pb_buys_the_bot_ghost_on_its_own(tmp_path):
     rig.service.sales[TX] = run["key"]
     rig.wait(flow, 1000)
     assert flow.state.name == "buy_done"
-    assert [row["label"] for row in flow.ctx["chain"]] == ["Hedera INTENT #7", "Paid 0.10 USDC", "Hedera RECEIPT"]
+    assert [row["label"] for row in flow.ctx["chain"]] == ["Hedera INTENT #7", "Paid 0.10 USDC", "Hedera RECEIPT",
+                                                           "Replayed on this console"]
+    replayed = {"label": "Replayed on this console", "value": "1:43.93 = 6236 frames, same as the board", "url": None}
+    assert flow.ctx["chain"][3] == replayed                         # no /arkiv/config explorer template: no link
     rig.hedera.move("done", ok=True, data=dict(PAID, intent=INTENT, receipt_msg=RECEIPT_MSG))
     rig.wait(flow, 2200)
     assert flow.ctx["chain"][2]["label"] == "Hedera RECEIPT #8"
+    assert flow.ctx["chain"][3] == replayed                         # still last as the RECEIPT fills in
     assert flow.ledger.purchases["marine-drive-gp:BOT-A2"]["receipt"] == TX
+
+
+# ---- after the browser: a restarted console follows the payment's RECEIPT again --------------------------------------
+
+def test_a_restarted_console_follows_the_receipt_of_the_payment_it_shows(tmp_path):
+    rig = Rig(tmp_path)
+    call = _pay(rig)
+    rig.hedera.move("done", ok=True, data=dict(PAID, intent=INTENT, receipt_msg=None))
+    rig.step(call)
+    pay = json.loads(json.dumps(call.poll().data))                    # as the resume file keeps it
+    again = rig.make()                                               # the launcher after the browser: nothing kept
+    assert again.chain_update() is None
+    again.follow(pay)
+    assert again.chain_update() == {"receipt": TX, "intent": INTENT, "receipt_msg": None}
+    asked = len(rig.hedera.gets("/hedera/buy/"))
+    rig.hedera.move("done", ok=True, data=dict(PAID, intent=INTENT, receipt_msg=RECEIPT_MSG))
+    rig.clock.ms += 100
+    again.status()
+    again.work()                                                     # asked at once, then every 2 s
+    assert rig.hedera.gets("/hedera/buy/")[asked:] == ["/hedera/buy/p-00000000"]
+    assert again.chain_update() == {"receipt": TX, "intent": INTENT, "receipt_msg": RECEIPT_MSG}
+
+
+@pytest.mark.parametrize("pay", [None, "x", {}, {"receipt": TX}, {"receipt": TX, "job": ""},
+                                 {"receipt": TX, "job": "../health"}, {"receipt": TX, "job": 7},
+                                 {"receipt": "not a tx", "job": "p-00000000"}, {"job": "p-00000000"}])
+def test_follow_takes_only_a_payment_it_can_ask_about(tmp_path, pay):
+    rig = Rig(tmp_path)
+    rig.sponsors.follow(pay)
+    assert rig.sponsors.chain_update() is None
+    for _ in range(3):
+        rig.step(ms=2000)
+    assert rig.hedera.gets("/hedera/buy/") == []
+
+
+def test_follow_keeps_a_filled_receipt_and_asks_nothing(tmp_path):
+    rig = Rig(tmp_path)
+    rig.sponsors.follow(dict(PAID, job="p-00000000", intent=INTENT, receipt_msg=RECEIPT_MSG))
+    assert rig.sponsors.chain_update() == {"receipt": TX, "intent": INTENT, "receipt_msg": RECEIPT_MSG}
+    rig.step(ms=2000)
+    assert rig.hedera.gets("/hedera/buy/") == []

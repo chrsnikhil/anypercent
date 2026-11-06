@@ -1549,12 +1549,17 @@ def test_the_words_the_flow_and_cards_add_keep_the_copy_rules():
     new cards' own words) follow the same rules: no banned word, no her or she, nothing that bans a person."""
     import re
     from arca_launcher.handler import BANNED_WORDS
+    from arca_launcher import app as A
     from arca_launcher.handler import flow as F
     from arca_launcher.render import handler_cards as C, handler_view as V
     texts = [F.SCOUT_DOWN, F.REFUSED_ELSE, F.NO_BOOK_LINE, *F.REFUSED_WHY.values(), "Picked by PB's rule: the ghost just ahead",
              f"Picked by openai/gpt-oss-120b on {F.GROQ}", "waiting for the mirror", "Recorded", C.BOT_LEGEND,
              C.HUMAN_LEGEND, "Scout's pick", "No record book on this console", "Humans only", "All runners",
-             "Next QR", "linked to ANY-6PS", "not linked yet", "released", "HOUSE"]
+             "Next QR", "linked to ANY-6PS", "not linked yet", "released", "HOUSE", F.REPLAYED_CHECKER,
+             F.REPLAYED_HERE, "1:42.83 = 6170 frames · end 225d59fd", "1:43.93 = 6236 frames, same as the board",
+             "1:43.93 = 6236 frames, checked when first loaded", "Open link", "Next", *A.HANDOFF,
+             "The browser could not start", "Opened in a window", "Links open on the handheld or the laptop"]
+    assert all(text in inspect_source(A) for text in texts[-3:])
     assert "Humans only" in inspect_source(V) and "Scout's pick" in inspect_source(C)
     for text in texts:
         low = text.lower()
@@ -1566,3 +1571,225 @@ def test_the_words_the_flow_and_cards_add_keep_the_copy_rules():
 def inspect_source(module):
     import inspect
     return inspect.getsource(module)
+
+
+# ---- Triangle opens a chain row's link; the replays as rows; a chain card brought back after the browser -------------
+
+ARKIV_RUN = "https://rabdi.explorer.arkiv.network/entity/" + RUN_KEY
+CHECKED = {"frames": 6170, "final_hash": 576543229}
+HASHSCAN_URL = "https://hashscan.io/testnet/transaction/0.0.9185802-1762412349-000000123"
+
+
+class ReplaySponsors(ChainSponsors):
+    """ChainSponsors whose publish says the checker's replay and names the run on the allowed explorer, and whose
+    load_ghost (a real target) answers at once with this console's replay and the run's link."""
+    loaded = {"ghost_log": "/runs/ghosts/ab.acl", "replayed": 6236, "explorer": {"run": ARKIV_RUN}}
+
+    def begin(self, step, payload):
+        call = super().begin(step, payload)
+        if step == "publish":
+            data = dict(call._result.data, replay=CHECKED)
+            data["explorer"] = dict(data["explorer"], run=ARKIV_RUN)
+            call._result = Result(ok=True, data=data)
+        elif step == "load_ghost":
+            call._result = Result(ok=True, data=self.loaded)
+        return call
+
+
+def _listed(tmp_path, sponsors=ReplaySponsors):
+    rig = Rig(tmp_path, sponsors=sponsors, run_frames=6170)
+    rig.flow._jti = "3f9c0a1b2c3d4e5f"
+    rig.flow.start("ls_record")
+    rig.wait(16)
+    rig.wait(16)
+    assert rig.state == "ls_done"
+    return rig
+
+
+def _bought(tmp_path, sponsors=ReplaySponsors, receipt_msg=None, **ctx):
+    rig = Rig(tmp_path, sponsors=sponsors, target="BOT-A2", target_time="1:43.93", target_frames=6236,
+              target_run=RUN_KEY, target_listing=LISTING_KEY, target_log_h=LOG_H, **ctx)
+    rig.flow.start("buy_check")
+    rig.wait(1400)
+    rig.sponsors.calls[-1].result = Result(ok=True, data=dict(PAID, receipt_msg=receipt_msg))
+    rig.wait(16)
+    rig.wait(16)
+    assert rig.state == "buy_done"
+    return rig
+
+
+def test_triangle_opens_the_chosen_rows_link_on_a_chain_card(tmp_path):
+    from arca_launcher.handler.flow import OpenLink
+    rig = _listed(tmp_path)
+    rows = list(rig.flow.ctx["chain"])
+    assert rig.flow.ctx["chain_i"] == 0
+    assert rig.flow.press("triangle") == OpenLink(rows[0]["url"])
+    rig.flow.press("down")
+    assert rig.flow.press("triangle") == OpenLink(rows[1]["url"])
+    assert rig.state == "ls_done"                                   # nothing else moves
+    rig.flow.ctx["chain"][1] = dict(rows[1], url=None)              # a row with no link: nothing to open
+    assert rig.flow.press("triangle") is None
+    rig.flow.ctx["chain_i"] = 99                                    # as the card clamps it: the last row
+    assert rig.flow.press("triangle") == OpenLink(rows[-1]["url"])
+    rig.flow.ctx["chain"] = []
+    assert rig.flow.press("triangle") is None
+    for name in ("hub", "board", "target", "buy_suspended"):        # not a chain card
+        rig = Rig(tmp_path / name, chain=[{"label": "x", "value": "y", "url": HASHSCAN_URL}])
+        rig.flow.start(name)
+        assert rig.flow.press("triangle") is None, name
+    rig = _bought(tmp_path / "bought")
+    assert rig.flow.press("triangle") == OpenLink(PAID["hashscan"])  # the payment's own row, chosen first
+
+
+def test_a_listing_ends_with_the_checkers_replay(tmp_path):
+    rig = _listed(tmp_path)
+    assert rig.flow.ctx["chain"][-1] == {"label": "Replayed by the checker",
+                                         "value": "1:42.83 = 6170 frames · end 225d59fd", "url": ARKIV_RUN}
+    assert [row["label"] for row in rig.flow.ctx["chain"]] == ["Hedera LISTING #41", "Arkiv listing", "Arkiv tx",
+                                                                "Replayed by the checker"]
+
+    class Elsewhere(ReplaySponsors):
+        explorer_origin = None
+    rig = _listed(tmp_path / "elsewhere", Elsewhere)
+    assert rig.flow.ctx["chain"][-1]["url"] is None                  # the row stays, its link is not drawn
+
+    class Unreplayed(ChainSponsors):                                 # the approval's record answered: no replay
+        pass
+    rig = _listed(tmp_path / "none", Unreplayed)
+    assert "Replayed by the checker" not in [row["label"] for row in rig.flow.ctx["chain"]]
+
+
+def test_a_purchase_ends_with_this_consoles_replay_and_keeps_it_as_the_receipt_fills_in(tmp_path):
+    rig = _bought(tmp_path)
+    here = {"label": "Replayed on this console", "value": "1:43.93 = 6236 frames, same as the board",
+            "url": ARKIV_RUN}
+    assert [row["label"] for row in rig.flow.ctx["chain"]] == ["Hedera INTENT #7", "Paid 0.10 USDC", "Hedera RECEIPT",
+                                                                "Replayed on this console"]
+    assert rig.flow.ctx["chain"][-1] == here and rig.flow.ctx["chain_i"] == 1
+    rig.sponsors.update = {"receipt": TX, "intent": PAID["intent"], "receipt_msg": {
+        "seq": 8, "tx": "0.0.9185802@1762412360.000000001",
+        "hashscan": "https://hashscan.io/testnet/transaction/0.0.9185802-1762412360-000000001"}}
+    rig.wait(100)
+    assert [row["label"] for row in rig.flow.ctx["chain"]] == ["Hedera INTENT #7", "Paid 0.10 USDC",
+                                                                "Hedera RECEIPT #8", "Replayed on this console"]
+    assert rig.flow.ctx["chain"][-1] == here
+
+    class Cached(ReplaySponsors):
+        loaded = {"ghost_log": "/runs/ghosts/ab.acl", "replayed": 6236, "replay_cached": True}
+    rig = _bought(tmp_path / "cached", Cached)
+    assert rig.flow.ctx["chain"][-1] == {"label": "Replayed on this console",
+                                         "value": "1:43.93 = 6236 frames, checked when first loaded", "url": None}
+
+    class Odd(ReplaySponsors):
+        loaded = {"ghost_log": "/runs/ghosts/ab.acl", "replayed": "6236"}
+    rig = _bought(tmp_path / "odd", Odd)
+    assert "Replayed on this console" not in [row["label"] for row in rig.flow.ctx["chain"]]
+
+
+def test_loading_again_never_says_the_replay_twice(tmp_path):
+    rig = _bought(tmp_path)
+    rig.flow.start("buy_load")                                       # buy_load_fail's Cross: the load again
+    rig.wait(16)
+    labels = [row["label"] for row in rig.flow.ctx["chain"]]
+    assert rig.state == "buy_done" and labels.count("Replayed on this console") == 1
+    assert labels[-1] == "Replayed on this console"
+    rig.flow.start("buy_check")
+    assert rig.flow.ctx["chain"] == []                               # a new purchase starts clean
+
+
+def test_the_mock_board_adds_no_replay_rows(tmp_path):
+    class MockBoard(HederaRealSponsors):                             # Hedera real, the board the mock's
+        def begin(self, step, payload):
+            call = super().begin(step, payload)
+            if step == "load_ghost":
+                call._result = Result(ok=True, data={"ghost_log": "/x.acl", "replayed": 6070})
+            elif step == "publish":
+                call._result = Result(ok=True, data={"replay": CHECKED})
+            return call
+    rig = Rig(tmp_path, sponsors=MockBoard)
+    rig.flow.start("buy_check")
+    rig.wait(1400)
+    rig.sponsors.calls[-1].result = Result(ok=True, data=PAID)
+    rig.wait(16)
+    rig.wait(16)
+    assert rig.state == "buy_done"
+    assert [row["label"] for row in rig.flow.ctx["chain"]] == ["Hedera INTENT #7", "Paid 0.10 USDC", "Hedera RECEIPT"]
+    rig = Rig(tmp_path / "list", sponsors=MockBoard, run_frames=6100)
+    rig.flow.start("ls_arkiv")
+    rig.wait(16)
+    assert rig.state == "ls_done" and rig.flow.ctx["chain"] == []
+
+
+def _round_trip(flow):
+    """The context as the resume file keeps it: every top-level value that is JSON."""
+    import json
+    out = {}
+    for key, value in flow.ctx.items():
+        try:
+            out[key] = json.loads(json.dumps(value))
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def _restored(rig, state=None, chain_pay="same"):
+    import json
+    pay = rig.flow.chain_pay if chain_pay == "same" else chain_pay
+    flow = Flow(rig.sponsors, load(rig.path), rig.path, GAME, _round_trip(rig.flow), today=lambda: TODAY)
+    flow.restore(json.loads(json.dumps(pay)))
+    assert flow.start(state or rig.state) is None
+    return flow
+
+
+def test_a_listing_card_brought_back_after_the_browser_is_as_it_was(tmp_path):
+    rig = _listed(tmp_path)
+    rig.flow.press("down")
+    rig.flow.press("down")
+    before = (list(rig.flow.ctx["chain"]), rig.flow.ctx["chain_i"], rig.flow.line)
+    assert len(rig.saved().listings) == 1
+    flow = _restored(rig)
+    assert flow.state.name == "ls_done" and flow.ms_in_state == 0
+    assert (flow.ctx["chain"], flow.ctx["chain_i"], flow.line) == before
+    assert len(flow.ledger.listings) == 1 and len(rig.saved().listings) == 1   # arriving wrote nothing again
+    assert rig.flow.chain_pay is None and flow.chain_pay is None
+    assert flow.press("cross") is None and flow.state.name == "hub"
+
+
+def test_a_purchase_brought_back_keeps_filling_its_receipt_and_still_races_the_ghost(tmp_path):
+    rig = _bought(tmp_path)
+    pay = rig.flow.chain_pay
+    assert pay["receipt"] == TX and pay["receipt_msg"] is None
+    pay["receipt"] = "changed"                                       # a copy: the flow's own stays
+    assert rig.flow.chain_pay["receipt"] == TX
+    before = (list(rig.flow.ctx["chain"]), rig.flow.ctx["chain_i"], rig.flow.line)
+    spent = rig.saved().spent
+    flow = _restored(rig)
+    assert flow.state.name == "buy_done"
+    assert (flow.ctx["chain"], flow.ctx["chain_i"], flow.line) == before
+    assert flow.chain_pay == rig.flow.chain_pay and load(rig.path).spent == spent
+    rig.sponsors.update = {"receipt": TX, "intent": PAID["intent"], "receipt_msg": {
+        "seq": 8, "tx": "0.0.9185802@1762412360.000000001",
+        "hashscan": "https://hashscan.io/testnet/transaction/0.0.9185802-1762412360-000000001"}}
+    flow.tick(100)
+    assert [row["label"] for row in flow.ctx["chain"]] == ["Hedera INTENT #7", "Paid 0.10 USDC", "Hedera RECEIPT #8",
+                                                           "Replayed on this console"]
+    assert flow.press("cross") == RaceTarget(GAME, "BOT-A2")         # Cross still races the bought ghost
+    assert load(rig.path).spent == spent                             # never paid twice
+
+
+@pytest.mark.parametrize("pay", [None, "x", {}, {"receipt": 5}, {"receipt": ""}, ["receipt"]])
+def test_a_restore_with_no_usable_payment_data_still_lands_and_refreshes_nothing(tmp_path, pay):
+    rig = _bought(tmp_path)
+    before = list(rig.flow.ctx["chain"])
+    flow = _restored(rig, chain_pay=pay)
+    assert flow.state.name == "buy_done" and flow.chain_pay is None and flow.ctx["chain"] == before
+    rig.sponsors.update = {"receipt": TX, "receipt_msg": {"seq": 8, "tx": "0.0.1@2", "hashscan": None}}
+    flow.tick(100)
+    assert flow.ctx["chain"] == before
+
+
+def test_a_restore_counts_for_one_start_only(tmp_path):
+    rig = _listed(tmp_path)
+    flow = _restored(rig)
+    flow.start("ls_done")                                            # a fresh start after it: arriving counts again
+    assert len(flow.ledger.listings) == 2

@@ -19,7 +19,8 @@ Hedera key, account or URL is on the console: it talks only to the service.
   among the ones PB's guards would allow; it never decides whether to pay or how much. `scouts` follows /health.
 - Every buy names this console (the service spends only from the book the console is bound to) and the scout's pick
   it follows. A finished payment's HCS messages (INTENT, then RECEIPT once the mirror has it) are asked again every
-  2 s for up to 90 s while someone looks: chain_update().
+  2 s for up to 90 s while someone looks: chain_update(). The pay data names its job, so a launcher started again
+  after the browser took the screen follows the same payment's messages again: follow().
 
 All HTTP runs on one background thread with short timeouts. begin(), poll(), status() and pay_to() only read and mark
 what that thread last saw, so a slow or missing service never holds up a frame. A failure is always one of the
@@ -74,6 +75,7 @@ _WHY = re.compile(r"[a-z_]{1,32}")
 _TIME = re.compile(r"[0-9]{1,3}:[0-5][0-9]\.[0-9]{2}")
 # A settled payment's transaction id as the facilitator's settle answers it: <fee payer>@<seconds>.<nanos>.
 _TX = re.compile(r"[0-9]{1,10}\.[0-9]{1,10}\.[0-9]{1,10}@[0-9]{1,12}\.[0-9]{1,9}")
+_JOB_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")    # a buy job's id as the service names it ("p-1a2b3c4d")
 _UNSET = object()
 
 
@@ -194,6 +196,23 @@ class HederaSponsors:
         with self._lock:
             self._look()
             return dict(self._after["data"]) if self._after is not None else None
+
+    def follow(self, pay):
+        """The launcher started again after the browser took the screen, back on the chain card of a payment: its HCS
+        messages are asked again as after a fresh payment (every CHAIN_MS for CHAIN_FOR_MS, while someone looks), so
+        a RECEIPT still waiting for the mirror fills in. pay is the pay step's data as the flow kept it (its receipt and
+        the service's job id); anything else is ignored."""
+        if not (isinstance(pay, dict) and isinstance(pay.get("receipt"), str) and _TX.fullmatch(pay["receipt"])
+                and isinstance(pay.get("job"), str) and _JOB_ID.fullmatch(pay["job"])):
+            return
+        now = self._clock_ms()
+        job = _Job("pay", None, now)
+        job.id, job.result = pay["job"], Result(ok=True, data={"receipt": pay["receipt"]})   # settled: never re-run
+        with self._lock:
+            self._after = {"job": job, "until": now + CHAIN_FOR_MS, "next": now,
+                           "data": {"receipt": pay["receipt"], "intent": _message(pay.get("intent")),
+                                    "receipt_msg": _message(pay.get("receipt_msg"))}}
+        self._wake.set()
 
     def mocked(self, service: str) -> bool:
         return False if service == "third" else self._inner.mocked(service)
@@ -398,7 +417,7 @@ class HederaSponsors:
         if gave_up:
             self._finish(job, Result(ok=False, failure=_DOWN[job.step]))
         elif reply is not None and reply["stage"] == "done":
-            self._finish(job, _outcome(job.step, reply))
+            self._finish(job, _outcome(job.step, reply, job.id))
 
     def _log_hash(self, body):
         """The run's log_h from the Arkiv adapter (inner), or None when it has none (then the record goes without)."""
@@ -631,10 +650,11 @@ def _checked(step, reply):
             "data": dict(data) if isinstance(data, dict) else {}}
 
 
-def _outcome(step, reply):
+def _outcome(step, reply, job_id=None):
     """A done job as the step's Result. A failure the handler has no screen for, a changed listing that does not say
     its price now, or a payment without its transaction id is the step's down state: the console never makes one up.
-    Only the fields a screen or load_ghost uses are kept."""
+    Only the fields a screen or load_ghost uses are kept, and a payment's job id (follow() asks it again after a
+    restart)."""
     data = reply["data"]
     if reply["ok"] is not True:
         failure = reply["failure"]
@@ -658,6 +678,8 @@ def _outcome(step, reply):
         if not (isinstance(receipt, str) and _TX.fullmatch(receipt)):
             return Result(ok=False, failure="buy_down")
         out = {"receipt": receipt, "late": data.get("late") is True}
+        if isinstance(job_id, str) and _JOB_ID.fullmatch(job_id):
+            out["job"] = job_id
         if isinstance(data.get("hashscan"), str) and data["hashscan"].startswith("https://hashscan.io/"):
             out["hashscan"] = data["hashscan"]
         if _message(data.get("intent")) is not None:

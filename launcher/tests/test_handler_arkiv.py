@@ -515,7 +515,7 @@ def test_a_plain_ghost_comes_straight_from_its_row(tmp_path):
     run = rig.node.run("TEAM", 6300, log=log, plain=True, book=False)
     rig.replays.know(log, 6300)
     result = _load(rig, target_payload(rig.node, run, target_listing=None))
-    assert result == Result(ok=True, data={"ghost_log": _ghost_file(rig, log)})
+    assert result == Result(ok=True, data={"ghost_log": _ghost_file(rig, log), "replayed": 6300})
     with open(_ghost_file(rig, log), "rb") as f:
         assert f.read() == log
     assert rig.replays.calls == [("MDGP", sha(log) + ".acl.part")]
@@ -530,7 +530,7 @@ def test_a_listed_ghost_comes_from_the_service_with_the_receipt(tmp_path):
     rig.service.ghosts[run["key"]] = log
     rig.replays.know(log, 6200)
     result = _load(rig, target_payload(rig.node, run))
-    assert result == Result(ok=True, data={"ghost_log": _ghost_file(rig, log)})
+    assert result == Result(ok=True, data={"ghost_log": _ghost_file(rig, log), "replayed": 6200})
     assert rig.service.posts() == [("/arkiv/ghost", {"run": run["key"], "receipt": "mock-1a2b3c4d"})]
 
 
@@ -582,7 +582,12 @@ def test_a_ghost_already_here_loads_with_no_network(tmp_path):
     payload = target_payload(rig.node, run)
     assert _load(rig, payload).ok
     rig.node.down = rig.service.down = True
-    assert _load(rig, payload) == Result(ok=True, data={"ghost_log": _ghost_file(rig, log)})
+    # Checked and replayed when it was first loaded: the row's time, said so, and no replay now.
+    calls = len(rig.replays.calls)
+    assert _load(rig, payload) == Result(ok=True, data={"ghost_log": _ghost_file(rig, log), "replayed": 6200,
+                                                        "replay_cached": True})
+    assert len(rig.replays.calls) == calls
+    assert _load(rig, dict(payload, target_frames=None)) == Result(ok=True, data={"ghost_log": _ghost_file(rig, log)})
     with open(_ghost_file(rig, log), "wb") as f:                        # a file that is not that log any more
         f.write(acl("tampered"))
     assert _load(rig, payload).failure == "buy_load_fail"
@@ -1570,3 +1575,73 @@ def test_a_listing_names_its_explorer_links(tmp_path):
     rig.service.move("done", ok=True, data=dict(DONE, explorer={"tx": 7, "run": "x" * 600, "listing": None}))
     rig.step()
     assert call.poll() == Result(ok=True, data=DONE)                     # nothing it can not draw
+
+
+# ---- what the replays gave: the checker's (publish), this console's (load_ghost) -------------------------------------
+
+REPLAY = {"frames": 6170, "final_hash": 576543229}
+
+
+def test_a_listing_says_what_the_checkers_replay_gave(tmp_path):
+    rig = Rig(tmp_path)
+    rig.best("MDGP", acl("6ps"), 6170)
+    call = _publish(rig)
+    rig.service.move("done", ok=True, data=dict(DONE, replay=dict(REPLAY, extra="never passed on")))
+    rig.step()
+    assert call.poll() == Result(ok=True, data=dict(DONE, replay=REPLAY))
+    for n, odd in enumerate(({"frames": 0, "final_hash": 1}, {"frames": "6170", "final_hash": 1},
+                             {"frames": True, "final_hash": 1}, {"frames": 6170, "final_hash": -1},
+                             {"frames": 6170, "final_hash": 2 ** 32}, {"frames": 6170, "final_hash": None},
+                             {"frames": 6170, "final_hash": "1a2b3c4d"}, {"frames": 6170, "final_hash": True},
+                             {"frames": 6170}, "6170", None)):
+        rig = Rig(tmp_path / str(n))
+        rig.best("MDGP", acl("6ps"), 6170)
+        call = _publish(rig)
+        rig.service.move("done", ok=True, data=dict(DONE, replay=odd))
+        rig.step()
+        assert call.poll() == Result(ok=True, data=DONE), odd           # nothing it can not show
+    rig = Rig(tmp_path / "edge")
+    rig.best("MDGP", acl("6ps"), 6170)
+    call = _publish(rig)
+    rig.service.move("done", ok=True, data=dict(DONE, replay={"frames": 1, "final_hash": 2 ** 32 - 1}))
+    rig.step()
+    assert call.poll().data["replay"] == {"frames": 1, "final_hash": 2 ** 32 - 1}
+
+
+def _explorer_rig(tmp_path, **config):
+    rig = Rig(tmp_path)
+    rig.service.config.update(explorer_tx="https://rabdi.explorer.arkiv.network/tx/{tx}",
+                              explorer_entity="https://rabdi.explorer.arkiv.network/entity/{key}")
+    rig.service.config.update(config)
+    rig.prefetch()
+    return rig
+
+
+def test_a_loaded_ghost_names_its_runs_explorer_link_as_the_service_builds_it(tmp_path):
+    rig = _explorer_rig(tmp_path)
+    log = acl("2kd")
+    run = rig.node.run("ANY-2KD", 6200, log=log, listed=True)
+    rig.service.ghosts[run["key"]] = log
+    rig.replays.know(log, 6200)
+    payload = target_payload(rig.node, run)
+    link = "https://rabdi.explorer.arkiv.network/entity/" + run["key"].lower()
+    assert _load(rig, payload) == Result(ok=True, data={"ghost_log": _ghost_file(rig, log), "replayed": 6200,
+                                                        "explorer": {"run": link}})
+    assert _load(rig, payload).data == {"ghost_log": _ghost_file(rig, log), "replayed": 6200, "replay_cached": True,
+                                        "explorer": {"run": link}}
+    assert _load(rig, dict(payload, target_run=payload["target_run"].upper().replace("0X", "0x"))).data[
+        "explorer"] == {"run": link}                                     # the key as the explorer names it
+
+
+@pytest.mark.parametrize("config", [{}, {"explorer_entity": None},
+                                    {"explorer_entity": "https://rabdi.explorer.arkiv.network/entity/"},
+                                    {"explorer_entity": "https://elsewhere.example/entity/{key}"},
+                                    {"explorer_entity": "http://rabdi.explorer.arkiv.network/entity/{key}"}])
+def test_no_run_link_unless_the_template_is_on_the_allowed_explorer(tmp_path, config):
+    rig = _explorer_rig(tmp_path, **config) if config else Rig(tmp_path)   # {}: /arkiv/config never read
+    log = acl("2kd")
+    run = rig.node.run("ANY-2KD", 6200, log=log, listed=True)
+    rig.service.ghosts[run["key"]] = log
+    rig.replays.know(log, 6200)
+    result = _load(rig, target_payload(rig.node, run))
+    assert result.ok and "explorer" not in result.data, config

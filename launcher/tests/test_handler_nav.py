@@ -46,12 +46,13 @@ def test_buttons_go_to_the_flow():
     nav.apply(A.X)
     nav.apply(A.UP)
     nav.apply(A.DOWN)
-    assert flow.calls == [("press", "cross"), ("press", "circle"), ("press", "square"),
-                           ("press", "up"), ("press", "down")]
+    nav.apply(A.Y)
+    pressed = [("press", "cross"), ("press", "circle"), ("press", "square"), ("press", "up"), ("press", "down"),
+               ("press", "triangle")]
+    assert flow.calls == pressed
     # anything else is not a handler button and does nothing
-    assert nav.apply(A.LEFT) is None and nav.apply(A.RIGHT) is None and nav.apply(A.Y) is None
-    assert flow.calls == [("press", "cross"), ("press", "circle"), ("press", "square"),
-                           ("press", "up"), ("press", "down")]
+    assert nav.apply(A.LEFT) is None and nav.apply(A.RIGHT) is None and nav.apply(A.START) is None
+    assert flow.calls == pressed
 
 
 def test_pb_talking_does_not_swallow_handler_buttons():
@@ -96,7 +97,8 @@ def test_taps_map_to_presses():
     nav.tap(("handler", "cross"))
     nav.tap(("handler", "circle"))
     nav.tap(("handler", "square"))
-    assert flow.calls == [("press", "cross"), ("press", "circle"), ("press", "square")]
+    nav.tap(("handler", "triangle"))                              # the chain card's QR: open its link
+    assert flow.calls == [("press", "cross"), ("press", "circle"), ("press", "square"), ("press", "triangle")]
 
     nav.tap(("handler", "pick", 2))
     assert flow.calls[-1] == ("pick", 2)
@@ -175,3 +177,12 @@ def test_the_pb_button_opens_the_hub_by_button_and_by_tap():
     assert nav.apply(A.A) == OpenHub(ARCADE)
     assert nav.tap(("button", 1)) == OpenHub(ARCADE)              # the touch way in: no controller needed
     assert nav.tap(("button", 2)) is None and nav.screen is Screen.INFO  # "..." still opens the info page
+
+
+def test_triangle_and_a_tap_on_the_qr_hand_the_link_to_the_app():
+    from arca_launcher.handler.flow import OpenLink
+    nav, flow = opened()
+    flow.press_result = OpenLink("https://hashscan.io/testnet/transaction/0.0.1-2-3")
+    assert nav.apply(A.Y) == OpenLink("https://hashscan.io/testnet/transaction/0.0.1-2-3")
+    assert nav.tap(("handler", "triangle")) == OpenLink("https://hashscan.io/testnet/transaction/0.0.1-2-3")
+    assert nav.screen is Screen.HANDLER                           # the card stays: the app opens the link

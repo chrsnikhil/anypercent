@@ -1,12 +1,27 @@
-"""Battery, backlight, volume, Wi-Fi, power warnings and power off. Real on the Pi; in the sandbox they are absent and do nothing."""
+"""Battery, backlight, volume, Wi-Fi, power warnings and power off. Real on the Pi; in the sandbox they are absent and do nothing.
+A chain link opens in the browser app on the Pi, and in a small Edge window when the launcher runs in WSL (the laptop)."""
 import glob
+import logging
 import os
+import re
 import shutil
+import signal
 import subprocess
+
+from .exits import RUN_DIR
+
+log = logging.getLogger(__name__)
 
 
 # apps a library entry can start in place of a game: its systemd service (device/anypercent-browser.service)
 APP_SERVICES = {"browser": "anypercent-browser.service", "gta3": "anypercent-gta3.service"}
+# A link open_url takes: https, and only characters that mean nothing to a shell or cmd.exe (no ? & % ^ | " or space).
+# Every link the bridge builds fits (HashScan's testnet transactions and messages, the Arkiv explorer's /tx/ and
+# /entity/), and this is what makes handing one to cmd.exe below safe.
+LINK = re.compile(r"https://[A-Za-z0-9._/@:-]{1,290}")
+BROWSER_URL = "browser-url"        # in the run dir: the link device/anypercent-browser opens, taken once
+CMD = "/mnt/c/Windows/System32/cmd.exe"
+EDGE_PROFILE = "--user-data-dir=%TEMP%\\anypercent-edge"   # its own profile: Edge keeps this window's size and place
 
 # Master (a sound server), PCM (older Pi kernels), Headphone (the Pi's own audio today), Digital (I2S DACs)
 MIXER_CONTROLS = ("Master", "PCM", "Headphone", "Digital")
@@ -25,15 +40,59 @@ def _read(path):
 
 class Hardware:
     def __init__(self, sys_root="/sys", amixer=None, model_path="/proc/device-tree/model",
-                 proc_wireless="/proc/net/wireless", vcgencmd=None):
+                 proc_wireless="/proc/net/wireless", vcgencmd=None, run_dir=RUN_DIR,
+                 wsl_interop="/proc/sys/fs/binfmt_misc/WSLInterop", proc_version="/proc/version"):
         self.sys = sys_root
         self.amixer = shutil.which("amixer") if amixer is None else amixer
         self.model_path = model_path
         self.proc_wireless = proc_wireless
         self.vcgencmd = shutil.which("vcgencmd") if vcgencmd is None else vcgencmd
+        self.run_dir = run_dir
+        self.wsl_interop = wsl_interop
+        self.proc_version = proc_version
 
     def is_pi(self):
         return (_read(self.model_path) or "").startswith("Raspberry Pi")
+
+    def is_wsl(self):
+        """Linux under Windows (the laptop's launcher, through WSLg): WSL's interop entry, or its kernel's name."""
+        return os.path.exists(self.wsl_interop) or "microsoft" in (_read(self.proc_version) or "").lower()
+
+    def open_url(self, url):
+        """Open a chain link: "handoff" on the Pi (the browser app takes the screen with it: the link goes to
+        run_dir/browser-url, which device/anypercent-browser reads, and systemd stops the launcher until the browser
+        closes), "window" in WSL (a small Edge app window beside the launcher, which keeps running), None when it
+        could not be opened, anywhere else, or for anything but a plain https link (LINK)."""
+        if not (isinstance(url, str) and LINK.fullmatch(url)):
+            return None
+        if self.is_pi():
+            return self._hand_to_browser(url)
+        if not self.is_wsl():
+            return None
+        args = [CMD, "/c", "start", "", "msedge", "--app=" + url, EDGE_PROFILE, "--window-size=900,640",
+                "--window-position=60,60", "--no-first-run", "--no-default-browser-check"]   # no welcome page on stage
+        try:
+            subprocess.Popen(args, cwd="/mnt/c/Windows", stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None
+        return "window"
+
+    def _hand_to_browser(self, url):
+        path = os.path.join(self.run_dir, BROWSER_URL)
+        try:
+            with open(path + ".tmp", "w", encoding="ascii") as f:
+                f.write(url + "\n")
+            os.replace(path + ".tmp", path)
+        except OSError:
+            return None
+        if self.start_app("browser"):
+            return "handoff"
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return None
 
     def power_off(self):
         """Shut the device down. Only on a Raspberry Pi: anywhere else (the sandbox) it does nothing."""
@@ -43,12 +102,30 @@ class Hardware:
 
     def start_app(self, name):
         """Start an app (the browser) through systemd. Its service takes the screen from the launcher, which systemd
-        stops, and hands it back when the app closes. Only on a Raspberry Pi; False for an unknown app."""
+        stops, and hands it back when the app closes. Only on a Raspberry Pi; False for an unknown app.
+        The app's Conflicts= stops the launcher's whole cgroup as soon as the start is queued, sudo and systemctl
+        with it, often before systemctl returns: a SIGTERM on them (-15, or 143 through a shell) can only come after
+        the start went out, so it counts as started. A sudo that can not run at all is not started."""
         service = APP_SERVICES.get(name)
         if service is None or not self.is_pi():
             return False
         cmd = ["sudo", "-n", "/usr/bin/systemctl", "start", "--no-block", service]
-        return subprocess.run(cmd, capture_output=True).returncode == 0
+        try:
+            rc = subprocess.run(cmd, capture_output=True).returncode
+        except OSError as e:
+            log.warning("could not ask systemd to start %s (%s)", service, type(e).__name__)
+            return False
+        started = rc in (0, -signal.SIGTERM, 128 + signal.SIGTERM)
+        log.info("systemctl start %s: rc %s (%s)", service, rc, "started" if started else "not started")
+        return started
+
+    def cancel_handoff(self):
+        """A hand-off given up (the browser never took the screen): its link is taken back, so a later browser start
+        from the library opens its own page."""
+        try:
+            os.remove(os.path.join(self.run_dir, BROWSER_URL))
+        except OSError:
+            pass
 
     def battery_percent(self):
         """The console's own battery. A controller's (scope Device, e.g. the DualSense) is not it."""

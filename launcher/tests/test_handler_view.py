@@ -441,16 +441,50 @@ def test_the_chain_card_draws_the_chosen_rows_qr_big_enough_to_scan(screen, tmp_
     flow.press("up")
     show(screen, flow)
     assert seen[-1][:2] == (LIVE_CHAIN["list"][1]["url"], False)
-    assert ("U/D", "Next QR") in hint_items(flow)
+    assert ("U/D", "Next") in hint_items(flow)
     drawn = _texts(screen, monkeypatch)
     flow = live_flow(tmp_path / "mock", "buy_done", chain=[])         # none (the mock): exactly the done card
     show(screen, flow)
-    assert "Budget left" in drawn and ("U/D", "Next QR") not in hint_items(flow)
+    assert "Budget left" in drawn and ("U/D", "Next") not in hint_items(flow)
     drawn.clear()
     flow = live_flow(tmp_path / "nolink", "buy_late", chain=LIVE_CHAIN["late"], chain_i=2)
     seen.clear()
     show(screen, flow)
     assert seen == [] and "waiting for the mirror" in drawn           # a row with no link: its text, no QR
+
+
+def test_the_chain_cards_qr_is_a_tap_that_opens_its_link(screen, tmp_path):
+    from arca_launcher.render.handler_cards import qr_box
+    from arca_launcher.render.handler_view import CARD, STRIP_H
+    content = CARD.copy()
+    content.h -= STRIP_H                                             # ls_done has a step strip
+    nav, views = show(screen, live_flow(tmp_path, "ls_done", chain=LIVE_CHAIN["list"], chain_i=2))
+    (qr,) = [h for h in views.hits if h.target == ("handler", "triangle")]
+    assert qr_box(content).contains(qr.shape) and qr.rect.contains(qr.shape)
+    assert views.hit(*qr.shape.center) == ("handler", "triangle")    # over the card's own Cross
+    assert views.hit(CARD.right - 30, CARD.centery) == ("handler", "cross")
+    for name, chain, i in (("buy_late", LIVE_CHAIN["late"], 2), ("buy_done", [], 0)):   # no link, no QR: no tap
+        nav, views = show(screen, live_flow(tmp_path / name, name, chain=chain, chain_i=i))
+        assert not [h for h in views.hits if h.target == ("handler", "triangle")], name
+
+
+def test_the_hints_say_triangle_opens_a_link_and_keep_clear_of_the_notice(screen, tmp_path, monkeypatch):
+    from arca_launcher.render import chrome, theme
+    from arca_launcher.render.handler_view import hint_items
+    lefts, real = [], chrome.hints
+    monkeypatch.setattr(chrome, "hints", lambda gfx, items, **kw: (lefts.append(real(gfx, items, **kw)), lefts[-1])[1])
+    flow = live_flow(tmp_path, "ls_done", chain=LIVE_CHAIN["list"], chain_i=2)
+    assert hint_items(flow) == [("X", "OK"), ("O", "Back"), ("U/D", "Next"), ("Y", "Open link")]
+    nav, views = show(screen, flow)
+    assert lefts[-1] >= theme.MARGIN + chrome.TOAST_MAX_W            # never under a notice ("Opened in a window")
+    flow = live_flow(tmp_path / "late", "buy_late", chain=LIVE_CHAIN["late"], chain_i=2)
+    assert ("Y", "Open link") not in hint_items(flow)                # the chosen row has no link
+    flow.press("up")
+    assert ("Y", "Open link") in hint_items(flow)
+    one = [dict(LIVE_CHAIN["buy"][1])]
+    assert hint_items(live_flow(tmp_path / "one", "buy_done", chain=one)) == [("X", "OK"), ("O", "Back"),
+                                                                               ("Y", "Open link")]
+    assert ("Y", "Open link") not in hint_items(live_flow(tmp_path / "board", "board", chain=one))
 
 
 def test_my_record_book_names_this_console(screen, tmp_path, monkeypatch):

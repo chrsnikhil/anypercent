@@ -2,7 +2,7 @@
 
 apply(action) changes the state and may return a command for the app to carry out:
 Launch(game), SetVolume(value), SetBrightness(value), SetTouchControls(on), OpenHub(game), Sleep(),
-Wake() or PowerOff()."""
+Wake() or PowerOff(), or on PB's screen the flow's own (RaceTarget, OpenLink)."""
 from dataclasses import dataclass
 from enum import Enum
 
@@ -89,7 +89,7 @@ SETTINGS_ROWS = ("volume", "brightness", "gamepad", "controls", "about", "health
 STEP = 10
 MIN_BRIGHTNESS = 10
 # HANDLER: which buttons reach the flow, and as what event (Action.press -> Flow.press())
-_HANDLER_PRESSES = {Action.A: "cross", Action.B: "circle", Action.X: "square",
+_HANDLER_PRESSES = {Action.A: "cross", Action.B: "circle", Action.X: "square", Action.Y: "triangle",
                      Action.UP: "up", Action.DOWN: "down"}
 
 
@@ -220,7 +220,7 @@ class Nav:
 
     def _handler_command(self, command):
         """A CloseHandler from the flow closes the screen and is swallowed; anything else (a
-        RaceTarget) passes through to the caller."""
+        RaceTarget, an OpenLink) passes through to the caller."""
         if isinstance(command, CloseHandler):
             self.close_handler()
             return None
@@ -434,8 +434,9 @@ class Nav:
     def tap(self, target):
         """A tap on what the views drew there: ("tile", i), ("button", i), ("tab", name), ("grid", i), ("play",),
         ("shot",), ("card",), ("setting", i), ("slider", i, fraction 0..1), ("switch", i), ("back",),
-        ("handler", "cross" | "circle" | "square"[, where]), ("handler", "pick", i), ("handler", "row", i), or None
-        for empty space. (where only tells two drawn Cross targets apart, for the pressed look.)
+        ("handler", "cross" | "circle" | "square" | "triangle"[, where]), ("handler", "pick", i), ("handler", "row",
+        i), or None for empty space. (where only tells two drawn Cross targets apart, for the pressed look; triangle is
+        a chain card's QR code, which opens its link as Triangle does.)
         Each does what the buttons would: a tap selects, a tap on what is already selected is A."""
         kind, arg = (target[0], target[1] if len(target) > 1 else None) if target else (None, None)
         if self.screen in (Screen.SLEEP, Screen.ATTRACT):
@@ -483,7 +484,7 @@ class Nav:
         elif s is Screen.SETTINGS and kind == "slider":
             return self.slide(arg, target[2])
         elif s is Screen.HANDLER and kind == "handler":
-            if arg in ("cross", "circle", "square"):
+            if arg in ("cross", "circle", "square", "triangle"):
                 return self._handler_command(self.handler.press(arg))
             if arg == "pick":
                 return self._handler_command(self.handler.pick(target[2]))
