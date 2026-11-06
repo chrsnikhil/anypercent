@@ -34,6 +34,7 @@ _NEW_STATES = {
     "race_unverified", "book_view", "listings_view", "start_over",
     "board_new", "buy_check_fail", "buy_load_fail", "ls_publish_fail",
     "buy_late", "own_result", "own_again", "id_dup_unnamed", "ls_confirm", "ls_copied",
+    "id_taken", "scout", "scout_pick",
 }
 
 # Sample values for every non-sponsor-name placeholder the table uses, so copy can be filled
@@ -48,7 +49,11 @@ _SAMPLES = {
     "game": "Marine Drive GP", "runs": 14, "sold": 3, "jti": "5e1f09ab", "listing_days": 7,
     "ghost_kept": "RIA's ghost is still yours. ", "credential": "Orb", "approve_how": "Cross to go",
     "approve_via": "World App > World ID", "now_price": "0.50 USDC",
-    "receipt_text": "0.0.9185802@1762412349",
+    "receipt_text": "0.0.9185802@1762412349", "console_tag": "C-7QZP",
+    "scout_reason": "You lose 2.85 s in lap 2: BOT-A2 runs it in 33.23 s, you in 36.08 s.",
+    "scout_down": "My scout is not answering, so here is the ghost just ahead. ",
+    "refused_why": "a BOT listing must pay the house", "payee": "the house account 0.0.9473064",
+    "record_line": "Recorded: Hedera LISTING #41",
 }
 
 # The prototype states whose own S entry carries a `what` (handler-states.html). A fix round
@@ -69,7 +74,7 @@ def _filled(text: str) -> str:
 
 def test_every_prototype_state_is_here():
     assert _PROTOTYPE_STATES | _NEW_STATES == set(STATES)
-    assert len(STATES) == 62
+    assert len(STATES) == 65
 
 
 def test_start_matches_the_brief():
@@ -144,7 +149,7 @@ def test_only_the_ten_wired_steps_have_a_call():
     wired = {"id_scan": "idkit_scan", "id_confirm": "idkit_confirm", "id_verifying": "idkit_verify",
              "buy_check": "check_listing", "buy_pay": "pay", "buy_load": "load_ghost",
              "ls_scan": "approve_scan", "ls_approve": "approve", "ls_confirm": "approve", "ls_record": "record",
-             "ls_arkiv": "publish"}
+             "ls_arkiv": "publish", "scout": "scout"}
     for name, state in STATES.items():
         if name in wired:
             assert state.call == wired[name], name
@@ -168,6 +173,7 @@ def test_call_states_carry_the_ruled_deadlines_and_events():
         "ls_confirm": (300000, "ls_expired", "ls_record"),
         "ls_record": (8000, "ls_record_fail", "ls_arkiv"),
         "ls_arkiv": (8000, "ls_publish_fail", "ls_done"),
+        "scout": (12000, "target", "scout_pick"),
     }
     for name, (deadline_ms, timeout_to, ok_to) in expected.items():
         state = STATES[name]
@@ -239,7 +245,7 @@ def test_down_and_busy_use_lowercase_sponsor_keys():
 
 def test_card_types_are_from_the_allowed_set():
     allowed = {"status", "qr", "wait", "load", "done", "no", "warn", "time", "back", "board",
-               "target", "offer", "result", "toast", "hub", "book", "listings"}
+               "target", "offer", "result", "toast", "hub", "book", "listings", "pick", "chain"}
     for name, state in STATES.items():
         assert state.card["t"] in allowed, f"{name}.card['t'] = {state.card['t']!r}"
 
@@ -300,7 +306,7 @@ def test_buy_down_listens_on_for_a_late_payment():
     assert state.on["ok"] == "buy_late"
     late = STATES["buy_late"]
     assert (late.steps, late.at, late.card["t"], late.card["h"]) == (
-        STATES["buy_pay"].steps, 1, "done", "Payment landed late")
+        STATES["buy_pay"].steps, 1, "chain", "Payment landed late")
 
 
 def test_ruling_7_states_get_a_circle_to_hub():
@@ -393,6 +399,7 @@ def test_placeholders_constant_matches_what_the_table_uses():
         "rank", "new_rank", "run_time", "price", "budget_left", "book", "other_book", "code",
         "wallet", "buyer", "ghost_look", "split", "game", "runs", "sold", "jti", "listing_days",
         "ghost_kept", "credential", "approve_how", "approve_via", "now_price", "receipt_text",
+        "console_tag", "scout_reason", "scout_down", "refused_why", "payee", "record_line",
     }
     assert PLACEHOLDERS == expected
 
@@ -442,3 +449,73 @@ def test_mock_load_ghost_down_failure_matches_buy_load_fail():
     assert result.ok is False
     assert result.failure == "buy_load_fail"
     assert result.failure in STATES
+
+
+# ---- one console, one person; PB's scout; the copy pass ------------------------------------------------------------
+
+# The buy path: from the board to the race after it, every screen a BOT ghost's purchase can show.
+BUY_PATH = ("board", "board_new", "target", "scout", "scout_pick", "buy_check", "buy_pay", "buy_load", "buy_done",
+            "buy_late", "buy_load_fail", "buy_budget", "buy_changed", "buy_suspended", "buy_down", "buy_check_fail",
+            "race_lost", "race_unfinished", "race_unverified", "result", "nobody_ahead")
+
+
+def test_the_buy_path_never_says_her_or_she():
+    """A target may be a BOT ghost, made by a program: no pronoun reads as a person."""
+    pronoun = re.compile(r"\b(her|she)\b", re.IGNORECASE)
+    for name in BUY_PATH:
+        for text in copy_texts(STATES[name]):
+            assert not pronoun.search(_filled(text)), (name, text)
+
+
+def test_no_ban_the_person_wording_anywhere():
+    for name, state in STATES.items():
+        for text in copy_texts(state):
+            for word in ("fraud", "void", "suspend", "banned", "cheater"):
+                assert word not in _filled(text).lower(), (name, text)
+
+
+def test_id_taken_says_whose_console_it_is_and_that_nothing_was_used():
+    state = STATES["id_taken"]
+    assert state.card["h"] == "This console belongs to {other_book}"
+    assert state.card["rows"] == ("Linked to *{other_book}* with {world} ID",)
+    assert state.card["what"] == (("Your scan", "not checked with {world}"), ("Your {world} ID", "untouched"),
+                                  ("Next", "use your own console"))
+    assert state.say == ("This console belongs to *{other_book}*. One console, one person. I did not check your scan "
+                         "with {world}, so nothing was made or used up. Sign up on your own console.")
+    assert (state.card["t"], state.steps, state.at, state.fail, state.kind) == ("no", STATES["id_scan"].steps, 2,
+                                                                                 True, "no")
+    assert state.on == {"cross": "home", "circle": "home"}
+
+
+def test_the_scout_and_its_pick():
+    scout, pick = STATES["scout"], STATES["scout_pick"]
+    assert (scout.card["t"], scout.busy, scout.call, scout.deadline_ms) == ("load", "third", "scout", 12000)
+    assert scout.card["h"] == "Scouting {game}"
+    assert scout.card["rows"] == ("Your laps vs the listed ghosts", "Lap times read from {board}")
+    assert scout.say == "Comparing your laps with every ghost for sale. One moment."
+    assert scout.on == {"ok": "scout_pick", "timeout": "target"}
+    assert (pick.card["t"], pick.steps, pick.auto_ms) == ("pick", (), 4000)
+    assert pick.say == "My scout picked *{target}*. {scout_reason} Buying in a moment; Circle stops me."
+    assert pick.on == {"auto": "buy_check", "cross": "buy_check", "circle": "board"}
+    assert all(state.auto_ms is None for name, state in STATES.items() if name != "scout_pick")
+    assert STATES["target"].say.startswith("{scout_down}Next run to beat")
+
+
+def test_a_guard_refusal_says_what_the_guard_said_and_who_decided():
+    state = STATES["buy_suspended"]
+    assert state.card["h"] == "Not paying for this one"
+    assert state.card["rows"] == ("PB's guard said no: {refused_why}",)
+    assert state.card["what"] == (("Paid", "nothing"), ("Decided by", "code, not the scout"),
+                                  ("Next", "race your own best"))
+    assert state.say == "{target}'s listing did not pass my checks ({refused_why}), so I paid nothing."
+
+
+def test_the_finished_steps_show_their_chain_ids_and_the_console_its_tag():
+    for name in ("ls_done", "buy_done", "buy_late"):
+        assert STATES[name].card["t"] == "chain", name
+    assert ("Console", "{console_tag}") in STATES["id_done"].card["what"]
+    assert STATES["id_scan"].say.endswith("I never see your name, and this console becomes yours.")
+    assert "{record_line}" in STATES["ls_arkiv"].card["rows"]
+    assert "Paid: {receipt_text}" in STATES["buy_load"].card["rows"]
+    assert "Pays {payee}" in STATES["buy_check"].card["rows"] and "To {payee}" in STATES["buy_pay"].card["rows"]
+    assert len(STATES["buy_pay"].card["rows"]) == 2                  # the coins fly under them: two rows at most

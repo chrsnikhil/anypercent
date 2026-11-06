@@ -8,6 +8,8 @@ from typing import Protocol
 
 # A seller's Hedera account as a listing names it: a plain `0.0.N` id, the only form x402 pays (never an EVM alias).
 PAY_TO = re.compile(r"0\.0\.[0-9]{1,10}")
+BOOK = re.compile(r"ANY-[A-Z0-9]{3,8}")              # a record book's id, as the bridge makes them
+HOUSE_LABEL = re.compile(r"BOT-[A-Z]{1,2}[1-8]")     # a house BOT ghost's label: a program's run, never a person's
 
 
 @dataclass(frozen=True)
@@ -26,12 +28,12 @@ class SponsorNames:
 
 
 STEPS = ("status", "idkit_scan", "idkit_confirm", "idkit_verify", "check_listing", "pay", "load_ghost",
-         "approve_scan", "approve", "record", "publish", "sales")
+         "approve_scan", "approve", "record", "publish", "sales", "scout")
 
 # Real-adapter timeouts the flow engine enforces (Global Constraints). Phone steps have none
 # here: their deadline is the QR's own expiry, carried on Call.info["expires_s"].
 TIMEOUT_MS = {"idkit_verify": 10000, "pay": 8000, "record": 8000, "publish": 8000,
-              "check_listing": 8000, "load_ghost": 8000}
+              "check_listing": 8000, "load_ghost": 8000, "scout": 12000}
 
 
 @dataclass(frozen=True)
@@ -58,7 +60,8 @@ class RunRow:
     has one. book is the record book (None on an open-tier row, which carries a label instead); human and credential
     are the row's own fields, the only source of a HUMAN badge. expires_block is the row's `$expiresAt`; price is
     the listing's price in USDC as Arkiv holds it (a decimal string such as "0.1"); pay_to the seller's Hedera account
-    the listing names (PAY_TO), None on a listing written without one: listed, but not for sale."""
+    the listing names (PAY_TO), None on a listing written without one: listed, but not for sale. splits: the run's lap
+    times in frames (s1..s4 on its row: MDGP's laps), only when they add up to its frames; None on a row without."""
     key: str
     game: str
     title: str
@@ -74,6 +77,7 @@ class RunRow:
     listing: str | None = None
     price: str | None = None
     pay_to: str | None = None
+    splits: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +104,18 @@ class Sponsors(Protocol):
     mock: bool              # any service still mocked: Square's lists and "Start over (mock)" stay
     names: SponsorNames
     approvals: str          # how World asks for a listing OK: "agentpass" (a device code) or "idkit"
+    scouts: bool            # PB's scout picks the ghost to buy (the "scout" step): Hedera real and the service says so
+    explorer_origin: str | None   # Arkiv's explorer (https://host) as the service names it: its links may be drawn
+
+    def console_state(self) -> dict | None:
+        """This console's binding as World's bridge last said it: {"tag", "book", "state", "credential"} (state
+        "bound" | "unbound" | "released"); None while mocked or never answered."""
+        ...
+
+    def chain_update(self) -> dict | None:
+        """The finished payment's chain ids as the service last said them ({"intent", "receipt_msg"}: its HCS messages,
+        which land after the payment), asked again in the background while someone looks; None if none."""
+        ...
 
     def mocked(self, service: str) -> bool:
         """"world" | "board" | "third": is that service still mocked? Its pill and QR say so."""

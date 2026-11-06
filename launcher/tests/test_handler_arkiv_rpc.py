@@ -149,9 +149,10 @@ def test_the_board_is_one_page_of_each_with_no_ghost_bytes():
         assert "log" not in sel["attributes"] and "log_enc" not in sel["attributes"]   # never a ghost for a board
         assert sel["attributes"]["arkiv.schema"] is True
     assert set(o1["select"]["attributes"]) == {"arkiv.schema", "game", "title", "frames", "runner", "book", "label",
-                                               "human", "credential", "log_h", "rules"}
+                                               "human", "credential", "log_h", "rules", "s1", "s2", "s3", "s4",
+                                               "split_kind"}
     assert set(o2["select"]["attributes"]) == {"arkiv.schema", "run", "game", "season", "frames", "log_h", "price",
-                                               "seller", "book", "human", "pay_to"}
+                                               "seller", "book", "label", "human", "pay_to"}
 
 
 def test_the_fixture_decodes():
@@ -314,7 +315,7 @@ def test_a_listing_by_its_key():
     got = rpc.read_listing(stub, k("l-6ps"), CHECKER)
     assert got == {"key": k("l-6ps"), "creator": CHECKER, "expires": 0x46a1d0, "run": k("6ps-fast"), "game": "MDGP",
                    "season": 1, "frames": 6170, "log_h": h("6ps-fast"), "price": "0.1", "seller": "3f9a0c21d4e5b6a7",
-                   "book": "ANY-6PS", "human": True, "pay_to": None}
+                   "book": "ANY-6PS", "label": None, "human": True, "pay_to": None}
     method, (query, options), _ = stub.requests[0]
     assert query == rpc.q6(rpc.LISTING_SCHEMA, k("l-6ps"), CHECKER) and options["limit"] == "0x1"
 
@@ -431,3 +432,77 @@ def test_nothing_listening_is_an_rpc_error():
         port = s.getsockname()[1]
     with pytest.raises(rpc.RpcError):
         rpc.read_board(rpc.rpc_transport(f"http://127.0.0.1:{port}"), "MDGP", 1, CHECKER)
+
+
+# ---- splits on run rows, label listings (the house's BOT ghosts) ----------------------------------------------------
+
+def _with_splits(*laps, kind="lap", frames=None, typed="u64"):
+    """The 6ps-fast run (6170 frames) with s1..sN and split_kind, frames set to their sum unless given."""
+    run = _good_run()
+    for i, lap in enumerate(laps, start=1):
+        run["attributes"].append({"name": f"s{i}", "type": typed, "value": hex(lap) if typed == "u64" else lap})
+    if kind is not None:
+        run["attributes"].append({"name": "split_kind", "type": "str", "value": kind})
+    _attr(run, "frames")["value"] = hex(frames if frames is not None else sum(laps))
+    return run
+
+
+def test_a_runs_lap_times_come_with_it():
+    (row,), dropped = rpc.decode_runs([_with_splits(2140, 2165, 2109)], "MDGP", CHECKER)
+    assert dropped == 0 and row["splits"] == (2140, 2165, 2109) and row["frames"] == 6414
+    assert rpc.run_row(row).splits == (2140, 2165, 2109)
+    (old,), _ = rpc.decode_runs([_good_run()], "MDGP", CHECKER)        # a row from before splits: still loads
+    assert old["splits"] is None and rpc.run_row(old).splits is None
+
+
+def _gapped():
+    """s1 and s3 with no s2, frames their sum: not contiguous."""
+    run = _with_splits(2140, 2165, 2109, frames=4249)
+    _without("s2")(run)
+    return run
+
+
+@pytest.mark.parametrize("why, run", [
+    ("they do not add up to its frames", lambda: _with_splits(2140, 2165, 2109, frames=6415)),
+    ("a lap of 0", lambda: _with_splits(2140, 0, 4274)),
+    ("not contiguous from s1", _gapped),
+    ("another kind", lambda: _with_splits(2140, 2165, 2109, kind="section")),
+    ("no kind", lambda: _with_splits(2140, 2165, 2109, kind=None)),
+    ("a split typed as a string", lambda: _with_splits(2140, 2165, 2109, typed="str")),
+])
+def test_lap_times_that_do_not_check_out_are_left_off_and_the_run_kept(why, run):
+    (row,), dropped = rpc.decode_runs([run()], "MDGP", CHECKER)
+    assert dropped == 0 and row["splits"] is None, why
+
+
+def _house_listing(**over):
+    """A label listing: the house's BOT-A2, paid to the house account, never human."""
+    listing = next(e for e in entities(Q2_PAGE) if e["key"] == k("l-6ps"))
+    listing["attributes"] = [a for a in listing["attributes"] if a["name"] != "book"]
+    listing["attributes"] += [{"name": "label", "type": "str", "value": "BOT-A2"},
+                              {"name": "pay_to", "type": "str", "value": "0.0.7700001"}]
+    _attr(listing, "human")["value"] = False
+    for name, value in over.items():
+        _attr(listing, name)["value"] = value
+    return listing
+
+
+def test_a_label_listing_decodes_and_one_with_both_or_neither_name_is_dropped():
+    (got,), dropped = rpc.decode_listings([_house_listing()], None, CHECKER)
+    assert dropped == 0 and (got["label"], got["book"], got["human"], got["pay_to"]) == ("BOT-A2", None, False,
+                                                                                         "0.0.7700001")
+    both = _house_listing()
+    both["attributes"].append({"name": "book", "type": "str", "value": "ANY-6PS"})
+    neither = _house_listing()
+    neither["attributes"] = [a for a in neither["attributes"] if a["name"] != "label"]
+    assert rpc.decode_listings([both, neither], None, CHECKER) == ([], 2)
+
+
+def test_a_bot_run_is_never_human():
+    """A run with no record book has nobody's World ID behind it: never HUMAN, whatever its row says."""
+    run = _good_run()
+    run["attributes"] = [a for a in run["attributes"] if a["name"] not in ("book", "credential")]
+    run["attributes"].append({"name": "label", "type": "str", "value": "BOT-A2"})
+    (row,), _ = rpc.decode_runs([run], "MDGP", CHECKER)
+    out = rpc.run_row(row)
+    assert (out.label, out.book, out.human, out.credential) == ("BOT-A2", None, False, None)

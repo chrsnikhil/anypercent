@@ -43,11 +43,13 @@ _DOWN_FAILURE = {
 # here. "late" marks only the "Paid late" row: it shares its failure name with the plain
 # "Hedera down" row above it, so the row itself (not the failure name) carries the distinction.
 _OUTCOMES = {
+    # "Another person's console": the only way id_taken is ever shown in a demo, under the MOCK pill (one owner, one
+    # World ID: it can not happen live).
     "idkit_confirm": [("Reject", "id_rejected", False), ("Let it expire", "id_expired", False),
                        ("No Selfie Check", "id_nocred", False), ("Same person again", "id_dup", False),
-                       ("{world} down", "id_offline", False)],
+                       ("Another person's console", "id_taken", False), ("{world} down", "id_offline", False)],
     "check_listing": [("Budget used up", "buy_budget", False), ("Price changed", "buy_changed", False),
-                        ("Sales suspended", "buy_suspended", False)],
+                        ("Guard says no", "buy_suspended", False)],
     "pay": [("{third} down", "buy_down", False), ("Paid late", "buy_down", True)],
     "approve": [("Deny", "ls_denied", False), ("Expire", "ls_expired", False),
                 ("Another {world} ID", "ls_wrong", False), ("Codes differ", "ls_mismatch", False),
@@ -126,6 +128,8 @@ class MockSponsors:
 
     mock = True
     approvals = "agentpass"  # the mock's listing OK reads as Agent Pass's device code
+    scouts = False           # no scout: the mock's target is the board's ghost just ahead
+    explorer_origin = None   # no explorer links: the mock writes nothing anywhere
 
     def __init__(self, clock_ms, names=SponsorNames(), seed=0):
         self._clock_ms = clock_ms
@@ -153,6 +157,14 @@ class MockSponsors:
 
     def board(self, game_id: str, look: bool = True):
         """No real board: the glue draws the mock one around the game's test log."""
+        return None
+
+    def console_state(self):
+        """No bridge, so no binding: the ledger is the console's own."""
+        return None
+
+    def chain_update(self):
+        """No chain: the mock's receipts stand for no payment."""
         return None
 
     def set_down(self, service: str, down: bool) -> None:

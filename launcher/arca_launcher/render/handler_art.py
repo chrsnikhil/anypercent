@@ -194,20 +194,24 @@ def _beam(w):
     return surf
 
 
-def qr(g, text, rect, t):
+def qr(g, text, rect, t, beam=True):
     """The QR code of text, as large as whole pixels per module allow in rect (crisp, so a phone reads it), centred,
-    a scan beam sweeping down it and back. Nothing for a text no QR code holds: the card still shows the code."""
+    a scan beam sweeping down it and back (beam=False: none, for a dense link scanned off the screen). Nothing for a
+    text no QR code holds: the card still shows the code. Returns the code's box, or None."""
     try:
         surf = tex(g, ("qr", text), lambda: qr_surface(text), pixel_art=True)
     except ValueError:
-        return
+        return None
     n = surf.get_rect().w
     size = n * max(1, rect.w // n)
     box = pygame.Rect(0, 0, size, size)
     box.center = rect.center
     g.image(surf, box)
+    if not beam:
+        return box
     y = box.y + round((box.h - BEAM_H) * fx.beam(t))
     g.image(tex(g, ("beam", box.w), lambda: _beam(box.w)), pygame.Rect(box.x, y, box.w, BEAM_H))
+    return box
 
 
 def _stripes(w, h):

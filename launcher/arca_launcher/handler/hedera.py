@@ -14,11 +14,18 @@ Hedera key, account or URL is on the console: it talks only to the service.
   /hedera/payto/{book}, in the background, kept in state_dir/hedera-payto.json). At approve_scan it is pinned for that
   listing and added to the approve_scan, approve, record and publish payloads, so World App's text, the HCS record
   and the Arkiv listing all name the same account.
+- scout: POST /scout with YOU's best log (read and encoded on the worker) and this console's id, then its stage every
+  500 ms. The service's scout (a model on Groq, or PB's rule when it can not answer) picks which listed ghost to buy
+  among the ones PB's guards would allow; it never decides whether to pay or how much. `scouts` follows /health.
+- Every buy names this console (the service spends only from the book the console is bound to) and the scout's pick
+  it follows. A finished payment's HCS messages (INTENT, then RECEIPT once the mirror has it) are asked again every
+  2 s for up to 90 s while someone looks: chain_update().
 
 All HTTP runs on one background thread with short timeouts. begin(), poll(), status() and pay_to() only read and mark
 what that thread last saw, so a slow or missing service never holds up a frame. A failure is always one of the
 handler's own states (states.py): an unknown failure name, a non-2xx reply or a host that does not answer is the
 step's down state."""
+import base64
 import json
 import logging
 import os
@@ -27,8 +34,8 @@ import threading
 import urllib.error
 import urllib.parse
 
-from arca_launcher.handler.arkiv import _HASH, _arcade, _is_key, listing_body
-from arca_launcher.handler.sponsors import PAY_TO, TIMEOUT_MS, Result
+from arca_launcher.handler.arkiv import _HASH, LOG_MAX, LOG_MIN, _arcade, _is_key, listing_body
+from arca_launcher.handler.sponsors import BOOK, HOUSE_LABEL, PAY_TO, TIMEOUT_MS, Result
 from arca_launcher.handler.world import http_transport
 
 log = logging.getLogger(__name__)
@@ -46,15 +53,25 @@ ASK_TIMEOUT_S = 2.0
 TICK_S, IDLE_TICK_S = 0.1, 1.0
 CACHE_FILE = "hedera-payto.json"
 NOW_PRICE_MAX = 24            # a changed listing's price as the card shows it ("gone", "0.25 USDC")
+CHAIN_MS = 2000               # a finished payment's HCS messages are asked again this often
+CHAIN_FOR_MS = 90000          # and for this long after it settled
+REASON_MAX = 160              # the scout's reason as the pick card shows it (the service keeps it to 110)
+TEXT_MAX = 80                 # a scout's model id or note
 
-_OWN = ("pay", "record")
+_OWN = ("pay", "record", "scout")
 _PINNED = ("approve_scan", "approve", "record", "publish")    # the payloads that carry the listing's account
-_ROUTE = {"pay": "/hedera/buy", "record": "/hedera/record"}
-_STAGES = {"pay": ("guard", "pay", "settle", "done"), "record": ("check", "submit", "done")}
+_ROUTE = {"pay": "/hedera/buy", "record": "/hedera/record", "scout": "/scout"}
+_STAGES = {"pay": ("guard", "pay", "settle", "done"), "record": ("check", "submit", "done"),
+           "scout": ("replay", "read", "think", "done")}
 # The handler's own failure names for each step (the spec's failure table). Anything else is the step's down state.
 _FAILURES = {"pay": ("buy_budget", "buy_changed", "buy_suspended", "buy_down"),
-             "record": ("ls_expired", "ls_wrong", "ls_mismatch", "ls_reused", "ls_copied", "ls_record_fail")}
-_DOWN = {"pay": "buy_down", "record": "ls_record_fail"}
+             "record": ("ls_expired", "ls_wrong", "ls_mismatch", "ls_reused", "ls_copied", "ls_record_fail"),
+             "scout": ("buy_budget", "nobody_ahead", "buy_suspended", "buy_down")}
+_DOWN = {"pay": "buy_down", "record": "ls_record_fail", "scout": "buy_down"}
+_BUDGETED = ("record", "scout")   # given up a little after the flow's own budget (a payment lives its whole life)
+_SCOUT_ID = re.compile(r"s-[0-9a-f]{8}")
+_WHY = re.compile(r"[a-z_]{1,32}")
+_TIME = re.compile(r"[0-9]{1,3}:[0-5][0-9]\.[0-9]{2}")
 # A settled payment's transaction id as the facilitator's settle answers it: <fee payer>@<seconds>.<nanos>.
 _TX = re.compile(r"[0-9]{1,10}\.[0-9]{1,10}\.[0-9]{1,10}@[0-9]{1,12}\.[0-9]{1,9}")
 _UNSET = object()
@@ -129,6 +146,8 @@ class HederaSponsors:
         self._account_due = {}     # book -> when its account is next read
         self._wanted_book = None   # the book whose account someone last looked at
         self._pin = None           # (book, account): what the listing being approved names, from approve_scan on
+        self._scout = None         # /health's "scout": "model" | "rule" | "off"; None until it first answers
+        self._after = None         # a settled payment whose HCS messages are still asked: {job, until, next, data}
         self._wanted_ms = clock_ms()
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -152,6 +171,29 @@ class HederaSponsors:
     def mock(self):
         """Hedera is real; Square's lists and "Start over (mock)" stay only while World or Arkiv is still mocked."""
         return self._inner.mocked("world") or self._inner.mocked("board")
+
+    @property
+    def scouts(self):
+        """PB's scout picks the ghost to buy: /health says it runs (a model, or the rule when no model can)."""
+        return self._scout in ("model", "rule")
+
+    @property
+    def console_id(self):
+        return getattr(self._inner, "console_id", None)
+
+    @property
+    def explorer_origin(self):
+        return getattr(self._inner, "explorer_origin", None)
+
+    def console_state(self):
+        read = getattr(self._inner, "console_state", None)
+        return read() if read is not None else None
+
+    def chain_update(self):
+        """The last settled payment's HCS messages as last read: {"receipt", "intent", "receipt_msg"}, or None."""
+        with self._lock:
+            self._look()
+            return dict(self._after["data"]) if self._after is not None else None
 
     def mocked(self, service: str) -> bool:
         return False if service == "third" else self._inner.mocked(service)
@@ -191,7 +233,12 @@ class HederaSponsors:
             payload = self._pinned(step, payload)
         if step not in _OWN:
             return self._inner.begin(step, payload)
-        key, body = _buy(payload) if step == "pay" else (None, listing_body(payload))
+        if step == "pay":
+            key, body = _buy(payload, self.console_id)
+        elif step == "scout":
+            key, body = None, _scout(payload, self.console_id)
+        else:
+            key, body = None, listing_body(payload)
         if body is None:
             log.info("Hedera %s: the payload lacks what the service needs", step)
         with self._lock:
@@ -244,8 +291,13 @@ class HederaSponsors:
             book = self._wanted_book
             book = book if looking and book is not None and now >= self._account_due.get(book, 0) else None
             health = self._health_due is None or (looking and now >= self._health_due)
+            after = self._after
+            chain = (after is not None and looking and after["next"] <= now < after["until"]
+                     and not _chain_filled(after["data"]))
         if job is not None:
             self._work_on(job, now)
+        if chain:
+            self._ask_chain(after)
         if book is not None:
             self._read_account(book)
         if health:
@@ -263,8 +315,8 @@ class HederaSponsors:
             self._wake.clear()
 
     def _work_on(self, job, now):
-        if job.step == "record" and now - job.start_ms >= TIMEOUT_MS["record"] + GRACE_MS:
-            self._finish(job, Result(ok=False, failure="ls_record_fail"))     # the flow gave up on it long ago
+        if job.step in _BUDGETED and now - job.start_ms >= TIMEOUT_MS[job.step] + GRACE_MS:
+            self._finish(job, Result(ok=False, failure=_DOWN[job.step]))     # the flow gave up on it long ago
             return
         if job.life_ms is not None and now >= job.life_ms + GRACE_MS:
             log.info("Hedera %s: the service's job ran out with no end", job.step)
@@ -287,6 +339,13 @@ class HederaSponsors:
             log_h = self._log_hash(job.body)
             if log_h is not None:
                 job.body = dict(job.body, log_h=log_h)
+        if job.step == "scout" and "log" not in job.body:
+            log_b64 = self._best_log(job.body)
+            if log_b64 is None:
+                log.info("Hedera scout: no %s log of %s frames on this console", job.body["game"], job.body["frames"])
+                self._finish(job, Result(ok=False, failure="buy_down"))
+                return
+            job.body = {key: value for key, value in dict(job.body, log=log_b64).items() if key != "frames"}
         try:
             reply = self._send("POST", _ROUTE[job.step], job.body, START_TIMEOUT_S)
         except urllib.error.HTTPError as e:             # answered, and refused: bad_body, not configured, unavailable
@@ -333,11 +392,11 @@ class HederaSponsors:
             if reply is None:
                 if job.silent_since is None:
                     job.silent_since = now
-                gave_up = job.step == "record" and now - job.silent_since >= SILENT_MS
+                gave_up = job.step in _BUDGETED and now - job.silent_since >= SILENT_MS
             else:
                 job.silent_since, gave_up = None, False
         if gave_up:
-            self._finish(job, Result(ok=False, failure="ls_record_fail"))
+            self._finish(job, Result(ok=False, failure=_DOWN[job.step]))
         elif reply is not None and reply["stage"] == "done":
             self._finish(job, _outcome(job.step, reply))
 
@@ -353,6 +412,41 @@ class HederaSponsors:
             return None
         return log_h if isinstance(log_h, str) and _HASH.fullmatch(log_h) else None
 
+    def _best_log(self, body):
+        """YOU's log of the run the scout compares (the Arkiv adapter's run_log_path), base64; None if it is not here.
+        Read on the worker only."""
+        path_of = getattr(self._inner, "run_log_path", None)
+        path = path_of(body["game"], body["frames"]) if path_of is not None else None
+        if path is None:
+            return None
+        try:
+            with open(path, "rb") as f:
+                data = f.read(LOG_MAX + 1)
+        except OSError:
+            return None
+        return base64.b64encode(data).decode("ascii") if LOG_MIN <= len(data) <= LOG_MAX else None
+
+    def _ask_chain(self, after):
+        """A settled payment's job again: its INTENT and RECEIPT messages, which land after the payment."""
+        try:
+            reply = _checked("pay", self._send("GET", f"/hedera/buy/{_quote(after['job'].id)}", None,
+                                               ASK_TIMEOUT_S))
+        except Exception:
+            reply = None
+        with self._lock:
+            after["next"] = self._clock_ms() + CHAIN_MS
+            if reply is None or reply["stage"] != "done" or reply["ok"] is not True:
+                return
+            data = reply["data"]
+            for name in ("intent", "receipt_msg"):
+                if name in data:
+                    msg = _message(data[name])
+                    if msg is not None or data[name] is None:
+                        after["data"][name] = msg
+        if _chain_filled(after["data"]):
+            log.info("Hedera: the RECEIPT for %s is on the topic (#%s)", after["data"]["receipt"],
+                     after["data"]["receipt_msg"]["seq"])
+
     def _finish(self, job, result):
         with self._lock:
             if job.result is not None:
@@ -360,6 +454,16 @@ class HederaSponsors:
             job.result = result
             if result.ok and job.step == "pay" and job.key is not None:
                 self._paid[job.key] = result.data["receipt"]
+            if result.ok and job.step == "pay":
+                now = self._clock_ms()
+                self._after = {"job": job, "until": now + CHAIN_FOR_MS, "next": now + CHAIN_MS,
+                               "data": {"receipt": result.data["receipt"], "intent": result.data.get("intent"),
+                                        "receipt_msg": result.data.get("receipt_msg")}}
+        if result.ok and job.step == "scout":
+            log.info("Hedera scout %s: %s picked %s%s", result.data["scout"],
+                     "model" if result.data["by"] == "model" else "rule", result.data["seller"],
+                     f" (lap {result.data['lap']})" if result.data.get("lap") else "")
+            return
         if result.ok and job.step == "pay":
             log.info("Hedera paid %s for %s's %s ghost: %s%s", job.body["book"], job.body["seller"], job.body["game"],
                      result.data["receipt"], " (late)" if result.data.get("late") else "")
@@ -406,6 +510,11 @@ class HederaSponsors:
         with self._lock:
             was, self._health = self._health, health
             self._health_due = self._clock_ms() + HEALTH_MS
+            if isinstance(reply, dict):                 # no answer: the last word on the scout stands
+                scout, self._scout = self._scout, reply.get("scout") if reply.get("scout") in ("model", "rule") \
+                    else "off"
+                if scout != self._scout:
+                    log.info("Hedera scout: %s", self._scout)
         if health != was:
             log.info("Hedera %s", "ready to pay" if health == "ok" else "can not pay right now (/health)")
 
@@ -475,9 +584,10 @@ class HederaSponsors:
         return job is not None and job.live and self._clock_ms() - job.polled_ms < IDLE_MS
 
 
-def _buy(p):
+def _buy(p, console=None):
     """(the purchase's key, the contract's POST /hedera/buy body) for a pay payload, or (None, None) when it does not
-    name a real target: the buyer's book, the arcade game, the seller, her listing, run, log and time, and the price."""
+    name a real target: the buyer's book, the arcade game, the seller, the listing, run, log and time, and the price;
+    this console's id when it has one, and the scout's pick (scout_id) the purchase follows, if any."""
     game, book, seller = _arcade(p), p.get("book"), p.get("seller")
     listing, run, log_h = p.get("target_listing"), p.get("target_run"), p.get("target_log_h")
     frames, you, price = p.get("target_frames"), p.get("frames"), p.get("price")
@@ -487,7 +597,25 @@ def _buy(p):
         return None, None
     body = {"book": book, "game": game, "seller": seller, "listing": listing.lower(), "run": run.lower(),
             "log_h": log_h, "frames": frames, "you_frames": you if type(you) is int else None, "price_c": price}
+    if console is not None:
+        body["console"] = console
+    scout = p.get("scout_id")
+    if isinstance(scout, str) and _SCOUT_ID.fullmatch(scout):
+        body["scout"] = scout
     return (book, game, seller, run.lower()), body
+
+
+def _scout(p, console=None):
+    """The contract's POST /scout body for a scout payload, its log still to read ("frames": the run whose log the
+    worker reads in its place), or None when there is no book, arcade game or best time to compare."""
+    game, book, frames, price = _arcade(p), p.get("book"), p.get("best_frames"), p.get("price")
+    if not (game and isinstance(book, str) and BOOK.fullmatch(book) and type(frames) is int and type(price) is int):
+        return None
+    body = {"book": book, "game": game, "frames": frames}
+    if console is not None:
+        body["console"] = console
+    body["price_c"] = price
+    return body
 
 
 def _quote(text):
@@ -512,12 +640,19 @@ def _outcome(step, reply):
         failure = reply["failure"]
         if failure not in _FAILURES[step]:
             return Result(ok=False, failure=_DOWN[step])
+        if failure == "buy_suspended":                  # why PB's guard said no, a short code the card words
+            why = data.get("why")
+            return Result(ok=False, failure=failure,
+                          data={"why": why} if isinstance(why, str) and _WHY.fullmatch(why) else {})
         if failure != "buy_changed":
             return Result(ok=False, failure=failure)
         now_price = data.get("now_price")
         if not (isinstance(now_price, str) and 0 < len(now_price) <= NOW_PRICE_MAX and now_price.isprintable()):
             return Result(ok=False, failure="buy_down")
         return Result(ok=False, failure=failure, data={"now_price": now_price})
+    if step == "scout":
+        picked = _picked(data)
+        return Result(ok=True, data=picked) if picked is not None else Result(ok=False, failure="buy_down")
     if step == "pay":
         receipt = data.get("receipt")
         if not (isinstance(receipt, str) and _TX.fullmatch(receipt)):
@@ -525,8 +660,79 @@ def _outcome(step, reply):
         out = {"receipt": receipt, "late": data.get("late") is True}
         if isinstance(data.get("hashscan"), str) and data["hashscan"].startswith("https://hashscan.io/"):
             out["hashscan"] = data["hashscan"]
+        if _message(data.get("intent")) is not None:
+            out["intent"] = _message(data["intent"])
+        if "receipt_msg" in data and (data["receipt_msg"] is None or _message(data["receipt_msg"]) is not None):
+            out["receipt_msg"] = _message(data["receipt_msg"])
         return Result(ok=True, data=out)
     out = {name: data[name] for name in ("topic", "tx", "hashscan") if isinstance(data.get(name), str)}
     if type(data.get("seq")) is int:
         out["seq"] = data["seq"]
     return Result(ok=True, data=out)
+
+
+def _message(msg):
+    """An HCS message as the buy job names it ({"seq": int | None, "tx", "hashscan"}), or None when it is not one."""
+    if not isinstance(msg, dict):
+        return None
+    seq, tx, link = msg.get("seq"), msg.get("tx"), msg.get("hashscan")
+    if not ((seq is None or (type(seq) is int and seq > 0)) and isinstance(tx, str) and _TX.fullmatch(tx)):
+        return None
+    if not (link is None or (isinstance(link, str) and link.startswith("https://hashscan.io/") and len(link) <= 300
+                             and link.isprintable() and " " not in link)):
+        return None
+    return {"seq": seq, "tx": tx, "hashscan": link}
+
+
+def _chain_filled(data):
+    """Both HCS messages are on the topic: nothing more to ask."""
+    return all(isinstance(data.get(name), dict) and data[name]["seq"] is not None
+               for name in ("intent", "receipt_msg"))
+
+
+def _laps(value):
+    """Lap times as a tuple of 1 to 4 positive frame counts, or None (none given, or not lap times)."""
+    if not (isinstance(value, list) and 0 < len(value) <= 4 and all(type(x) is int and 0 < x < 10 ** 6 for x in value)):
+        return None
+    return tuple(value)
+
+
+def _line(value, most):
+    return isinstance(value, str) and 0 < len(value) <= most and value.isprintable()
+
+
+def _picked(data):
+    """The scout's answer as the flow takes it, or None when the console can not show it: a seller that is a record
+    book or a BOT label and the pick's own name; a BOT pick is never human and pays the account its listing names;
+    keys, hash, frames and time in their shapes; a reason, who picked (model or rule) and, for a model, which."""
+    pick, you = data.get("pick"), data.get("you")
+    scout, seller, by = data.get("scout"), data.get("seller"), data.get("by")
+    if not (isinstance(pick, dict) and isinstance(you, dict) and isinstance(scout, str) and _SCOUT_ID.fullmatch(scout)
+            and isinstance(seller, str) and by in ("model", "rule")):
+        return None
+    bot = HOUSE_LABEL.fullmatch(seller) is not None
+    if not (bot or BOOK.fullmatch(seller)) or pick.get("name") != seller:
+        return None
+    if bot and not (pick.get("label") == seller and pick.get("book") is None and pick.get("human") is False):
+        return None
+    if not bot and pick.get("book") != seller:
+        return None
+    listing, run, log_h, frames = pick.get("listing"), pick.get("run"), pick.get("log_h"), pick.get("frames")
+    pay_to, time = pick.get("pay_to"), pick.get("time")
+    if not (_is_key(listing) and _is_key(run) and isinstance(log_h, str) and _HASH.fullmatch(log_h)
+            and type(frames) is int and frames > 0 and isinstance(pay_to, str) and PAY_TO.fullmatch(pay_to)
+            and isinstance(time, str) and _TIME.fullmatch(time) and isinstance(pick.get("human"), bool)):
+        return None
+    you_frames, you_time, lap = you.get("frames"), you.get("time"), data.get("lap")
+    if not (type(you_frames) is int and isinstance(you_time, str) and _TIME.fullmatch(you_time)
+            and (lap is None or (type(lap) is int and 1 <= lap <= 4))):
+        return None
+    reason, model, note = data.get("reason"), data.get("model"), data.get("note")
+    if not (_line(reason, REASON_MAX) and reason.strip() == reason and (model is None or _line(model, TEXT_MAX))
+            and (note is None or _line(note, TEXT_MAX)) and (by == "rule" or model is not None)):
+        return None
+    return {"scout": scout, "seller": seller, "label": seller if bot else None, "book": None if bot else seller,
+            "listing": listing.lower(), "run": run.lower(), "log_h": log_h, "frames": frames, "time": time,
+            "it": _laps(pick.get("splits")), "you": _laps(you.get("splits")), "you_frames": you_frames,
+            "you_time": you_time, "lap": lap, "reason": reason, "by": by, "model": model if by == "model" else None,
+            "note": note, "pay_to": pay_to, "human": pick["human"] and not bot}

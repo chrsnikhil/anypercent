@@ -5,6 +5,7 @@ Most tests run the adapter with no thread: a StubBridge stands in for the HTTP, 
 calls work() (one round of the worker) by hand, so every stage change lands exactly when the test says. The last
 few run the real thread against a real local HTTP server."""
 import json
+import logging
 import socket
 import threading
 import time
@@ -1200,3 +1201,137 @@ def test_the_board_draws_a_human_badge_and_its_legend(screen, tmp_path, monkeypa
     assert texts.count("HUMAN") == 1 + 1                                # YOU, and the legend
     you_x = next(x for s, x in drawn if s == "YOU")
     assert [x for s, x in drawn if s == "HUMAN"][-1] > you_x            # beside the name (the legend comes first)
+
+
+# ---- one console, one person: the console id, its binding, id_taken ----------------------------------------------
+
+CONSOLE = "3f9c0a1b2c3d4e5f60718293a4b5c6d7"            # a console id as console_id.load_or_create makes one
+
+
+class ConsoleBridge(StubBridge):
+    """The bridge with GET /console/{id}: `console` is its answer (None: an older bridge, a 404)."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.console = {"tag": "C-7QZP", "book": None, "state": "unbound", "credential": None}
+
+    def __call__(self, method, path, body, timeout_s):
+        if method == "GET" and path.startswith("/console/"):
+            self.requests.append((method, path, body))
+            assert timeout_s <= 5
+            if self.down:
+                raise urllib.error.URLError("connection refused")
+            if self.console is None:
+                raise urllib.error.HTTPError(path, 404, "Not Found", {}, None)
+            return dict(self.console)
+        return super().__call__(method, path, body, timeout_s)
+
+    def console_gets(self):
+        return [path for method, path, _ in self.requests if method == "GET" and path.startswith("/console/")]
+
+
+def make_console(console=CONSOLE):
+    clock, bridge = FakeClock(), ConsoleBridge()
+    sponsors = WorldSponsors("http://bridge.test:8787", clock, transport=bridge, background=False, console=console)
+    return sponsors, clock, bridge
+
+
+def test_the_sign_up_sends_the_consoles_id():
+    sponsors, clock, bridge = make_console()
+    assert sponsors.console_id == CONSOLE
+    sponsors.begin("idkit_scan", {})
+    sponsors.work()
+    assert ("/idkit/start", {"console": CONSOLE}) in bridge.posts()
+
+
+def test_the_binding_is_asked_with_every_health_and_kept():
+    sponsors, clock, bridge = make_console()
+    assert sponsors.console_state() is None                             # not heard from yet
+    sponsors.work()                                                     # once at start
+    assert bridge.console_gets() == [f"/console/{CONSOLE}"]
+    assert sponsors.console_state() == {"tag": "C-7QZP", "book": None, "state": "unbound", "credential": None}
+    bridge.console = {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb"}
+    step(sponsors, clock, world.HEALTH_MS - 1)
+    assert sponsors.console_state()["state"] == "unbound"               # not asked again yet
+    step(sponsors, clock, 1)
+    assert sponsors.console_state() == {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb"}
+    bridge.console = {"tag": "C-7QZP", "book": None, "state": "released", "credential": None}
+    step(sponsors, clock, world.HEALTH_MS)
+    assert sponsors.console_state()["state"] == "released"
+    assert len(bridge.console_gets()) == 3
+
+
+def test_nobody_looking_asks_no_binding():
+    sponsors, clock, bridge = make_console()
+    sponsors.work()
+    clock.ms += world.IDLE_MS
+    for _ in range(10):
+        clock.ms += world.HEALTH_MS
+        sponsors.work()
+    assert len(bridge.console_gets()) == 1
+
+
+@pytest.mark.parametrize("reply", [
+    None,                                                               # an older bridge: 404
+    {"tag": "C-7QZP", "book": None, "state": "bound", "credential": None},          # bound to nobody
+    {"tag": "C-7QZP", "book": "ANY-6PS", "state": "linked", "credential": None},    # a state off the contract
+    {"tag": "7QZP", "book": None, "state": "unbound", "credential": None},
+    {"tag": "C-7QZP", "book": "any-6ps", "state": "bound", "credential": None},
+    {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "x" * 80},
+    "not a dict",
+])
+def test_a_binding_off_the_contract_is_never_taken(reply):
+    sponsors, clock, bridge = make_console()
+    bridge.console = {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb"}
+    sponsors.work()
+    bridge.console = reply
+    step(sponsors, clock, world.HEALTH_MS)
+    assert sponsors.console_state()["book"] == "ANY-6PS"               # the last good word stands
+    assert sponsors.status()["world"] == "ok"                           # and World is not down over it
+
+
+def test_a_console_id_the_bridge_would_refuse_is_never_sent():
+    for odd in ("anypercent", "has a space in it ok", "x" * 129, ""):
+        sponsors, clock, bridge = make_console(odd)
+        sponsors.work()
+        assert bridge.console_gets() == [] and sponsors.console_id is None and sponsors.console_state() is None
+
+
+def test_the_console_id_is_never_logged(caplog):
+    caplog.set_level(logging.DEBUG)
+    sponsors, clock, bridge = make_console()
+    sponsors.work()
+    bridge.console = {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb"}
+    step(sponsors, clock, world.HEALTH_MS)
+    bridge.down = True
+    step(sponsors, clock, world.HEALTH_MS)
+    assert CONSOLE not in caplog.text
+
+
+@pytest.mark.parametrize("name", ("idkit_confirm", "idkit_verify"))
+def test_another_persons_sign_up_on_a_bound_console_is_id_taken(name):
+    sponsors, clock, bridge = make_console()
+    call = walk_to(sponsors, clock, bridge, name)
+    bridge.move("done", ok=False, failure="id_taken", data={"book": "ANY-6PS", "console": "C-7QZP"})
+    step(sponsors, clock)
+    assert call.poll() == Result(ok=False, failure="id_taken", data={"book": "ANY-6PS", "console": "C-7QZP"})
+
+
+def test_id_taken_shows_whose_console_it_is_and_nothing_was_used(tmp_path):
+    rig = WorldRig(tmp_path)
+    rig.to("id_verifying")
+    rig.bridge.move("done", ok=False, failure="id_taken", data={"book": "ANY-6PS", "console": "C-7QZP"})
+    rig.wait(500)
+    assert rig.state == "id_taken" and rig.flow.ctx["other_book"] == "ANY-6PS"
+    assert rig.flow.ledger.book is None and not rig.flow.ledger.world_verified
+    assert rig.flow.fill(rig.flow.state.card["h"]) == "This console belongs to ANY-6PS"
+    assert "nothing was made or used up" in rig.flow.line
+    assert rig.flow.press("cross") == CloseHandler()
+
+
+def test_id_taken_is_a_mock_outcome_only_under_the_mock(tmp_path):
+    mock = MockSponsors(FakeClock())
+    assert ("Another person's console", "id_taken") in [(o.label, o.failure) for o in mock.outcomes("idkit_confirm")]
+    sponsors, clock, bridge = make_console()
+    assert sponsors.outcomes("idkit_confirm") == []                     # never a live screen of its own
+    assert mock.console_state() is None and mock.scouts is False and mock.chain_update() is None

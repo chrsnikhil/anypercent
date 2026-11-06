@@ -21,7 +21,13 @@ the JS object `S`) with controller-ruled amendments layered on top:
   to check: tap Confirm, as for the record book;
 - and one with the first live copy: `ls_copied`, a run whose exact log is already on the board
   under another record book (the service's own copy check, at record or at publish), so the
-  console never calls a copied run a wrong ID.
+  console never calls a copied run a wrong ID;
+- and three with one console, one person and PB's scout: `id_taken` (another person's sign-up on a
+  console bound to a record book, refused before anything reached World), `scout` (PB's scout
+  compares your laps with the listed ghosts' on the service) and `scout_pick` (its pick, bought
+  after `auto_ms` unless Circle stops it).
+
+The buy path never says "her" or "she": a target may be a BOT ghost, made by a program.
 
 This module is pure data (plus `copy_texts`/`PLACEHOLDERS`, small helpers over that data): no
 pygame, no sponsor calls, no clock. Task 6 (`flow.py`) walks `on`; Task 9 draws `card` by its
@@ -56,6 +62,7 @@ class State:
     down: str | None = None                # "world" | "board" | "third": the pill shown off
     keep_call: bool = False                # a backed-out call is kept alive for a late result
     mock_outcomes: tuple[tuple[str, str], ...] = ()  # extra Square rows (label, state), mock only
+    auto_ms: int | None = None             # ms in this state before on["auto"] fires by itself
 
 
 # The prototype's step strips (handler-states.html, `var ID3 = ...`).
@@ -78,7 +85,7 @@ STATES: dict[str, State] = {
         card={"t": "qr", "h": "Get your record book",
               "rows": ("World App > IDKit", "*One person, one record book*", "No name or face is kept")},
         say="Scan this with *World App*. It checks you are one person, so nobody runs two "
-            "record books. I never see your name.",
+            "record books. I never see your name, and this console becomes yours.",
         steps=_ID3, at=0, call="idkit_scan", phone=True, deadline_ms=300000,
         on={"ok": "id_confirm", "timeout": "id_expired", "circle": "id_cancel"},
     ),
@@ -102,7 +109,7 @@ STATES: dict[str, State] = {
         name="id_done", mood="excited", kind="ok", fx="confetti",
         card={"t": "done", "h": "Record book ready", "rows": ("*{book}* is yours",),
               "what": (("Verified", "by {world} ({credential})"), ("Stored", "a one-per-person code"),
-                        ("Not stored", "your name or face"))},
+                        ("Not stored", "your name or face"), ("Console", "{console_tag}"))},
         say="You are in! Record book *{book}* is yours. Every run you finish lands in it. "
             "Cross to carry on.",
         steps=_ID3, at=3, on={"cross": "hub", "circle": "hub"},  # Cross: the flow's remembered target
@@ -148,6 +155,16 @@ STATES: dict[str, State] = {
         say="Welcome back! Signed in to *{other_book}*. Your {runs} runs are all still there.",
         steps=_ID3, at=3, on={"cross": "hub", "circle": "hub"},  # Cross: as id_done's
     ),
+    "id_taken": State(
+        name="id_taken", mood="serious", kind="no",
+        card={"t": "no", "h": "This console belongs to {other_book}",
+              "rows": ("Linked to *{other_book}* with {world} ID",),
+              "what": (("Your scan", "not checked with {world}"), ("Your {world} ID", "untouched"),
+                        ("Next", "use your own console"))},
+        say="This console belongs to *{other_book}*. One console, one person. I did not check your scan "
+            "with {world}, so nothing was made or used up. Sign up on your own console.",
+        steps=_ID3, at=2, fail=True, on={"cross": "home", "circle": "home"},
+    ),
     "id_nocred": State(
         name="id_nocred", mood="thinking", kind="warn",
         card={"t": "warn", "h": "Selfie Check needed", "rows": ("Your World App has no Selfie Check yet",),
@@ -177,7 +194,7 @@ STATES: dict[str, State] = {
     "board": State(
         name="board", mood="happy", card={"t": "board"},
         say="Here is the *{game}* board. You are {rank}. *{target}* is {gap} ahead. "
-            "Beat her and {new_rank} is yours.",
+            "Beat that run and {new_rank} is yours.",
         on={"cross": "target", "circle": "hub"},
     ),
     "board_new": State(
@@ -188,42 +205,55 @@ STATES: dict[str, State] = {
     ),
     "target": State(
         name="target", mood="serious", card={"t": "target", "rows": ("Faster from {split}",)},
-        say="Next run to beat: *{target}, {target_time}*. Her ghost is {price} USDC. "
+        say="{scout_down}Next run to beat: *{target}, {target_time}*. The ghost is {price} USDC. "
             "Cross and I buy it.",
         on={"cross": "buy_check", "circle": "board"},
+    ),
+    "scout": State(
+        name="scout", mood="thinking", busy="third",
+        card={"t": "load", "h": "Scouting {game}",
+              "rows": ("Your laps vs the listed ghosts", "Lap times read from {board}")},
+        say="Comparing your laps with every ghost for sale. One moment.",
+        call="scout", deadline_ms=12000,
+        on={"ok": "scout_pick", "timeout": "target"},
+    ),
+    "scout_pick": State(
+        name="scout_pick", mood="excited", card={"t": "pick"},
+        say="My scout picked *{target}*. {scout_reason} Buying in a moment; Circle stops me.",
+        auto_ms=4000, on={"auto": "buy_check", "cross": "buy_check", "circle": "board"},
     ),
     "buy_check": State(
         name="buy_check", mood="thinking", busy="board",
         card={"t": "load", "h": "Checking {target}'s listing",
-              "rows": ("Price *{price} USDC*", "Pays *{target}*'s record book")},
-        say="Checking her listing on *{board}*: price, who gets paid, and that her run is verified.",
+              "rows": ("Price *{price} USDC*", "Pays {payee}")},
+        say="Checking the listing on *{board}*: price, who gets paid, and that the run is the one on the board.",
         steps=_BUY, at=0, call="check_listing", deadline_ms=8000,
         on={"ok": "buy_pay", "timeout": "buy_check_fail"},
     ),
     "buy_pay": State(
         name="buy_pay", mood="thinking", busy="third", fx="coin",
-        card={"t": "load", "h": "Paying {target}",
-              "rows": ("*{price} USDC* via {pay_rail}", "No approval: under your caps")},
-        say="Paying {target} *{price} USDC* on {third}. It goes straight to her, from your "
-            "coach budget.",
+        card={"t": "load", "h": "Paying for {target}'s ghost",
+              "rows": ("*{price} USDC* via {pay_rail}", "To {payee}")},
+        say="Paying *{price} USDC* on {third} to {payee}, from your coach budget. No approval: it is "
+            "under your caps.",
         steps=_BUY, at=1, call="pay", deadline_ms=8000,
         on={"ok": "buy_load", "timeout": "buy_down"},
     ),
     "buy_load": State(
         name="buy_load", mood="thinking",
-        card={"t": "load", "h": "Loading her ghost",
-              "rows": ("Downloaded", "Checked against her verified run")},
-        say="Paid. Downloading her ghost and checking it matches her verified run.",
+        card={"t": "load", "h": "Loading {target}'s ghost",
+              "rows": ("Downloaded", "Checked against the run on the board", "Paid: {receipt_text}")},
+        say="Paid. Downloading the ghost and checking it matches the run on the board.",
         steps=_BUY, at=2, call="load_ghost", deadline_ms=8000,
         on={"ok": "buy_done", "timeout": "buy_load_fail"},
     ),
     "buy_done": State(
         name="buy_done", mood="excited", kind="ok",
-        card={"t": "done", "h": "Ghost loaded", "rows": ("{target} {target_time}, {ghost_look}",),
-              "what": (("Paid", "{price} USDC to {target}"), ("Receipt", "{receipt_text}"),
+        card={"t": "chain", "h": "Ghost loaded", "rows": ("{target} {target_time}, {ghost_look}",),
+              "what": (("Paid", "{price} USDC for {target}'s ghost"), ("Receipt", "{receipt_text}"),
                         ("Budget left", "{budget_left} today"))},
-        say="Got it. {target}'s ghost is {ghost_look}. Beat it and {new_rank} is yours. "
-            "Cross to race, then *OPTIONS* on the title screen!",
+        say="Got it: {price} USDC for {target}'s ghost, {ghost_look}. Beat it and {new_rank} is "
+            "yours. Cross to race, then *OPTIONS* on the title screen!",
         steps=_BUY, at=4, on={"cross": "racing", "circle": "hub"},
     ),
     "racing": State(
@@ -248,17 +278,17 @@ STATES: dict[str, State] = {
         name="buy_changed", mood="serious", kind="no",
         card={"t": "no", "h": "Listing changed", "rows": ("Price was {price}, now *{now_price}*",),
               "what": (("Paid", "nothing"), ("Rule", "never pay a changed listing"),
-                        ("Next", "look again, or skip her"))},
+                        ("Next", "look again, or skip it"))},
         say="{target}'s price changed from {price} to *{now_price}* since I looked. I never pay a "
             "listing that changed under me. Cross to look again.",
         steps=_BUY, at=1, fail=True, on={"cross": "target", "circle": "board"},
     ),
     "buy_suspended": State(
         name="buy_suspended", mood="serious", kind="no",
-        card={"t": "no", "h": "Sales suspended", "rows": ("{target}'s record book has a fraud finding",),
-              "what": (("Paid", "nothing"), ("Her runs", "voided"), ("Next", "race your own best"))},
-        say="{target}'s sales are suspended after a fraud finding, so I will not pay her. "
-            "Nobody else ahead of you sells a ghost right now.",
+        card={"t": "no", "h": "Not paying for this one", "rows": ("PB's guard said no: {refused_why}",),
+              "what": (("Paid", "nothing"), ("Decided by", "code, not the scout"),
+                        ("Next", "race your own best"))},
+        say="{target}'s listing did not pass my checks ({refused_why}), so I paid nothing.",
         steps=_BUY, at=0, fail=True, on={"cross": "board", "circle": "home"},
     ),
     "buy_down": State(
@@ -273,10 +303,10 @@ STATES: dict[str, State] = {
     ),
     "buy_late": State(
         name="buy_late", mood="happy", kind="ok",
-        card={"t": "done", "h": "Payment landed late",
-              "what": (("Paid", "{price} USDC to {target}"), ("Receipt", "{receipt_text}"),
-                        ("Next", "load her ghost"))},
-        say="{third} was slow, but your payment to {target} did land. Her ghost is yours. "
+        card={"t": "chain", "h": "Payment landed late",
+              "what": (("Paid", "{price} USDC for {target}'s ghost"), ("Receipt", "{receipt_text}"),
+                        ("Next", "load the ghost"))},
+        say="{third} was slow, but your {price} USDC for {target}'s ghost did land. It is yours. "
             "Cross to load it.",
         steps=_BUY, at=1, on={"cross": "buy_load", "circle": "hub"},
     ),
@@ -290,7 +320,7 @@ STATES: dict[str, State] = {
     "buy_load_fail": State(
         name="buy_load_fail", mood="worried", kind="no", down="third",
         card={"t": "no", "h": "Ghost did not load",
-              "what": (("Paid", "{price} USDC to {target}"), ("Ghost", "yours, not loaded"),
+              "what": (("Paid", "{price} USDC for {target}'s ghost"), ("Ghost", "yours, not loaded"),
                         ("Next", "Cross tries again"))},
         say="Paid, but {target}'s ghost did not arrive. It is yours: Cross to try loading it again.",
         steps=_BUY, at=2, fail=True, on={"cross": "buy_load", "circle": "hub"},
@@ -343,17 +373,18 @@ STATES: dict[str, State] = {
     "ls_arkiv": State(
         name="ls_arkiv", mood="serious", busy="board",
         card={"t": "load", "h": "Listing on {board}",
-              "rows": ("Visible to every console's coach", "Ends in 7 days")},
+              "rows": ("Visible to every console's coach", "Ends in 7 days", "{record_line}")},
         say="Recorded. Now putting it on *{board}* so other coaches can find it.",
         steps=_LS, at=3, call="publish", deadline_ms=8000,
         on={"ok": "ls_done", "timeout": "ls_publish_fail"},
     ),
     "ls_done": State(
         name="ls_done", mood="excited", kind="ok", fx="confetti",
-        card={"t": "done", "h": "Listed", "rows": ("Your *{run_time}* ghost",),
+        card={"t": "chain", "h": "Listed", "rows": ("Your *{run_time}* ghost",),
               "what": (("Price", "{price} USDC a copy"), ("Sales go to", "{wallet}"),
                         ("Ends", "in 7 days"))},
-        say="Done! Your ghost is listed for a week. I will tell you when someone buys it.",
+        say="Done! Your ghost is listed for a week at {price} USDC a copy. I will tell you when someone "
+            "buys it.",
         steps=_LS, at=4, on={"cross": "hub", "circle": "hub"},  # a sale only comes from Home (flow 4)
     ),
     "sale": State(
@@ -503,7 +534,7 @@ STATES: dict[str, State] = {
     ),
     "race_lost": State(
         name="race_lost", mood="serious", card={"t": "result", "h": "Not this time"},
-        say="*{run_time}*. {target} is still *{gap}* ahead. Her ghost is yours: Cross races her "
+        say="*{run_time}*. {target} is still *{gap}* ahead. The ghost is yours: Cross races it "
             "again, no charge.",
         on={"cross": "racing", "circle": "hub"},
     ),

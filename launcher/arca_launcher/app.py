@@ -54,7 +54,8 @@ def make_sponsors(cfg, replay=None, games=None):
     through), and Hedera for real on top of both when asked for (cfg.hedera: PB's payments and the listing's record go
     through the same bridge). Hedera asked for without both stays mocked, and the log says why. Neither: every sponsor
     mocked. replay(arcade_id, log_path) times a log with the game's replay tool; games are the arcade ids whose boards
-    are read at start."""
+    are read at start. World is told this console's id (handler/console_id.py: a random id kept beside the --state
+    file, so two windows with two --state directories are two consoles)."""
     def clock_ms():
         return int(time.monotonic() * 1000)
     if cfg.hedera and not (cfg.world_bridge and cfg.arkiv_checker):
@@ -62,12 +63,13 @@ def make_sponsors(cfg, replay=None, games=None):
                                                         ("--arkiv-checker", cfg.arkiv_checker)) if not value)
         log.warning("Hedera stays mocked: it runs only on real World and Arkiv (%s not given)", missing)
     if cfg.world_bridge:
+        from .handler import console_id
         from .handler.world import WorldSponsors
-        world = WorldSponsors(cfg.world_bridge, clock_ms)
+        state_dir = os.path.dirname(cfg.state_path) or "."   # beside handler.json: the ledger and the console go together
+        world = WorldSponsors(cfg.world_bridge, clock_ms, console=console_id.load_or_create(state_dir))
         if not cfg.arkiv_checker:
             return world
         from .handler.arkiv import ARCADE_GAMES, ArkivSponsors
-        state_dir = os.path.dirname(cfg.state_path) or "."
         arkiv = ArkivSponsors(world, cfg.world_bridge, cfg.arkiv_rpc, cfg.arkiv_checker, cfg.arkiv_season,
                               cfg.runs_dir, state_dir, clock_ms, replay=replay,
                               games=ARCADE_GAMES if games is None else games)

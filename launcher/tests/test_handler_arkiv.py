@@ -67,9 +67,10 @@ class StubNode:
         self.block = 0x3fe90
 
     def run(self, name, frames, log=None, plain=False, listed=False, human=True, book=True, creator=CHECKER,
-            game="MDGP", price="0.1", pay_to=None):
-        """A run row (and its listing when listed). name: its book, or with book=False an open-tier label. pay_to: the
-        seller's Hedera account the listing names (None: a listing written without one)."""
+            game="MDGP", price="0.1", pay_to=None, splits=None):
+        """A run row (and its listing when listed). name: its book, or with book=False an open-tier label (a BOT-
+        label: the house's). pay_to: the seller's Hedera account the listing names (None: a listing written without
+        one). splits: its lap times (s1.., split_kind "lap")."""
         log = log if log is not None else acl(name + str(frames))
         attrs = [_attr("arkiv.schema", "str", "anypercent.run"), _attr("game", "str", game),
                  _attr("title", "str", "MARINE DRIVE GP"), _attr("season", "i32", SEASON),
@@ -80,6 +81,9 @@ class StubNode:
         if human and book:
             attrs.append(_attr("credential", "str", "Orb"))
         attrs.append(_attr("log", "bytes", "0x" + log.hex()) if plain else _attr("log_enc", "bytes", "0xabcdef"))
+        if splits:
+            attrs += [_attr(f"s{i}", "u64", hex(lap)) for i, lap in enumerate(splits, start=1)]
+            attrs.append(_attr("split_kind", "str", "lap"))
         entity = {"key": key(f"{creator}{name}{frames}"), "creator": creator, "expiresAt": "0x7a9812",
                   "attributes": attrs}
         self.runs.append(entity)
@@ -90,8 +94,9 @@ class StubNode:
                                       _attr("run", "key", entity["key"]), _attr("game", "str", game),
                                       _attr("season", "i32", SEASON), _attr("frames", "u64", hex(frames)),
                                       _attr("log_h", "str", sha(log)), _attr("price", "dec", price),
-                                      _attr("seller", "str", (name.lower() * 4)[:16]), _attr("book", "str", name),
-                                      _attr("human", "bool", True)]
+                                      _attr("seller", "str", (name.lower() * 4)[:16]),
+                                      _attr("book" if book else "label", "str", name),
+                                      _attr("human", "bool", human and book)]
                                   + ([_attr("pay_to", "str", pay_to)] if pay_to is not None else [])})
         return entity
 
@@ -1476,3 +1481,92 @@ def test_the_app_wires_the_replay_tool_and_the_library_games(tmp_path):
     while app.sponsors._thread.is_alive() and time.monotonic() < end:
         time.sleep(0.05)
     assert not app.sponsors._thread.is_alive()
+
+
+# ---- splits, the house's BOT ghosts, the console, the explorer -------------------------------------------------------
+
+def test_the_board_carries_lap_times_and_bot_ghosts_and_the_cache_keeps_them(tmp_path):
+    rig = Rig(tmp_path)
+    rig.node.run("BOT-A2", 6236, book=False, listed=True, pay_to="0.0.7700001", splits=(2248, 1994, 1994))
+    rig.node.run("ANY-6PS", 6414, listed=True, pay_to="0.0.9473064", splits=(2140, 2165, 2109))
+    rig.node.run("ANY-K2P", 6500)                                       # a row from before splits
+    rig.prefetch()
+    rows = rig.sponsors.board("MDGP").rows
+    assert [(r.book or r.label, r.human, r.splits, r.pay_to) for r in rows] == [
+        ("BOT-A2", False, (2248, 1994, 1994), "0.0.7700001"), ("ANY-6PS", True, (2140, 2165, 2109), "0.0.9473064"),
+        ("ANY-K2P", True, None, None)]
+    rig.node.down = True
+    assert rig.make().board("MDGP").rows == rows                        # the cache keeps the laps
+
+
+def test_a_board_cached_before_splits_still_shows(tmp_path):
+    rig = Rig(tmp_path)
+    rig.node.run("ANY-6PS", 6170, listed=True)
+    rig.prefetch()
+    path = os.path.join(rig.state_dir, arkiv.CACHE_FILE)
+    with open(path, encoding="utf-8") as f:
+        cached = json.load(f)
+    for row in cached["boards"]["MDGP"]["rows"]:
+        del row["splits"]
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cached, f)
+    read = rig.make().board("MDGP")
+    assert read.stale and read.rows[0].splits is None and read.rows[0].book == "ANY-6PS"
+    cached["boards"]["MDGP"]["rows"][0]["splits"] = [1, "x"]           # laps that do not check out: left off
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cached, f)
+    assert rig.make().board("MDGP").rows[0].splits is None
+
+
+def test_the_runs_log_path_is_public_for_the_scout(tmp_path):
+    rig = Rig(tmp_path)
+    rig.best("MDGP", acl("6ps"), 6414)
+    assert rig.sponsors.run_log_path("MDGP", 6414) == os.path.join(rig.runs_dir, "best", "MDGP.acl")
+    assert rig.sponsors.run_log_path("MDGP", 6000) is None
+
+
+def test_the_console_is_worlds_and_arkiv_has_no_scout_or_chain(tmp_path):
+    from test_handler_world import CONSOLE, ConsoleBridge
+    bridge = ConsoleBridge()
+    bridge.console = {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb"}
+    world = WorldSponsors("http://bridge.test:8787", FakeClock(), transport=bridge, background=False, console=CONSOLE)
+    rig = Rig(tmp_path, inner=world)
+    world.work()
+    assert rig.sponsors.console_id == CONSOLE and rig.sponsors.console_state()["book"] == "ANY-6PS"
+    assert rig.sponsors.scouts is False and rig.sponsors.chain_update() is None
+    mocked = Rig(tmp_path / "mock", inner=MockSponsors(FakeClock()))
+    assert mocked.sponsors.console_id is None and mocked.sponsors.console_state() is None
+
+
+def test_the_explorers_origin_comes_from_the_services_config(tmp_path):
+    rig = Rig(tmp_path)
+    assert rig.sponsors.explorer_origin is None                         # not asked yet: no Arkiv link is drawn
+    rig.service.config.update(explorer_tx="https://rabdi.explorer.arkiv.network/tx/{tx}",
+                              explorer_entity="https://rabdi.explorer.arkiv.network/entity/{key}")
+    rig.prefetch()
+    assert rig.sponsors.explorer_origin == "https://rabdi.explorer.arkiv.network"
+    for n, odd in enumerate(({"explorer_tx": "http://plain.example/tx/{tx}"}, {"explorer_tx": "javascript:alert(1)"},
+                             {"explorer_tx": None}, {"explorer_tx": "https://a.example/tx/{tx}",
+                                                     "explorer_entity": "https://b.example/entity/{key}"})):
+        rig = Rig(tmp_path / str(n))
+        rig.service.config.update(dict({"explorer_entity": None}, **odd))
+        rig.prefetch()
+        assert rig.sponsors.explorer_origin is None, odd
+
+
+def test_a_listing_names_its_explorer_links(tmp_path):
+    rig = Rig(tmp_path)
+    rig.best("MDGP", acl("6ps"), 6170)
+    call = _publish(rig)
+    links = {"tx": "https://rabdi.explorer.arkiv.network/tx/" + DONE["tx"],
+             "run": "https://rabdi.explorer.arkiv.network/entity/" + DONE["run"],
+             "listing": "https://rabdi.explorer.arkiv.network/entity/" + DONE["listing"]}
+    rig.service.move("done", ok=True, data=dict(DONE, explorer=dict(links, extra="never passed on")))
+    rig.step()
+    assert call.poll() == Result(ok=True, data=dict(DONE, explorer=links))
+    rig = Rig(tmp_path / "odd")
+    rig.best("MDGP", acl("6ps"), 6170)
+    call = _publish(rig)
+    rig.service.move("done", ok=True, data=dict(DONE, explorer={"tx": 7, "run": "x" * 600, "listing": None}))
+    rig.step()
+    assert call.poll() == Result(ok=True, data=DONE)                     # nothing it can not draw

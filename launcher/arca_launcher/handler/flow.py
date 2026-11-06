@@ -6,6 +6,16 @@ Pure Python, driven once a frame by the app: buttons arrive through press()/pick
 through tick(). There is no clock of its own: a call's deadline is read from the call's own
 `elapsed_ms`, the day from `today()`. A move that hands control back to the app returns a
 command (RaceTarget, CloseHandler); everything else returns None.
+
+PB's scout: with the sponsors' `scouts` on, Cross on the board goes to the scout (the service
+compares your laps with the listed ghosts' and picks one); its pick becomes the target and is
+bought after the pick screen's `auto_ms` unless Circle stops it. The scout only chooses which
+ghost: every guard runs on the purchase as before. Any scout failure but a refusal shows the
+board's own target, saying the scout did not answer.
+
+Every finished step keeps its chain ids in ctx["chain"] ([{label, value, url}], ctx["chain_i"]
+the one whose QR shows): the HCS record, the Arkiv rows, the payment with its INTENT and
+RECEIPT. A url is kept only on HashScan's testnet or the Arkiv explorer the service names.
 """
 import dataclasses
 import random
@@ -13,10 +23,10 @@ import time
 from dataclasses import dataclass
 
 from arca_launcher import coach
-from arca_launcher.handler.board import mark_you
+from arca_launcher.handler.board import mark_you, ordinal
 from arca_launcher.handler.ledger import (GHOST_PRICE, LISTING_DAYS, budget_left, buy, make_book,
                                           owns, save, start_over)
-from arca_launcher.handler.sponsors import Outcome, SponsorNames
+from arca_launcher.handler.sponsors import BOOK, Outcome, SponsorNames
 from arca_launcher.handler.states import PLACEHOLDER_RE, START, STATES
 
 
@@ -51,6 +61,26 @@ _HUB_LABELS = dict(zip(_HUB_ROWS, STATES["hub"].card["rows"]))
 _BOOK_RETURNS = {"buy_check": "buy_check", "ls_offer": "ls_offer", "book_view": "home"}
 _NAME_FIELDS = frozenset(f.name for f in dataclasses.fields(SponsorNames))
 MOCK_NOW_PRICE = "0.50 USDC"   # the mock's "Price changed": a made-up new price, never a real board's
+_BOARD_STATES = ("board", "board_new")      # Cross here may scout; Square toggles Humans only
+_SCOUT_FAILURES = ("buy_budget", "nobody_ahead", "buy_suspended")   # the scout's refusals: their own screens
+SCOUT_DOWN = "My scout is not answering, so here is the ghost just ahead. "
+# The board's target as the glue set it: what a scout's pick replaces, and Circle on the pick puts back.
+_TARGET_KEYS = ("target", "target_time", "target_frames", "target_run", "target_listing", "target_log_h",
+                "target_pay_to", "gap", "new_rank")
+_SCOUT_KEYS = ("scout_id", "scout_reason", "scout_by", "scout_model", "scout_note", "you_laps", "it_laps",
+               "scout_lap", "you_time")
+_CHAIN_STATES = ("ls_done", "buy_done", "buy_late")   # the chain card's screens: Up and Down pick a row's QR
+HASHSCAN = "https://hashscan.io/testnet/"
+LINK_MAX = 300
+GROQ = "Groq"                  # where the scout's model runs, as its by-line says
+# PB's guard refused a purchase: data.why on buy_suspended, as the refusal's card says it.
+REFUSED_WHY = {"own_book": "that is your own book", "run_changed": "the run changed",
+               "no_pay_to": "no payout account", "cannot_receive": "the account can not take USDC",
+               "payto_402": "the paywall named another account", "not_for_sale": "not for sale",
+               "not_house": "a BOT listing must pay the house",
+               "console_not_linked": "this console is not linked to {book}"}
+REFUSED_ELSE = "the listing did not check out"
+NO_BOOK_LINE = "This console has no record book now. Its runs stay on the board."
 
 
 class Flow:
@@ -87,6 +117,11 @@ class Flow:
         self._after_book = None  # where the record-book flow returns (_BOOK_RETURNS); None: hub
         self._jti = None       # the listing approval's one-time id, for the record step
         self._world_dup = None  # the book World named for a duplicate: signing in to it is World-verified
+        self._board_target = None   # the board's target fields while a scout's pick stands in for them
+        self._chain_pay = None      # the payment the chain rows show (its data), for the late HCS ids
+        ctx.setdefault("chain", [])
+        ctx.setdefault("chain_i", 0)
+        ctx.setdefault("humans_only", False)
         self._sync()
 
     # ---- what the view reads ---------------------------------------------------------------
@@ -104,6 +139,8 @@ class Flow:
 
     @property
     def line(self) -> str:
+        if self.state.name == "book_view" and not self.ledger.book:
+            return NO_BOOK_LINE              # released while shown: the console's book went (the glue followed it)
         return self.fill(self.state.say)
 
     @property
@@ -126,12 +163,23 @@ class Flow:
 
     def fill(self, text: str) -> str:
         """Fill {placeholders} from ctx and the sponsor names; a missing or None value fills as
-        "". *Emphasis* marks are kept for the view."""
+        "". *Emphasis* marks are kept for the view. {payee} is worked out from the target as it is
+        now: a BOT's house account, else the seller's own."""
         extra = {}
         for name in set(PLACEHOLDER_RE.findall(text)) - _NAME_FIELDS:
-            value = self.ctx.get(name)
+            value = self._payee() if name == "payee" else self.ctx.get(name)
             extra[name] = "" if value is None else value
         return self.sponsors.names.fill(text, **extra)
+
+    def _payee(self):
+        """Who a purchase of the target pays: "the house account 0.0.N" for a BOT ghost, "ANY-4HJ's account 0.0.N"
+        for a person's listing, "RIA's record book" on the mock board (no account named)."""
+        target, pay_to = self.ctx.get("target") or "", self.ctx.get("target_pay_to")
+        if not target:
+            return ""
+        if target.startswith("BOT-"):
+            return f"the house account {pay_to}" if pay_to else "the house account"
+        return f"{target}'s account {pay_to}" if pay_to else f"{target}'s record book"
 
     # ---- what the app and the controller call ----------------------------------------------
 
@@ -147,11 +195,16 @@ class Flow:
         if self.outcomes_open:
             return self._press_in_list(event)
         if event in ("up", "down"):
+            move = -1 if event == "up" else 1
             if self.state.name == "hub":
-                move = -1 if event == "up" else 1
                 self.hub_index = max(0, min(self.hub_count - 1, self.hub_index + move))
+            elif self.state.name in _CHAIN_STATES and self.ctx["chain"]:
+                self.ctx["chain_i"] = (self.ctx.get("chain_i", 0) + move) % len(self.ctx["chain"])
             return None
         if event == "square":
+            if self.state.name in _BOARD_STATES:     # Humans only: the board hides non-human rows (YOU stay)
+                self.ctx["humans_only"] = not self.ctx.get("humans_only")
+                return None
             # Mock only, and allowed mid-call: the in-flight steps' outcomes (a sponsor down, a
             # changed listing, a late payment) can only be reached while their call runs.
             self._open_list()
@@ -191,6 +244,11 @@ class Flow:
         self.ms_in_state += dt_ms
         if self.outcomes_open:
             return None
+        auto = self.state.auto_ms
+        if auto is not None and self.ms_in_state >= auto and "auto" in self.state.on:
+            return self._enter(self.state.on["auto"])
+        if self._chain_pay is not None and self.state.name in _CHAIN_STATES:
+            self._chain_refresh()
         if self._call is not None:
             self._show_request()  # a real adapter's code and link arrive a moment after begin()
             result = self._call.poll()
@@ -226,6 +284,8 @@ class Flow:
         """Screens that look at the ledger or the board first, and may land somewhere else."""
         if name == "board":
             return _BOARD_CASES.get(self.ctx.get("board_case"), "board")
+        if name == "target" and self.state.name in _BOARD_STATES and self._scouts():
+            return "scout"
         if name in _BOOK_RETURNS and self.ledger.book is None:
             self._after_book = _BOOK_RETURNS[name]
             return "need_book"
@@ -234,11 +294,18 @@ class Flow:
         if name == "buy_check":
             # The seller is fixed here for the whole purchase and the race after it.
             self._seller = self.ctx.get("target") or None
+            self._board_target = None            # a scout's pick, if any, is the purchase now
+            self._clear_chain()
             if owns(self.ledger, self.game, self._seller):
                 return "buy_load"  # already paid for: no check, no charge
             if budget_left(self.ledger, self.today()) < GHOST_PRICE:
                 return "buy_budget"
         return name
+
+    def _scouts(self):
+        """The scout picks the ghost: the sponsors run one, and there is a best of YOU's to compare and a book."""
+        return (bool(getattr(self.sponsors, "scouts", False)) and self.ctx.get("best_frames") is not None
+                and bool(self.ledger.book))
 
     def _enter(self, name, data=None):
         name = self._route(name)
@@ -271,7 +338,29 @@ class Flow:
     def _arrive(self, name, previous, data):
         """The ledger effects and commands of entering a state."""
         led = self.ledger
+        if name in _BOARD_STATES:                         # a new look: no pick and no excuse from before
+            self.ctx["scout_down"] = ""
+            self.ctx.update(dict.fromkeys(_SCOUT_KEYS))
+            if previous == "scout_pick" and self._board_target is not None:
+                self.ctx.update(self._board_target)       # Circle on the pick: the board's own target again
+            self._board_target = None
+        elif name == "scout":
+            self.ctx["scout_down"] = ""
+            self.ctx.update(dict.fromkeys(_SCOUT_KEYS))
+        elif name == "target":
+            self.ctx["scout_down"] = SCOUT_DOWN if previous == "scout" else ""
+        elif name == "ls_scan":
+            self._clear_chain()
+            self.ctx["record_line"] = ""
+        elif name == "id_taken":
+            if isinstance(data.get("book"), str) and BOOK.fullmatch(data["book"]):
+                self.ctx["other_book"] = data["book"]   # whose console it is, as World's bridge said
+        elif name == "buy_suspended":
+            why = REFUSED_WHY.get(data.get("why"), REFUSED_ELSE)
+            self.ctx["refused_why"] = why.format(book=led.book or "your record book")
         if name == "id_done":
+            if isinstance(data.get("console"), str):
+                self.ctx["console_tag"] = data["console"]
             if data.get("book"):              # a real record book: World's, one per person
                 led.book = data["book"]
             elif led.book is None:
@@ -328,8 +417,17 @@ class Flow:
             self._jti = data.get("jti", "")
             # On screen only the mock's made-up id: a real approval's id is never shown.
             self.ctx["jti"] = self._jti if self.sponsors.mocked("world") else ""
+        if step == "scout":
+            if result.ok:
+                nxt = "scout_pick" if self._picked(data) else self.state.on["timeout"]
+            else:
+                nxt = result.failure if result.failure in _SCOUT_FAILURES else self.state.on["timeout"]
+        if result.ok and step == "record":
+            self._chain_record(data)
+        if result.ok and step == "publish":
+            self._chain_publish(data)
         if result.ok and step == "load_ghost" and data.get("ghost_log"):
-            self.ctx["ghost_log"] = data["ghost_log"]   # a real target's log, checked: what the race draws her from
+            self.ctx["ghost_log"] = data["ghost_log"]   # a real target's log, checked: what the race draws it from
         if result.ok and step == "pay":
             charged = self._charge(data.get("receipt", ""))
             if not charged and not owns(self.ledger, self.game, self._seller):
@@ -337,6 +435,8 @@ class Flow:
                 # buy_load and an empty budget to buy_budget. Kept so a ghost that was neither
                 # paid for nor owned is never handed over.
                 nxt = "buy_budget"
+            else:
+                self._chain_paid(data)
         return self._enter(nxt, data)
 
     def _late_answer(self, step, result):
@@ -348,6 +448,8 @@ class Flow:
             if not receipt:
                 return None
             self._charge(receipt, late=True)
+            if result.ok:
+                self._chain_paid(data)
         elif not result.ok:
             return None
         return self._enter(self.state.on["ok"])
@@ -361,6 +463,120 @@ class Flow:
         self.ctx["receipt"] = receipt
         self._save()
         return True
+
+    # ---- the scout's pick ------------------------------------------------------------------------
+
+    def _picked(self, data):
+        """The scout's pick (the adapter's checked answer) as the target: True when it named one to buy. The board's
+        own target is kept to put back if Circle stops the purchase."""
+        need = ("scout", "seller", "listing", "run", "log_h", "frames", "time", "reason", "by")
+        if not all(data.get(key) for key in need) or type(data["frames"]) is not int:
+            return False
+        if self._board_target is None:
+            self._board_target = {key: self.ctx.get(key) for key in _TARGET_KEYS}
+        seller, you = data["seller"], data.get("you_frames")
+        rank = next((row.rank for row in self.ctx.get("board_rows") or () if row.name == seller and not row.you), None)
+        self.ctx.update(target=seller, target_time=data["time"], target_frames=data["frames"],
+                        target_run=data["run"], target_listing=data["listing"], target_log_h=data["log_h"],
+                        target_pay_to=data.get("pay_to"), new_rank=ordinal(rank),
+                        gap="%.1f s" % ((you - data["frames"]) / 60) if type(you) is int and you > data["frames"]
+                        else "",
+                        scout_id=data["scout"], scout_reason=data["reason"], scout_model=data.get("model"),
+                        scout_note=data.get("note"), you_laps=data.get("you"), it_laps=data.get("it"),
+                        scout_lap=data.get("lap"), you_time=data.get("you_time"),
+                        scout_by=self._by_line(data))
+        self._seller = seller
+        return True
+
+    @staticmethod
+    def _by_line(data):
+        if data["by"] == "model" and data.get("model"):
+            return f"Picked by {data['model']} on {GROQ}"
+        note = data.get("note")
+        return "Picked by PB's rule: the ghost just ahead" + (f" ({note})" if note else "")
+
+    # ---- the chain ids of the finished steps -----------------------------------------------------
+
+    def _allowed(self, url):
+        """url when the console may draw it as a QR code: HashScan's testnet, or the Arkiv explorer the service's
+        /arkiv/config named. None otherwise (the row shows its text only)."""
+        if not (isinstance(url, str) and len(url) <= LINK_MAX and url.isprintable() and " " not in url):
+            return None
+        origin = getattr(self.sponsors, "explorer_origin", None)
+        if url.startswith(HASHSCAN) or (isinstance(origin, str) and origin and url.startswith(origin + "/")):
+            return url
+        return None
+
+    def _row(self, label, value, url=None):
+        return {"label": label, "value": value, "url": self._allowed(url)}
+
+    def _clear_chain(self):
+        self.ctx["chain"], self.ctx["chain_i"] = [], 0
+        self._chain_pay = None
+
+    def _chain_record(self, data):
+        """The listing's HCS record: "Hedera LISTING #41" / "topic 0.0.N · tx 0.0.N@s"; "Recorded" while mocked."""
+        third = self.sponsors.names.third
+        if self.sponsors.mocked("third"):
+            self.ctx["record_line"] = "Recorded"
+            return
+        seq = data.get("seq")
+        label = f"{third} LISTING #{seq}" if type(seq) is int else f"{third} LISTING"
+        self.ctx["record_line"] = "Recorded: " + label
+        parts = [f"topic {data['topic']}" if isinstance(data.get("topic"), str) else "",
+                 f"tx {_tx_id(data['tx'])}" if isinstance(data.get("tx"), str) else ""]
+        self.ctx["chain"] = [self._row(label, " \u00b7 ".join(x for x in parts if x), data.get("hashscan"))]
+        self.ctx["chain_i"] = 0
+
+    def _chain_publish(self, data):
+        """The Arkiv rows: the listing's entity key and the write's transaction, each with its explorer link."""
+        if self.sponsors.mocked("board"):
+            return
+        board, links = self.sponsors.names.board, data.get("explorer") or {}
+        rows = [self._row(f"{board} {name}", _short(data[key]), links.get(key))
+                for name, key in (("listing", "listing"), ("tx", "tx")) if isinstance(data.get(key), str)]
+        self.ctx["chain"] = list(self.ctx.get("chain") or []) + rows
+
+    def _chain_paid(self, data):
+        """The payment's rows: its INTENT on HCS, the payment itself, its RECEIPT (late: "waiting for the mirror"
+        until chain_update() has it)."""
+        if self.sponsors.mocked("third") or not data.get("receipt"):
+            return
+        self._chain_pay = dict(data)
+        self._chain_pay_rows()
+        rows = self.ctx["chain"]
+        self.ctx["chain_i"] = next((i for i, row in enumerate(rows) if row["label"].startswith("Paid")), 0)
+
+    def _chain_pay_rows(self):
+        data, third = self._chain_pay, self.sponsors.names.third
+        rows = []
+        intent = data.get("intent")
+        if isinstance(intent, dict):
+            rows.append(self._msg_row(f"{third} INTENT", intent))
+        rows.append(self._row("Paid %.2f USDC" % (GHOST_PRICE / 100), "tx " + _tx_id(data["receipt"]),
+                              data.get("hashscan")))
+        if "receipt_msg" in data:
+            msg = data["receipt_msg"]
+            rows.append(self._msg_row(f"{third} RECEIPT", msg) if isinstance(msg, dict)
+                        else self._row(f"{third} RECEIPT", "waiting for the mirror"))
+        self.ctx["chain"] = rows
+        self.ctx["chain_i"] = min(self.ctx.get("chain_i", 0), len(rows) - 1)
+
+    def _msg_row(self, label, msg):
+        seq, tx = msg.get("seq"), msg.get("tx")
+        return self._row(f"{label} #{seq}" if type(seq) is int else label,
+                         "tx " + _tx_id(tx) if isinstance(tx, str) else "", msg.get("hashscan"))
+
+    def _chain_refresh(self):
+        """The payment's HCS messages as the adapter last read them: the RECEIPT lands after the payment."""
+        update = getattr(self.sponsors, "chain_update", lambda: None)()
+        if not isinstance(update, dict) or update.get("receipt") != self._chain_pay.get("receipt"):
+            return
+        fresh = {key: update[key] for key in ("intent", "receipt_msg") if key in update}
+        if all(self._chain_pay.get(key) == value for key, value in fresh.items()):
+            return
+        self._chain_pay.update(fresh)
+        self._chain_pay_rows()
 
     # ---- the Square list ---------------------------------------------------------------------
 
@@ -423,6 +639,10 @@ class Flow:
             self.ctx["board_rows"] = mark_you(self.ctx["board_rows"],
                                               led.credential if led.book and led.world_verified else None)
 
+    def refresh(self):
+        """The ledger changed outside the flow (the glue followed the console's binding): the context follows it."""
+        self._sync()
+
     def _receipt_text(self):
         """The receipt row of a bought ghost: "mock receipt" while Hedera is mocked (the mock's ids stand for no
         payment), else the payment's own transaction id as HashScan finds it, its nanoseconds cut
@@ -430,9 +650,7 @@ class Flow:
         if self.sponsors.mocked("third"):
             return "mock receipt"
         bought = self.ledger.purchases.get(f"{self.game}:{self._seller}") or {}
-        receipt = str(bought.get("receipt") or self.ctx.get("receipt") or "")
-        account, at, when = receipt.partition("@")
-        return account + at + when.split(".")[0] if at else receipt
+        return _tx_id(str(bought.get("receipt") or self.ctx.get("receipt") or ""))
 
     def _run_frames(self):
         """The run a listing is about: the one just raced, else the best."""
@@ -444,13 +662,26 @@ class Flow:
         game's name as people read it (World App shows it on a listing approval); `arcade_id` the
         arcade game's id (runs and boards are named by it); `frames` the run a listing is about.
         A real board's target names its run, listing, log and time; `receipt` is what was paid
-        for her ghost (a listed ghost's key is released against it)."""
+        for the ghost (a listed ghost's key is released against it); `scout_id` the scout's pick this purchase
+        follows, if any (INTENT on HCS then says which model picked it and why)."""
         bought = self.ledger.purchases.get(f"{self.game}:{self._seller}") or {}
         return {"game": self.game, "title": self.ctx.get("game"), "seller": self._seller,
                 "price": GHOST_PRICE, "book": self.ledger.book, "jti": self._jti,
                 "run_time": self.ctx.get("run_time"), "frames": self._run_frames(),
+                "best_frames": self.ctx.get("best_frames"),
                 "arcade_id": self.ctx.get("arcade_id"), "target_run": self.ctx.get("target_run"),
                 "target_listing": self.ctx.get("target_listing"),
                 "target_log_h": self.ctx.get("target_log_h"),
-                "target_frames": self.ctx.get("target_frames"),
+                "target_frames": self.ctx.get("target_frames"), "scout_id": self.ctx.get("scout_id"),
                 "receipt": bought.get("receipt") or self.ctx.get("receipt")}
+
+
+def _tx_id(text):
+    """A Hedera transaction id as HashScan finds it, its nanoseconds cut ("0.0.9185802@1762412349")."""
+    account, at, when = text.partition("@")
+    return account + at + when.split(".")[0] if at else text
+
+
+def _short(key):
+    """An Arkiv key or hash as "0x23bf\u2026af44"."""
+    return key[:6] + "\u2026" + key[-4:] if len(key) > 12 else key

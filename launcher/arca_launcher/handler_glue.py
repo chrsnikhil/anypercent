@@ -10,7 +10,12 @@ quiet on Home.
 The board is Arkiv's when the sponsors say it is real (sponsors.board(): its run rows, read in the background) and the
 mock one around the game's shipped test log otherwise. On a real board the target is a real run: her ghost is the log
 load_ghost checked and kept (never the test log), a race is judged against her row's time, and attract mode's run to
-beat and the record book's run count come from the rows too."""
+beat and the record book's run count come from the rows too.
+
+One console, one person: the ledger follows the console's binding as World's bridge says it (_sync_console), checked
+every frame (a lock read; the bridge is asked on World's own worker). Bound to a book: the ledger's book is that book,
+World-verified. Released: no book (purchases and listings stay in the ledger file). Unbound: the ledger's book, if any,
+is kept ("not linked yet", and the service spends nothing from it until the owner links the console)."""
 import json
 import logging
 import os
@@ -22,6 +27,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import coach, settings
 from .handler import board, ledger
+from .handler.board import ordinal
 from .handler.flow import CloseHandler, Flow
 from .model import Screen
 
@@ -41,13 +47,6 @@ _LOG_H = re.compile(r"[0-9a-f]{64}")
 GHOST_LOOKS = {"MDGP": "the *cyan kart*", "ZIPG": "the *pale Zip*", "RUSH": "the *see-through runner*",
                "SEGF": "the *teal phantom*", "SHIP": "the *see-through runner*"}
 log = logging.getLogger(__name__)
-
-
-def ordinal(n):
-    """1 -> "1st", 12 -> "12th", 23 -> "23rd"; None -> ""."""
-    if n is None:
-        return ""
-    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
 
 
 def _today():
@@ -95,6 +94,7 @@ class HandlerGlue:
         self._read_rows = None             # the real board's rows the open flow's board was built from
         self._real_ghosts = {}             # a real target's checked log -> her ghost bytes, drawn once
         self._times_ms = BOARD_TIMES_MS    # since attract mode's runs to beat were last taken from the real boards
+        self._binding = None               # the console's binding the ledger last followed
         # A sale counted before a restart, never told: PB tells it now. Only the mock counts sales, so a real board
         # never tells one (it stays in the ledger for a mocked run again).
         if self._ledger.pending_sale is not None and not self._real():
@@ -135,8 +135,10 @@ class HandlerGlue:
         real = self._real()
         if real:
             self._board_times(dt)
+        self._sync_console()
         if nav.screen is Screen.HANDLER:
             flow = nav.handler
+            flow.ctx.update(self._console_ctx())
             if self._raced and flow.state.name == "hub":
                 self._raced = False
                 flow.ctx.update(self._context(self._game), run_frames=None)
@@ -180,6 +182,46 @@ class HandlerGlue:
         if pattern is not None:
             self.app.inputs.rumble(*pattern)
 
+    # ---- one console, one person -------------------------------------------------------------------------------------
+    def _binding_now(self):
+        read = getattr(self.app.sponsors, "console_state", None)
+        try:
+            return read() if read is not None else None
+        except Exception:                          # never a crash over a status read
+            log.exception("console binding unavailable")
+            return None
+
+    def _sync_console(self):
+        """The ledger follows the console's binding whenever the bridge's answer changes, and is saved."""
+        binding = self._binding_now()
+        if binding is None or binding == self._binding:
+            return
+        self._binding = binding
+        led, state, book = self.ledger, binding.get("state"), binding.get("book")
+        if state == "bound" and book and led.book != book:
+            led.book, led.world_verified = book, True
+            led.credential = binding.get("credential") or led.credential
+            log.info("this console is linked to %s: its record book now", book)
+        elif state == "released" and (led.book is not None or led.world_verified):
+            led.book, led.world_verified = None, False
+            log.info("this console was released: no record book on it now")
+        else:
+            return
+        ledger.save(self.path, led)
+        flow = self.app.nav.handler
+        if flow is not None:
+            flow.refresh()
+
+    def _console_ctx(self):
+        """The console's tag and what it is linked to, for "My record book" (nothing while World is mocked)."""
+        binding = self._binding_now()
+        if binding is None:
+            return {}
+        state = binding.get("state")
+        line = (f"linked to {binding.get('book')}" if state == "bound" else "released" if state == "released"
+                else "not linked yet")
+        return {"console_tag": binding.get("tag") or "", "console_line": line}
+
     # ---- the context ------------------------------------------------------------------------------------------------
     def _context(self, game):
         """Every placeholder the app fills for game, built fresh (board, best, runs, split). Starts the comparison."""
@@ -192,6 +234,7 @@ class HandlerGlue:
                "sold": sum(x.get("sold", 0) for x in self.ledger.listings),
                "runs": str(sum(self._runs(a) for a in arcades)),
                "ghost_look": GHOST_LOOKS.get(arcade.get("id"), "the *see-through runner*") if arcade else "the ghost"}
+        ctx.update(self._console_ctx())
         if arcade is None:
             self._job = None
             ctx.update(self._board_ctx(None, None, None), log_frames=None, best_frames=None, run_time="", split="")
@@ -246,7 +289,7 @@ class HandlerGlue:
             return {"board_rows": b.rows, "board_case": b.case, "target": t.name if t else "",
                     "target_time": coach.fmt_time(t.frames) if t else "", "target_frames": t.frames if t else None,
                     "target_run": t.key if t else None, "target_listing": t.listing if t else None,
-                    "target_log_h": run.log_h if run else None,
+                    "target_log_h": run.log_h if run else None, "target_pay_to": run.pay_to if run else None,
                     "gap": "%.1f s" % ((mine - t.frames) / 60) if t and mine is not None and mine > t.frames else "",
                     "rank": _you(b), "new_rank": ordinal(t.rank) if t else ""}
         b = self._board(log_frames, best_frames)
@@ -254,7 +297,7 @@ class HandlerGlue:
         return {"board_rows": b.rows, "board_case": b.case, "target": board.SELLER if b.target else "",
                 "target_time": coach.fmt_time(log_frames) if log_frames is not None else "",
                 "target_frames": log_frames if b.target else None, "target_run": None, "target_listing": None,
-                "target_log_h": None, "gap": "%.1f s" % ((best_frames - log_frames) / 60) if behind else "",
+                "target_log_h": None, "target_pay_to": None, "gap": "%.1f s" % ((best_frames - log_frames) / 60) if behind else "",
                 "rank": _you(b), "new_rank": ordinal(b.target.rank) if b.target else ""}
 
     def _fresh_board(self, flow):

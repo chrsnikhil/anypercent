@@ -1140,3 +1140,75 @@ def test_the_real_app_draws_the_handler(tmp_path):
     out = snapshot(app.display.renderer, "handler_app_hub")
     assert distinct_colours(out) > 3
     app.close()
+
+
+# ---- one console, one person: the ledger follows the console's binding --------------------------------------------
+
+class BoundSponsors(MockSponsors):
+    """The mock, with World's bridge saying what this console is bound to (binding: set by the test)."""
+
+    def __init__(self, clock_ms):
+        super().__init__(clock_ms)
+        self.binding = None
+
+    def console_state(self):
+        return dict(self.binding) if self.binding is not None else None
+
+
+def bound_app(tmp_path, book=None, **kw):
+    app = make(tmp_path, book=book, **kw)
+    app.sponsors = BoundSponsors(lambda: app.clock[0])
+    return app
+
+
+def test_the_ledger_follows_the_consoles_binding(tmp_path):
+    app = bound_app(tmp_path, book=None)
+    app.frame(16)
+    assert app.handler.ledger.book is None                           # no answer yet: nothing changes
+    app.sponsors.binding = {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb"}
+    app.frame(16)
+    led = L.load(str(tmp_path / "handler.json"))
+    assert (led.book, led.world_verified, led.credential) == ("ANY-6PS", True, "Orb")   # a lost ledger recovered
+    app.handler.ledger.purchases["MDGP:BOT-A2"] = {"price": 10, "receipt": "0.0.1@2", "at": 0}
+    L.save(str(tmp_path / "handler.json"), app.handler.ledger)
+    app.sponsors.binding = {"tag": "C-7QZP", "book": None, "state": "released", "credential": None}
+    app.frame(16)
+    led = L.load(str(tmp_path / "handler.json"))
+    assert (led.book, led.world_verified) == (None, False) and "MDGP:BOT-A2" in led.purchases   # purchases stay
+    app.sponsors.binding = {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb"}
+    app.frame(16)
+    assert L.load(str(tmp_path / "handler.json")).book == "ANY-6PS"   # linked again
+
+
+def test_an_unlinked_console_keeps_a_book_from_before(tmp_path):
+    app = bound_app(tmp_path, book="ANY-6PS")
+    app.sponsors.binding = {"tag": "C-7QZP", "book": None, "state": "unbound", "credential": None}
+    app.frame(16, [A.Y])
+    flow = app.nav.handler
+    assert app.handler.ledger.book == "ANY-6PS"
+    assert (flow.ctx["console_tag"], flow.ctx["console_line"]) == ("C-7QZP", "not linked yet")
+
+
+def test_my_record_book_names_the_console_and_follows_a_release(tmp_path, monkeypatch):
+    app = bound_app(tmp_path, book="ANY-6PS")
+    app.sponsors.binding = {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb"}
+    app.frame(16, [A.Y])
+    flow = app.nav.handler
+    flow.pick(2)
+    assert flow.state.name == "book_view"
+    drawn, real = [], app.display.gfx.text
+    monkeypatch.setattr(app.display.gfx, "text", lambda s, *a, **k: (drawn.append(s), real(s, *a, **k))[1])
+    app.frame(16)
+    assert flow.ctx["console_line"] == "linked to ANY-6PS" and flow.ctx["book"] == "ANY-6PS"
+    assert any("C-7QZP" in s for s in drawn) and any("linked to ANY-6PS" in s for s in drawn)
+    app.sponsors.binding = {"tag": "C-7QZP", "book": None, "state": "released", "credential": None}
+    drawn.clear()
+    app.frame(16)
+    assert flow.ctx["book"] == "" and flow.ctx["console_line"] == "released"
+    assert "No record book on this console" in drawn
+
+
+def test_with_world_mocked_there_is_no_console_line(tmp_path):
+    app = make(tmp_path)
+    app.frame(16, [A.Y])
+    assert "console_tag" not in app.nav.handler.ctx and app.handler.ledger.book == "ANY-7QZ"

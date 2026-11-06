@@ -2,7 +2,8 @@
 played by RIA) surrounded by mock runners who never sell. Field order on Row is pinned by a
 controller ruling that amends the brief's own "YOU directly below RIA" claim, which contradicts
 the brief's own offsets (ARJUN at log+170 sits between RIA and a YOU at log+214)."""
-from arca_launcher.handler.board import BOT, MOCK_NAMES, SELLER, Board, Row, build, build_real, mark_you
+from arca_launcher.handler.board import (BOT, MOCK_NAMES, SELLER, Board, Row, build, build_real, humans_only, mark_you,
+                                         ordinal, tier_counts)
 from arca_launcher.handler.sponsors import RunRow
 
 
@@ -284,3 +285,35 @@ def test_your_own_listing_with_an_account_is_still_never_yours_to_buy():
     you = next(row for row in board.rows if row.you)
     assert (you.frames, you.listed, you.sells, you.target) == (6100, True, False, False)
     assert board.case == "nobody_ahead"                                 # K2P's 6000 is not listed
+
+
+# ---- tiers: HUMAN, BOT, OPEN; Humans only ----------------------------------------------------------------------------
+
+def test_every_row_has_a_tier_and_a_bot_is_never_human():
+    rows = ROWS + (run("BOT-A2", 6230, book=False, listed=True, human=True, pay_to="0.0.7700001"),)
+    board = build_real(rows, 6290, "ANY-6PS", "Orb")
+    tiers = {row.name: row.tier for row in board.rows}
+    assert tiers == {"ANY-K2P": "human", "ANY-7QZ": "human", "TEAM": "open", "ANY-2KD": "human", "BOT-A2": "bot",
+                     "BOT-7": "bot", "YOU": "human", "ANY-9MX": "human"}
+    bot = next(row for row in board.rows if row.name == "BOT-A2")
+    assert not bot.human and bot.credential is None and bot.sells    # its row said human: still never HUMAN
+    assert tier_counts(board.rows) == {"human": 5, "bot": 2, "open": 1}
+    you = next(row for row in build_real(rows, 6290, None, None).rows if row.you)
+    assert you.tier == "open"                                        # YOU without a World proof behind the book
+
+
+def test_humans_only_keeps_you_and_the_human_rows_and_never_moves_the_target():
+    board = build_real(ROWS + (run("BOT-A2", 6230, book=False, listed=True),), 6290, None, None)
+    shown = humans_only(board.rows)
+    assert [row.name for row in shown] == ["ANY-K2P", "ANY-7QZ", "ANY-2KD", "YOU", "ANY-9MX"]
+    assert [row.rank for row in shown] == [1, 2, 4, 7, 8]            # the full board's places
+    assert board.target.name == "BOT-A2"                             # the target is the full board's
+    mock = build(6070, 6290)
+    assert [row.name for row in humans_only(mock.rows)] == ["KIRAN", "MEERA", "RIA", "ARJUN", "YOU", "ZOYA", "DEV"]
+    assert tier_counts(mock.rows) == {"human": 6, "bot": 1, "open": 1}
+
+
+def test_ordinal():
+    assert [ordinal(n) for n in (1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 101, 111)] == [
+        "1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd", "101st", "111th"]
+    assert ordinal(None) == ""

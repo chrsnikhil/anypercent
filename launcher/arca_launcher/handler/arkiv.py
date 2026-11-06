@@ -8,6 +8,8 @@ one and runs them.
 - Two steps need our service, on the World bridge's /arkiv/* routes: publish (the checker replays the run and writes its
   run and listing rows, after a World approval) and a listed ghost (its key never leaves the service).
 - sales never reports a sale: real sales arrive with Hedera, and a real board shows no made-up ones.
+- A run row's lap times (splits) come with it and are kept in the cache; a listing is a person's (book) or the house's
+  BOT ghost (label). The explorer's origin comes from the service's /arkiv/config: only links there are ever drawn.
 
 All network work and every replay runs on one background thread. begin(), poll(), status() and board() only read and
 mark what that thread last saw, so a slow or missing Arkiv never holds up a frame. The thread reads every arcade game's
@@ -59,7 +61,10 @@ _HASH = re.compile(r"[0-9a-f]{64}")
 _ROW_FIELDS = {"key": (str, False), "game": (str, False), "title": (str, False), "frames": (int, False),
                "runner": (str, False), "book": (str, True), "label": (str, True), "human": (bool, False),
                "credential": (str, True), "log_h": (str, False), "rules": (int, False),
-               "expires_block": (int, False), "listing": (str, True), "price": (str, True), "pay_to": (str, True)}
+               "expires_block": (int, False), "listing": (str, True), "price": (str, True), "pay_to": (str, True),
+               "splits": (list, True)}
+LINK_MAX = 300                # an explorer link's length, as the service builds them (an Arkiv tx's is about 106)
+_ORIGIN = re.compile(r"https://[a-z0-9.-]{1,200}(:[0-9]{1,5})?")
 
 
 class _Job:
@@ -137,6 +142,7 @@ class ArkivSponsors:
         self._job = None           # the latest Arkiv step
         self._config_due = 0       # when /arkiv/config is next asked; None once it answered
         self.pin_differs = None    # what the service's /arkiv/config says that this console's pin does not (or None)
+        self.explorer_origin = None   # the Arkiv explorer's https origin /arkiv/config names: links there may be drawn
         self._wanted_ms = clock_ms()
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -156,8 +162,24 @@ class ArkivSponsors:
     def approvals(self):
         return self._inner.approvals
 
+    scouts = False  # PB's scout runs only with Hedera real (hedera.py)
+
     def mocked(self, service: str) -> bool:
         return False if service == "board" else self._inner.mocked(service)
+
+    @property
+    def console_id(self):
+        """This console's id, World's (None while World is mocked)."""
+        return getattr(self._inner, "console_id", None)
+
+    def console_state(self):
+        """This console's binding, as World's bridge last said it (None while World is mocked)."""
+        read = getattr(self._inner, "console_state", None)
+        return read() if read is not None else None
+
+    def chain_update(self):
+        """Hedera's late chain ids: the Hedera adapter's. Here there are none."""
+        return None
 
     def status(self) -> dict[str, str]:
         out = dict(self._inner.status())
@@ -256,9 +278,11 @@ class ArkivSponsors:
                 differs.append("no checker")
             if reply.get("season") != self._season:
                 differs.append(f"season {reply.get('season')!r}")
+        origin = _explorer_origin(reply) if isinstance(reply, dict) else None
         with self._lock:
             self._config_due = None
             self.pin_differs = ", ".join(differs) or None
+            self.explorer_origin = origin
         if differs:
             log.warning("Arkiv: the service writes under %s, but this console reads %s season %s: its listings "
                         "will not show on this board", self.pin_differs, arkiv_rpc.eip55(self._checker), self._season)
@@ -486,7 +510,7 @@ class ArkivSponsors:
         body = listing_body(p)
         if body is None:
             return None
-        path = self._run_log(body["game"], body["frames"])
+        path = self.run_log_path(body["game"], body["frames"])
         if path is None:
             log.info("Arkiv publish: no %s log of %d frames on this console", body["game"], body["frames"])
             return None
@@ -499,7 +523,7 @@ class ArkivSponsors:
     def run_log_hash(self, game, frames):
         """sha256 (hex) of this console's log of game's run of frames, as publish would send it; None if it is not here.
         It reads the disk: only a worker thread calls it (the Hedera record's copy check), never a frame."""
-        path = self._run_log(game, frames)
+        path = self.run_log_path(game, frames)
         if path is None:
             return None
         try:
@@ -509,8 +533,9 @@ class ArkivSponsors:
             return None
         return hashlib.sha256(data).hexdigest() if LOG_MIN <= len(data) <= LOG_MAX else None
 
-    def _run_log(self, game, frames):
-        """runs_dir/best/<ID>.acl when that best is this time, else the queued run of this time; None if neither."""
+    def run_log_path(self, game, frames):
+        """runs_dir/best/<ID>.acl when that best is this time, else the queued run of this time; None if neither. It
+        reads the disk: only a worker thread calls it (publish, the record's copy check, the scout), never a frame."""
         best = os.path.join(self._runs_dir, "best", game)
         if _time_frames(best + ".json") == frames and os.path.isfile(best + ".acl"):
             return best + ".acl"
@@ -630,9 +655,14 @@ def _time_frames(path):
 
 def _cached_row(row):
     """A RunRow from the cache file, or None when the entry is not one. A row cached before listings named a payout
-    account has no pay_to: not for sale."""
+    account has no pay_to: not for sale; one cached before lap times, or with laps that do not add up, has none."""
     if isinstance(row, dict) and "pay_to" not in row:
         row = dict(row, pay_to=None)
+    if isinstance(row, dict):
+        laps = row.get("splits")
+        good = (isinstance(laps, list) and 0 < len(laps) <= 4 and all(type(x) is int and x > 0 for x in laps)
+                and sum(laps) == row.get("frames"))
+        row = dict(row, splits=laps if good else None)
     if not isinstance(row, dict) or set(row) != set(_ROW_FIELDS):
         return None
     for name, (kind, optional) in _ROW_FIELDS.items():
@@ -643,7 +673,7 @@ def _cached_row(row):
             and (row["listing"] is None or _KEY.fullmatch(row["listing"])) and (row["book"] or row["label"])
             and (row["pay_to"] is None or PAY_TO.fullmatch(row["pay_to"]))):
         return None
-    return RunRow(**row)
+    return RunRow(**dict(row, splits=tuple(row["splits"]) if row["splits"] is not None else None))
 
 
 def _checked(reply):
@@ -665,4 +695,31 @@ def _published(reply):
     keys = [data.get(name) for name in ("run", "listing", "tx")]
     if not all(isinstance(value, str) and _KEY.fullmatch(value.lower()) for value in keys):
         return Result(ok=False, failure="ls_publish_fail")
-    return Result(ok=True, data={"run": keys[0].lower(), "listing": keys[1].lower(), "tx": keys[2].lower()})
+    out = {"run": keys[0].lower(), "listing": keys[1].lower(), "tx": keys[2].lower()}
+    links = data.get("explorer")
+    if isinstance(links, dict):                     # the service's explorer links: drawn only on the allowed origin
+        links = {name: links[name] for name in ("tx", "run", "listing") if _link(links.get(name))}
+        if links:
+            out["explorer"] = links
+    return Result(ok=True, data=out)
+
+
+def _link(value):
+    """An https link short enough to draw as a QR code, one printable line."""
+    return (isinstance(value, str) and value.startswith("https://") and len(value) <= LINK_MAX
+            and value.isprintable() and " " not in value)
+
+
+def _explorer_origin(config):
+    """The Arkiv explorer's https origin from /arkiv/config's two link templates (explorer_tx, explorer_entity): None
+    when neither is an https link, or the two name different hosts."""
+    origins = set()
+    for name in ("explorer_tx", "explorer_entity"):
+        value = config.get(name)
+        if value is None:
+            continue
+        m = _ORIGIN.match(value) if isinstance(value, str) else None
+        if m is None or value[m.end():m.end() + 1] not in ("/", ""):
+            return None
+        origins.add(m.group(0))
+    return origins.pop() if len(origins) == 1 else None

@@ -26,9 +26,9 @@ class FakeClock:
 
 def test_steps_and_timeouts_match_the_brief():
     assert STEPS == ("status", "idkit_scan", "idkit_confirm", "idkit_verify", "check_listing", "pay",
-                      "load_ghost", "approve_scan", "approve", "record", "publish", "sales")
+                      "load_ghost", "approve_scan", "approve", "record", "publish", "sales", "scout")
     assert TIMEOUT_MS == {"idkit_verify": 10000, "pay": 8000, "record": 8000, "publish": 8000,
-                           "check_listing": 8000, "load_ghost": 8000}
+                           "check_listing": 8000, "load_ghost": 8000, "scout": 12000}
 
 
 def test_sponsor_names_fill_formats_placeholders_and_extras():
@@ -253,11 +253,11 @@ def test_outcomes_match_the_brief_per_step():
     assert sponsors.outcomes("idkit_confirm") == [
         Outcome("Reject", "id_rejected"), Outcome("Let it expire", "id_expired"),
         Outcome("No Selfie Check", "id_nocred"), Outcome("Same person again", "id_dup"),
-        Outcome("World down", "id_offline"),
+        Outcome("Another person's console", "id_taken"), Outcome("World down", "id_offline"),
     ]
     assert sponsors.outcomes("check_listing") == [
         Outcome("Budget used up", "buy_budget"), Outcome("Price changed", "buy_changed"),
-        Outcome("Sales suspended", "buy_suspended"),
+        Outcome("Guard says no", "buy_suspended"),
     ]
     assert sponsors.outcomes("pay") == [Outcome("Hedera down", "buy_down"),
                                          Outcome("Paid late", "buy_down", late=True)]
@@ -268,7 +268,7 @@ def test_outcomes_match_the_brief_per_step():
     ]
     assert sponsors.outcomes("record") == [Outcome("Hedera slow", "ls_record_fail"), Outcome("Copied run", "ls_copied")]
     assert sponsors.outcomes("approve_scan") == [Outcome("World down", "ls_world_down")]
-    for step in ("status", "idkit_scan", "idkit_verify", "publish", "sales", "load_ghost"):
+    for step in ("status", "idkit_scan", "idkit_verify", "publish", "sales", "load_ghost", "scout"):
         assert sponsors.outcomes(step) == [], step
 
 
@@ -314,11 +314,11 @@ def test_handler_code_has_no_network_or_sponsor_imports():
 # service (arkiv_rpc.py, arkiv.py), and Hedera through our service only (hedera.py: no Hedera SDK, key or account on
 # the console).
 REAL_ADAPTERS = {
-    "world.py": {"json", "logging", "platform", "threading", "urllib", "arca_launcher"},
+    "world.py": {"json", "logging", "platform", "re", "threading", "urllib", "arca_launcher"},
     "arkiv_rpc.py": {"functools", "json", "re", "time", "urllib", "arca_launcher"},
     "arkiv.py": {"base64", "binascii", "dataclasses", "decimal", "hashlib", "json", "logging", "os", "re",
                  "threading", "urllib", "arca_launcher"},
-    "hedera.py": {"json", "logging", "os", "re", "threading", "urllib", "arca_launcher"},
+    "hedera.py": {"base64", "json", "logging", "os", "re", "threading", "urllib", "arca_launcher"},
 }
 
 

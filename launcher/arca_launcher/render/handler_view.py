@@ -51,6 +51,19 @@ def has_outcomes(flow):
     return bool(flow.mock_rows())
 
 
+def hint_items(flow):
+    """The button hints: Cross and Circle (or "working..." while a call runs), Square's Humans only toggle on the
+    board, else its mock outcomes, and Up/Down on a chain card with more than one QR to show."""
+    items = [("", "working...")] if flow.in_flight else [("X", "OK"), ("O", "Back")]
+    if flow.state.name in ("board", "board_new"):
+        items.append(("S", "All runners" if flow.ctx.get("humans_only") else "Humans only"))
+    elif has_outcomes(flow):
+        items.append(("S", "Mock"))
+    if flow.state.card["t"] == "chain" and len(flow.ctx.get("chain") or ()) > 1:
+        items.append(("U/D", "Next QR"))
+    return items
+
+
 class HandlerView:
     def __init__(self, gfx):
         self.gfx = gfx
@@ -86,15 +99,16 @@ class HandlerView:
             hits += taps + [Hit(BOX, BOX_TAP, BOX.inflate(8, 8), 12)]
             self._effects(flow, t)
         # The fonts have no button glyphs: Cross, Circle, Square. Square still works mid-call (Ruling 9a).
-        items = [("", "working...")] if flow.in_flight else [("X", "OK"), ("O", "Back")]
-        chrome.hints(g, items + ([("S", "Mock")] if has_outcomes(flow) else []), bottom=HINTS_BOTTOM)
+        chrome.hints(g, hint_items(flow), bottom=HINTS_BOTTOM)
         self.hits = hits
 
     def _spec(self, flow):
-        """The state's card with its text filled, plus what its drawer needs from the flow."""
+        """The state's card with its text filled, plus what its drawer needs from the flow. A what row whose value is
+        only placeholders with nothing in them (the console's tag while World is mocked) is left out."""
         st, card = flow.state, flow.state.card
-        spec = {"t": card["t"], "kind": st.kind, "names": flow.sponsors.names,
-                "what": tuple((flow.fill(a), flow.fill(b)) for a, b in card.get("what", ()))}
+        what = tuple((flow.fill(a), flow.fill(b)) for a, b in card.get("what", ())
+                     if not (PLACEHOLDER_RE.findall(b) and not flow.fill(b).strip()))
+        spec = {"t": card["t"], "kind": st.kind, "names": flow.sponsors.names, "what": what}
         if "h" in card:
             spec["h"] = flow.fill(card["h"])
         rows = []
@@ -116,6 +130,9 @@ class HandlerView:
             spec["total_ms"] = min((ms for ms in lives if ms), default=0)   # the request's own life, if shorter
             spec["left_ms"] = max(0, spec["total_ms"] - flow.ms_in_state)
             spec["mock"] = flow.sponsors.mocked("world")   # a fake code: it says so
+        elif card["t"] == "pick":                   # the bar shrinks to the purchase
+            spec["total_ms"] = st.auto_ms or 0
+            spec["left_ms"] = max(0, spec["total_ms"] - flow.ms_in_state)
         elif card["t"] == "hub":                    # the flow knows which rows this game's hub has
             spec.update(rows=tuple(flow.fill(row) for row in flow.hub_rows), selected=flow.hub_index)
         elif card["t"] in ("book", "listings"):
@@ -203,7 +220,9 @@ class HandlerView:
         elif st.fx == "coin":
             for x, y in fx.coins(t):                       # under the name tags, so a coin never hides a name
                 art.coin(g, round(x), round(y))
-            for name, x in zip(("YOU", flow.fill("{target}")), WHO_X):
+            target = flow.fill("{target}")
+            payee = "HOUSE" if target.startswith("BOT-") else target   # a BOT ghost's price goes to the house account
+            for name, x in zip(("YOU", payee), WHO_X):
                 tag = pygame.Rect(x, WHO_Y, g.measure(name, 22, "pixel")[0] + 20, 26)
                 g.round_rect(tag, art.YOU_BG, 4)
                 g.text(name, 22, tag.centerx, tag.centery, weight="pixel", anchor="center")

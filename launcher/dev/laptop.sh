@@ -15,6 +15,9 @@
 # set ARCA_HEDERA=1. Without both of the above it stays mocked and the launcher's log says why.
 #   wsl -d Ubuntu-24.04 -u root -- env ARCA_WORLD_BRIDGE=http://127.0.0.1:8787 ARCA_ARKIV_CHECKER=0x... ARCA_HEDERA=1 \
 #     bash .../launcher/dev/laptop.sh
+# With World real this window is one console: its id is $SANDBOX/console-id, beside laptop-state.json and the ledger
+# (handler.json). A second window is another console only with a --state in a directory of its own (given after this
+# script's, it wins), and is unlinked until the owner runs console:link for its tag (My record book shows it).
 set -euo pipefail
 source "$(dirname "$0")/../../sandbox/00_env.sh"
 HERE="$PROJECT/launcher"

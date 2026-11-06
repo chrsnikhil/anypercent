@@ -5,6 +5,8 @@ is re-read from disk wherever a test checks that a change was saved."""
 import os
 import random
 
+import pytest
+
 from arca_launcher.handler.flow import CloseHandler, Flow, RaceTarget
 from arca_launcher.handler.ledger import GHOST_PRICE, LISTING_DAYS, Ledger, load, owns, save
 from arca_launcher.handler.mock import MockSponsors
@@ -217,9 +219,9 @@ def _square_cases():
 
 def test_every_failure_state_is_reachable_with_square(tmp_path):
     cases = _square_cases()
-    # 18 sponsor outcomes over six steps (approve's five twice: ls_approve, and ls_confirm for a
+    # 19 sponsor outcomes over six steps (approve's five twice: ls_approve, and ls_confirm for a
     # World ID approval), plus ls_cancel's own
-    assert len(cases) == 24
+    assert len(cases) == 25
     for n, (name, i, target) in enumerate(cases):
         rig = Rig(tmp_path / str(n))
         rig.flow.start(name)
@@ -352,7 +354,7 @@ def test_a_late_payment_is_charged_once(tmp_path):
     _force(rig, pick_late=True)
     # Ruling 10b: a late receipt never leaves "nothing was paid" on screen.
     assert rig.state == "buy_late"
-    assert rig.flow.line == ("Hedera was slow, but your payment to RIA did land. Her ghost is "
+    assert rig.flow.line == ("Hedera was slow, but your 0.10 USDC for RIA's ghost did land. It is "
                              "yours. Cross to load it.")
     assert rig.flow.ledger.spent == GHOST_PRICE
     receipt = rig.flow.ledger.purchases[f"{GAME}:RIA"]["receipt"]
@@ -583,7 +585,7 @@ def test_lines_are_filled_and_carry_no_braces(tmp_path):
     rig = Rig(tmp_path / "emphasis")
     rig.flow.start("board")
     assert rig.flow.line == ("Here is the *Marine Drive GP* board. You are 7th. *RIA* is 1.6 s "
-                             "ahead. Beat her and 3rd is yours.")
+                             "ahead. Beat that run and 3rd is yours.")
 
 
 # ---- one per numbered ruling that changes behaviour ----------------------------------------
@@ -851,12 +853,12 @@ def test_r8_square_list_moves_picks_and_closes(tmp_path):
     rig.flow.press("square")
     assert rig.flow.outcomes_open
     assert [label for label, _state in rig.flow.outcomes] == [
-        "Reject", "Let it expire", "No Selfie Check", "Same person again", "World down"]
+        "Reject", "Let it expire", "No Selfie Check", "Same person again", "Another person's console", "World down"]
     rig.flow.press("up")
     assert rig.flow.outcome_index == 0
     for _ in range(9):
         rig.flow.press("down")
-    assert rig.flow.outcome_index == 4
+    assert rig.flow.outcome_index == 5
     rig.flow.press("up")
     rig.flow.press("circle")
     assert not rig.flow.outcomes_open
@@ -1148,3 +1150,419 @@ def test_a_real_listing_keeps_its_rows_and_the_mocks_names_none(tmp_path):
     rig.wait(1400)
     (entry,) = rig.saved().listings
     assert "run" not in entry and "listing" not in entry
+
+
+# ---- PB's scout, the auto buy, Humans only, chain ids on screen ----------------------------------------------------
+
+LISTING_KEY, RUN_KEY, LOG_H = "0x" + "23bf" * 15 + "af44", "0x" + "12ab" * 16, "ab" * 32
+HOUSE = "0.0.7700001"
+PICK = {"scout": "s-1a2b3c4d", "seller": "BOT-A2", "label": "BOT-A2", "book": None, "listing": LISTING_KEY,
+        "run": RUN_KEY, "log_h": LOG_H, "frames": 6236, "time": "1:43.93", "it": (2248, 1994, 1994),
+        "you": (2140, 2165, 2109), "you_frames": 6414, "you_time": "1:46.90", "lap": 2,
+        "reason": "You lose 2.85 s in lap 2: BOT-A2 runs it in 33.23 s, you in 36.08 s.", "by": "model",
+        "model": "openai/gpt-oss-120b", "note": None, "pay_to": HOUSE, "human": False}
+
+
+class ScoutSponsors(SpySponsors):
+    """The mock with a scout: its "scout" call answers what `scout_answer` says (None: never)."""
+    scouts = True
+    scout_answer = Result(ok=True, data=PICK)
+
+    def begin(self, step, payload):
+        if step != "scout":
+            return super().begin(step, payload)
+        call = _ManualCall(self._clock_ms, step)
+        call.payload = payload
+        call.result = type(self).scout_answer
+        self.calls.append(call)
+        return call
+
+
+def _scout_rig(tmp_path, answer=None, **over):
+    class Answer(ScoutSponsors):
+        scout_answer = answer if answer is not None else Result(ok=True, data=PICK)
+    ctx = dict(best_frames=6414, arcade_id="MDGP", target="ANY-9MX", target_time="1:45.80", target_frames=6348,
+               target_run="0x" + "77" * 32, target_listing="0x" + "88" * 32, target_log_h="cd" * 32,
+               target_pay_to="0.0.6009900", gap="1.1 s", new_rank="2nd")
+    ctx.update(over)
+    return Rig(tmp_path, book="ANY-6PS", sponsors=Answer, **ctx)
+
+
+def test_cross_on_the_board_scouts_only_with_a_scout_a_best_and_a_book(tmp_path):
+    rig = _scout_rig(tmp_path / "scout")
+    rig.flow.start("board")
+    rig.flow.press("cross")
+    assert rig.state == "scout" and rig.sponsors.steps()[-1] == "scout"
+    payload = rig.sponsors.calls[-1].payload
+    assert (payload["book"], payload["arcade_id"], payload["frames"], payload["price"]) == ("ANY-6PS", "MDGP", 6414,
+                                                                                             GHOST_PRICE)
+    for name, rig in (("no scout", Rig(tmp_path / "none", book="ANY-6PS")),
+                      ("no best", _scout_rig(tmp_path / "nobest", best_frames=None, board_case="no_best")),
+                      ("no book", Rig(tmp_path / "nobook", book=None, sponsors=ScoutSponsors))):
+        rig.flow.start("board")
+        rig.flow.press("cross")
+        assert rig.state == "target", name
+    rig = _scout_rig(tmp_path / "direct")                          # only from the board: never from "look again"
+    rig.flow.start("buy_changed")
+    rig.flow.press("cross")
+    assert rig.state == "target"
+
+
+def test_the_scouts_pick_becomes_the_target(tmp_path):
+    rig = _scout_rig(tmp_path, board_rows=_rows_with("BOT-A2", 2))
+    rig.flow.start("board")
+    rig.flow.press("cross")
+    rig.wait(16)
+    assert rig.state == "scout_pick"
+    ctx = rig.flow.ctx
+    assert (ctx["target"], ctx["target_time"], ctx["target_frames"], ctx["target_run"], ctx["target_listing"],
+            ctx["target_log_h"], ctx["target_pay_to"]) == ("BOT-A2", "1:43.93", 6236, RUN_KEY, LISTING_KEY, LOG_H,
+                                                           HOUSE)
+    assert (ctx["scout_id"], ctx["scout_reason"], ctx["scout_model"], ctx["scout_note"]) == (
+        "s-1a2b3c4d", PICK["reason"], "openai/gpt-oss-120b", None)
+    assert (ctx["you_laps"], ctx["it_laps"], ctx["scout_lap"]) == ((2140, 2165, 2109), (2248, 1994, 1994), 2)
+    assert ctx["scout_by"] == "Picked by openai/gpt-oss-120b on Groq"
+    assert (ctx["gap"], ctx["new_rank"], ctx["you_time"]) == ("3.0 s", "2nd", "1:46.90")
+    assert rig.flow._seller == "BOT-A2"
+    assert rig.flow.line == ("My scout picked *BOT-A2*. You lose 2.85 s in lap 2: BOT-A2 runs it in 33.23 s, you in "
+                             "36.08 s. Buying in a moment; Circle stops me.")
+    assert rig.flow.fill("{payee}") == "the house account " + HOUSE
+
+
+def _rows_with(name, rank):
+    from arca_launcher.handler.board import Row
+    return (Row(rank=1, name="ANY-K2P", frames=6000, you=False, listed=False, sells=False, target=False),
+            Row(rank=rank, name=name, frames=6236, you=False, listed=True, sells=True, target=False),
+            Row(rank=3, name="YOU", frames=6414, you=True, listed=False, sells=False, target=False))
+
+
+def test_the_rules_pick_says_so(tmp_path):
+    rule = dict(PICK, by="rule", model=None, note="the model did not answer in 6 s", lap=None,
+                reason="BOT-A6 is the listed ghost just ahead of you: 1:45.42 against your 1:46.90.", seller="BOT-A6",
+                label="BOT-A6")
+    rig = _scout_rig(tmp_path, answer=Result(ok=True, data=rule))
+    rig.flow.start("board")
+    rig.flow.press("cross")
+    rig.wait(16)
+    assert rig.state == "scout_pick"
+    assert rig.flow.ctx["scout_by"] == "Picked by PB's rule: the ghost just ahead (the model did not answer in 6 s)"
+    rig = _scout_rig(tmp_path / "nonote", answer=Result(ok=True, data=dict(rule, note=None)))
+    rig.flow.start("board")
+    rig.flow.press("cross")
+    rig.wait(16)
+    assert rig.flow.ctx["scout_by"] == "Picked by PB's rule: the ghost just ahead"
+
+
+def test_the_pick_buys_by_itself_after_four_seconds(tmp_path):
+    rig = _scout_rig(tmp_path)
+    rig.flow.start("board")
+    rig.flow.press("cross")
+    rig.wait(16)
+    assert rig.state == "scout_pick"
+    rig.wait(3900)
+    assert rig.state == "scout_pick"
+    rig.wait(100)
+    assert rig.state == "buy_check"
+    payload = rig.sponsors.calls[-1].payload
+    assert (payload["seller"], payload["target_run"], payload["target_listing"], payload["target_log_h"],
+            payload["target_frames"], payload["scout_id"]) == ("BOT-A2", RUN_KEY, LISTING_KEY, LOG_H, 6236,
+                                                               "s-1a2b3c4d")
+    rig.wait(1400 + 2000 + 1200)
+    assert rig.state == "buy_done" and list(rig.flow.ledger.purchases) == [f"{GAME}:BOT-A2"]
+
+
+def test_cross_buys_now_and_circle_stops_it(tmp_path):
+    rig = _scout_rig(tmp_path / "cross")
+    rig.flow.start("board")
+    rig.flow.press("cross")
+    rig.wait(16)
+    rig.flow.press("cross")
+    assert rig.state == "buy_check"
+    rig = _scout_rig(tmp_path / "circle")
+    rig.flow.start("board")
+    rig.flow.press("cross")
+    rig.wait(16)
+    rig.wait(2000)
+    rig.flow.press("circle")
+    assert rig.state == "board"
+    assert rig.flow.ctx["target"] == "ANY-9MX" and rig.flow.ctx["target_pay_to"] == "0.0.6009900"   # the board's again
+    assert rig.flow.ctx["scout_id"] is None
+    rig.wait(8000)
+    assert rig.state == "board" and rig.flow.ledger.spent == 0
+    rig = _scout_rig(tmp_path / "list")                            # the Square list open: nothing moves under it
+    rig.flow.start("scout_pick")
+    rig.flow.outcomes_open = True
+    rig.wait(5000)
+    assert rig.state == "scout_pick"
+
+
+@pytest.mark.parametrize("answer, state", [
+    (Result(ok=False, failure="buy_budget"), "buy_budget"),
+    (Result(ok=False, failure="nobody_ahead"), "nobody_ahead"),
+    (Result(ok=False, failure="buy_suspended", data={"why": "console_not_linked"}), "buy_suspended"),
+    (Result(ok=False, failure="buy_down"), "target"),
+    (Result(ok=False, failure="something_else"), "target"),
+    (Result(ok=True, data={}), "target"),                          # an answer it can not show: the board's own target
+])
+def test_each_scout_failure_lands_on_its_screen(tmp_path, answer, state):
+    rig = _scout_rig(tmp_path, answer=answer)
+    rig.flow.start("board")
+    rig.flow.press("cross")
+    rig.wait(16)
+    assert rig.state == state
+    if state == "target":
+        assert rig.flow.ctx["target"] == "ANY-9MX"
+        assert rig.flow.line.startswith("My scout is not answering, so here is the ghost just ahead. Next run to beat")
+    if state == "buy_suspended":
+        assert rig.flow.ctx["refused_why"] == "this console is not linked to ANY-6PS"
+        assert rig.flow.line == ("ANY-9MX's listing did not pass my checks (this console is not linked to ANY-6PS), "
+                                 "so I paid nothing.")
+
+
+def test_a_scout_that_never_answers_times_out_to_the_boards_target(tmp_path):
+    class Silent(ScoutSponsors):
+        scout_answer = None
+    rig = Rig(tmp_path, book="ANY-6PS", sponsors=Silent, best_frames=6414)
+    rig.flow.start("board")
+    rig.flow.press("cross")
+    assert rig.state == "scout"
+    rig.wait(11900)
+    assert rig.state == "scout"
+    rig.wait(100)
+    assert rig.state == "target" and rig.flow.ctx["scout_down"]
+    rig.flow.press("circle")
+    rig.flow.press("cross")
+    assert rig.state == "scout" and rig.flow.ctx["scout_down"] == ""   # a new look: no old excuse
+
+
+def test_a_target_reached_without_the_scout_says_nothing_of_it(tmp_path):
+    rig = Rig(tmp_path)
+    rig.flow.start("board")
+    rig.flow.press("cross")
+    assert rig.state == "target" and rig.flow.line.startswith("Next run to beat: *RIA")
+
+
+@pytest.mark.parametrize("why, text", [
+    ("own_book", "that is your own book"), ("run_changed", "the run changed"), ("no_pay_to", "no payout account"),
+    ("cannot_receive", "the account can not take USDC"), ("payto_402", "the paywall named another account"),
+    ("not_for_sale", "not for sale"), ("not_house", "a BOT listing must pay the house"),
+    ("console_not_linked", "this console is not linked to ANY-7QZ"), ("made_up", "the listing did not check out"),
+    (None, "the listing did not check out"),
+])
+def test_a_guard_refusal_says_why(tmp_path, why, text):
+    class Refused(ManualPaySponsors):
+        pass
+    rig = Rig(tmp_path, sponsors=Refused)
+    rig.flow.start("buy_pay")
+    rig.sponsors.calls[-1].result = Result(ok=False, failure="buy_suspended", data={"why": why} if why else {})
+    rig.wait(16)
+    assert rig.state == "buy_suspended" and rig.flow.ctx["refused_why"] == text
+    assert rig.flow.fill(rig.flow.state.card["rows"][0]) == "PB's guard said no: " + text
+
+
+def test_square_on_the_board_toggles_humans_only_and_nowhere_else(tmp_path):
+    for case, name in (("ok", "board"), ("no_best", "board_new")):
+        rig = Rig(tmp_path / name, board_case=case)
+        rig.flow.start("board")
+        assert rig.state == name and not rig.flow.ctx.get("humans_only")
+        rig.flow.press("square")
+        assert rig.flow.ctx["humans_only"] is True and not rig.flow.outcomes_open
+        rig.flow.press("square")
+        assert rig.flow.ctx["humans_only"] is False
+    rig.flow.start("buy_pay")                                      # a call state: the mock list, as before
+    rig.flow.press("square")
+    assert rig.flow.outcomes_open and rig.flow.ctx["humans_only"] is False
+
+
+def test_humans_only_never_changes_the_target(tmp_path):
+    rig = Rig(tmp_path)
+    rig.flow.start("board")
+    rig.flow.press("square")
+    rig.flow.press("cross")
+    assert rig.state == "target" and rig.flow.ctx["target"] == "RIA"
+
+
+class ChainSponsors(HederaRealSponsors):
+    """Hedera and Arkiv real: pay answers when the test says (the chain ids with it), record and publish at once."""
+    explorer_origin = "https://rabdi.explorer.arkiv.network"
+
+    def __init__(self, clock_ms, **kwargs):
+        super().__init__(clock_ms, **kwargs)
+        self.update = None
+
+    def mocked(self, service):
+        return service == "world"
+
+    def begin(self, step, payload):
+        call = super().begin(step, payload)
+        if step == "record":
+            call._result = Result(ok=True, data={"topic": "0.0.11332437", "seq": 41,
+                                                 "tx": "0.0.6421420@1793929992.000000001",
+                                                 "hashscan": "https://hashscan.io/testnet/transaction/0.0.6421420-"
+                                                             "1793929992-000000001"})
+        elif step == "publish":
+            tx, run, listing = "0x5c1d" + "00" * 28 + "9e02", "0x" + "12" * 32, "0x23bf" + "00" * 28 + "af44"
+            call._result = Result(ok=True, data={"run": run, "listing": listing, "tx": tx, "explorer": {
+                "tx": "https://rabdi.explorer.arkiv.network/tx/" + tx,
+                "listing": "https://rabdi.explorer.arkiv.network/entity/" + listing,
+                "run": "https://evil.example/entity/" + run}})
+        return call
+
+    def chain_update(self):
+        return self.update
+
+
+PAID = {"receipt": TX, "hashscan": "https://hashscan.io/testnet/transaction/0.0.9185802-1762412349-000000123",
+        "late": False, "intent": {"seq": 7, "tx": "0.0.9185802@1762412340.000000001",
+                                  "hashscan": "https://hashscan.io/testnet/transaction/0.0.9185802-1762412340-000000001"},
+        "receipt_msg": None}
+
+
+def test_a_paid_ghost_shows_intent_payment_and_receipt_and_the_receipt_fills_in(tmp_path):
+    rig = Rig(tmp_path, sponsors=ChainSponsors)
+    rig.flow.start("buy_check")
+    assert rig.flow.ctx["chain"] == []
+    rig.wait(1400)
+    rig.sponsors.calls[-1].result = Result(ok=True, data=PAID)
+    rig.wait(16)
+    rig.wait(1200)
+    assert rig.state == "buy_done"
+    assert rig.flow.ctx["chain"] == [
+        {"label": "Hedera INTENT #7", "value": "tx 0.0.9185802@1762412340", "url": PAID["intent"]["hashscan"]},
+        {"label": "Paid 0.10 USDC", "value": "tx 0.0.9185802@1762412349", "url": PAID["hashscan"]},
+        {"label": "Hedera RECEIPT", "value": "waiting for the mirror", "url": None}]
+    assert rig.flow.ctx["chain_i"] == 1                            # the payment's own QR first
+    rig.sponsors.update = {"receipt": "another", "intent": None, "receipt_msg": {"seq": 99}}
+    rig.wait(100)
+    assert rig.flow.ctx["chain"][2]["value"] == "waiting for the mirror"   # another payment's: not this one's
+    rig.sponsors.update = {"receipt": TX, "intent": PAID["intent"], "receipt_msg": {
+        "seq": 8, "tx": "0.0.9185802@1762412360.000000001",
+        "hashscan": "https://hashscan.io/testnet/transaction/0.0.9185802-1762412360-000000001"}}
+    rig.wait(100)
+    assert rig.flow.ctx["chain"][2] == {"label": "Hedera RECEIPT #8", "value": "tx 0.0.9185802@1762412360",
+                                        "url": "https://hashscan.io/testnet/transaction/0.0.9185802-1762412360-"
+                                               "000000001"}
+    rig.sponsors.update = None
+    for press, i in (("down", 2), ("down", 0), ("up", 2), ("up", 1)):
+        rig.flow.press(press)
+        assert rig.flow.ctx["chain_i"] == i, press
+    rig.flow.start("buy_check")
+    assert rig.flow.ctx["chain"] == []                             # a new purchase starts clean
+
+
+def test_a_listing_shows_its_hcs_record_and_its_arkiv_rows(tmp_path):
+    rig = Rig(tmp_path, sponsors=ChainSponsors, run_frames=6100)
+    rig.flow._jti = "3f9c0a1b2c3d4e5f"
+    rig.flow.start("ls_record")
+    rig.wait(16)
+    assert rig.state == "ls_arkiv"
+    assert "Recorded: Hedera LISTING #41" in [rig.flow.fill(r) for r in rig.flow.state.card["rows"]]
+    rig.wait(16)
+    assert rig.state == "ls_done"
+    assert rig.flow.ctx["chain"] == [
+        {"label": "Hedera LISTING #41", "value": "topic 0.0.11332437 · tx 0.0.6421420@1793929992",
+         "url": "https://hashscan.io/testnet/transaction/0.0.6421420-1793929992-000000001"},
+        {"label": "Arkiv listing", "value": "0x23bf…af44",
+         "url": "https://rabdi.explorer.arkiv.network/entity/0x23bf" + "00" * 28 + "af44"},
+        {"label": "Arkiv tx", "value": "0x5c1d…9e02",
+         "url": "https://rabdi.explorer.arkiv.network/tx/0x5c1d" + "00" * 28 + "9e02"}]
+    rig.flow.start("ls_scan")
+    assert rig.flow.ctx["chain"] == []
+
+
+def test_only_explorer_links_on_the_allowed_origins_are_kept(tmp_path):
+    class Elsewhere(ChainSponsors):
+        explorer_origin = None                                     # /arkiv/config not read: no Arkiv link drawn
+    rig = Rig(tmp_path, sponsors=Elsewhere, run_frames=6100)
+    rig.flow.start("ls_arkiv")
+    rig.wait(16)
+    assert [row["url"] for row in rig.flow.ctx["chain"]] == [None, None]
+    assert [row["label"] for row in rig.flow.ctx["chain"]] == ["Arkiv listing", "Arkiv tx"]
+    rig = Rig(tmp_path / "links", sponsors=ChainSponsors)
+    for url, ok in (("https://hashscan.io/testnet/transaction/x", True), ("https://hashscan.io/mainnet/x", False),
+                    ("https://rabdi.explorer.arkiv.network/tx/0x1", True),
+                    ("https://rabdi.explorer.arkiv.network.evil.example/x", False),
+                    ("http://hashscan.io/testnet/x", False), ("https://hashscan.io/testnet/a b", False), (None, False),
+                    (7, False)):
+        assert (rig.flow._allowed(url) is not None) is ok, url
+
+
+def test_the_mock_shows_no_chain_ids(tmp_path):
+    rig = Rig(tmp_path / "buy")
+    rig.flow.start("buy_check")
+    rig.wait(1400 + 2000 + 1200)
+    assert rig.state == "buy_done" and rig.flow.ctx["chain"] == []
+    rig = Rig(tmp_path / "list", run_frames=6100)
+    rig.flow.start("ls_record")
+    rig.wait(2000)
+    assert rig.state == "ls_arkiv" and rig.flow.ctx["record_line"] == "Recorded"
+    rig.wait(1400)
+    assert rig.state == "ls_done" and rig.flow.ctx["chain"] == []
+
+
+def test_the_payee_is_the_sellers_account_or_the_house(tmp_path):
+    rig = Rig(tmp_path, target="ANY-4HJ", target_pay_to="0.0.6007788")
+    assert rig.flow.fill("{payee}") == "ANY-4HJ's account 0.0.6007788"
+    rig.flow.ctx.update(target="BOT-A2", target_pay_to=HOUSE)
+    assert rig.flow.fill("{payee}") == "the house account " + HOUSE
+    rig.flow.ctx.update(target="RIA", target_pay_to=None)          # the mock board's seller
+    assert rig.flow.fill("{payee}") == "RIA's record book"
+    rig.flow.ctx.update(target="", target_pay_to=None)
+    assert rig.flow.fill("{payee}") == ""
+
+
+def test_id_taken_names_the_book_world_said(tmp_path):
+    class Taken(SpySponsors):
+        def begin(self, step, payload):
+            call = super().begin(step, payload)
+            if step == "idkit_verify":
+                call._result = Result(ok=False, failure="id_taken", data={"book": "ANY-6PS", "console": "C-7QZP"})
+            return call
+    rig = Rig(tmp_path, book=None, sponsors=Taken)
+    rig.flow.start("id_verifying")
+    rig.wait(16)
+    assert rig.state == "id_taken" and rig.flow.ctx["other_book"] == "ANY-6PS" and rig.flow.ledger.book is None
+    rig = Rig(tmp_path / "mock", book=None)                        # the mock's: whatever the context made up
+    rig.flow.start("id_confirm")
+    rig.flow.press("square")
+    rig.flow.pick([label for label, _ in rig.flow.outcomes].index("Another person's console"))
+    rig.wait(16)
+    assert rig.state == "id_taken" and rig.flow.ctx["other_book"] == "ANY-2KD"
+
+
+def test_a_new_record_book_shows_the_consoles_tag(tmp_path):
+    class Bound(SpySponsors):
+        def begin(self, step, payload):
+            call = super().begin(step, payload)
+            if step == "idkit_verify":
+                call._result = Result(ok=True, data={"book": "ANY-6PS", "credential": "Orb", "console": "C-7QZP"})
+            return call
+    rig = Rig(tmp_path, book=None, sponsors=Bound)
+    rig.flow.start("id_verifying")
+    rig.wait(16)
+    assert rig.state == "id_done" and rig.flow.ctx["console_tag"] == "C-7QZP"
+    assert ("Console", "C-7QZP") in [(rig.flow.fill(a), rig.flow.fill(b)) for a, b in rig.flow.state.card["what"]]
+
+
+def test_the_words_the_flow_and_cards_add_keep_the_copy_rules():
+    """Strings built outside the state table (the scout's by-line and excuse, the guard's reasons, the chain rows, the
+    new cards' own words) follow the same rules: no banned word, no her or she, nothing that bans a person."""
+    import re
+    from arca_launcher.handler import BANNED_WORDS
+    from arca_launcher.handler import flow as F
+    from arca_launcher.render import handler_cards as C, handler_view as V
+    texts = [F.SCOUT_DOWN, F.REFUSED_ELSE, F.NO_BOOK_LINE, *F.REFUSED_WHY.values(), "Picked by PB's rule: the ghost just ahead",
+             f"Picked by openai/gpt-oss-120b on {F.GROQ}", "waiting for the mirror", "Recorded", C.BOT_LEGEND,
+             C.HUMAN_LEGEND, "Scout's pick", "No record book on this console", "Humans only", "All runners",
+             "Next QR", "linked to ANY-6PS", "not linked yet", "released", "HOUSE"]
+    assert "Humans only" in inspect_source(V) and "Scout's pick" in inspect_source(C)
+    for text in texts:
+        low = text.lower()
+        for word in BANNED_WORDS:
+            assert not re.search(r"\b" + re.escape(word) + r"\b", low), (text, word)
+        assert not re.search(r"\b(her|she|fraud|void|suspended|ban)\b", low), text
+
+
+def inspect_source(module):
+    import inspect
+    return inspect.getsource(module)

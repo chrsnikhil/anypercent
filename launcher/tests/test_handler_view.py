@@ -24,7 +24,11 @@ CTX = {"game": "Marine Drive GP", "target": "RIA", "target_time": "1:41.27", "ga
        "new_rank": "3rd", "split": "0:42 to 0:51, -0.40 s", "board_case": "ok", "best_frames": 6290,
        "run_frames": 6170, "run_time": "1:42.83", "ghost_look": "the *cyan kart*", "wallet": MOCK_WALLET,
        "other_book": "ANY-2KD", "runs": 14, "sold": 2, "buyer": "ARJUN", "code": "R4D-91X", "jti": "5e1f0c2a",
-       "receipt": "mock-1a2b3c4d", "ghost_kept": "RIA's ghost is still yours. ", "board_rows": build(6070, 6290).rows}
+       "receipt": "mock-1a2b3c4d", "ghost_kept": "RIA's ghost is still yours. ", "board_rows": build(6070, 6290).rows,
+       "console_tag": "C-7QZP", "console_line": "linked to ANY-7QZ",
+       "scout_reason": "You lose 1.50 s in lap 2: RIA runs it in 33.25 s, you in 34.75 s.",
+       "scout_by": "Picked by openai/gpt-oss-120b on Groq", "you_laps": (2140, 2085, 2065),
+       "it_laps": (2087, 1995, 1994), "scout_lap": 2, "you_time": "1:44.83"}
 
 
 class RealSponsors(MockSponsors):
@@ -61,7 +65,8 @@ def has_colour(surf, rect, colour):
 def test_the_sample_context_fills_every_placeholder():
     names = {f.name for f in dataclasses.fields(SponsorNames)}
     engine = {"book", "price", "budget_left", "listing_days", "credential", "approve_how",
-              "approve_via", "now_price", "receipt_text"}                    # the flow fills these
+              "approve_via", "now_price", "receipt_text", "payee", "refused_why", "scout_down",
+              "record_line"}                                                 # the flow fills these
     assert PLACEHOLDERS - names - engine <= set(CTX)
 
 
@@ -287,3 +292,176 @@ def test_a_hub_with_no_arcade_game_draws_three_rows(screen, tmp_path, monkeypatc
                                                                    "Start over (mock)"]
     nav.tap(views.hit(*rows[0].shape.center))
     assert nav.handler.state.name == "book_view"
+
+
+# ---- the scout, the chain ids, Humans only, one console: live-style stub data -----------------------------------------
+
+HOUSE = "0.0.7700001"
+ARKIV_TX = "0x" + "5c1d" * 15 + "9e02"
+ARKIV_TX_URL = "https://rabdi.explorer.arkiv.network/tx/" + ARKIV_TX              # the longest link: 106 characters
+REASON = "You lose 2.85 s in lap 2: BOT-A2 runs it in 33.23 s, you in 36.08 s. Lap 2 is where the ghost gains most."
+LIVE_CHAIN = {
+    "buy": [{"label": "Hedera INTENT #7", "value": "tx 0.0.9185802@1793930440",
+             "url": "https://hashscan.io/testnet/transaction/0.0.9185802-1793930440-112233445"},
+            {"label": "Paid 0.10 USDC", "value": "tx 0.0.9185802@1793930445",
+             "url": "https://hashscan.io/testnet/transaction/0.0.9185802-1793930445-643007633"},
+            {"label": "Hedera RECEIPT #8", "value": "tx 0.0.9185802@1793930462",
+             "url": "https://hashscan.io/testnet/transaction/0.0.9185802-1793930462-001122334"}],
+    "late": [{"label": "Hedera INTENT #7", "value": "tx 0.0.9185802@1793930440",
+              "url": "https://hashscan.io/testnet/transaction/0.0.9185802-1793930440-112233445"},
+             {"label": "Paid 0.10 USDC", "value": "tx 0.0.9185802@1793930445",
+              "url": "https://hashscan.io/testnet/transaction/0.0.9185802-1793930445-643007633"},
+             {"label": "Hedera RECEIPT", "value": "waiting for the mirror", "url": None}],
+    "list": [{"label": "Hedera LISTING #41", "value": "topic 0.0.11332437 · tx 0.0.6421420@1793929992",
+              "url": "https://hashscan.io/testnet/transaction/0.0.6421420-1793929992-000000001"},
+             {"label": "Arkiv listing", "value": "0x23bf…af44",
+              "url": "https://rabdi.explorer.arkiv.network/entity/0x" + "23bf" * 15 + "af44"},
+             {"label": "Arkiv tx", "value": "0x5c1d…9e02", "url": ARKIV_TX_URL}]}
+
+
+def _live_board(humans=True):
+    from arca_launcher.handler.board import build_real
+    from arca_launcher.handler.sponsors import RunRow
+    laps = {"A1": 6170, "A2": 6236, "A3": 6169, "A4": 6240, "A5": 6244, "A6": 6325}
+    rows = [RunRow(key="0x%064x" % i, game="MDGP", title="MARINE DRIVE GP", frames=frames, runner="r%015d" % i,
+                   book=None, label="BOT-" + name, human=False, credential=None, log_h="%064x" % i, rules=4,
+                   expires_block=1, listing="0x%064x" % (100 + i), price="0.1", pay_to=HOUSE)
+            for i, (name, frames) in enumerate(laps.items())]
+    rows.append(RunRow(key="0x" + "08e7" * 16, game="MDGP", title="MARINE DRIVE GP", frames=6414, runner="6ps0" * 4,
+                       book="ANY-6PS", label=None, human=True, credential="Orb", log_h="ab" * 32, rules=4,
+                       expires_block=1, listing="0x" + "23bf" * 16, price="0.1", pay_to="0.0.9473064",
+                       splits=(2140, 2165, 2109)))
+    return build_real(sorted(rows, key=lambda r: r.frames), 6414, "ANY-6PS", "Orb" if humans else None,
+                      need_pay_to=True)
+
+
+def live_flow(tmp_path, name, **ctx):
+    """A flow with every sponsor real (no MOCK pill), the owner's console: ANY-6PS on MARINE DRIVE GP, the scout's pick
+    BOT-A2 (paid to the house), the chain ids of a real purchase and listing."""
+    board = _live_board()
+    base = dict(CTX, game="MARINE DRIVE GP", target="BOT-A2", target_time="1:43.93", target_frames=6236,
+                target_pay_to=HOUSE, gap="3.0 s", rank="7th", new_rank="2nd", board_rows=board.rows, best_frames=6414,
+                run_time="1:46.90", wallet="0.0.9473064", ghost_look="the *cyan kart*", other_book="ANY-6PS",
+                console_tag="C-7QZP", console_line="linked to ANY-6PS", scout_reason=REASON,
+                scout_by="Picked by openai/gpt-oss-120b on Groq", you_laps=(2140, 2165, 2109),
+                it_laps=(2248, 1994, 1994), scout_lap=2, you_time="1:46.90", receipt="0.0.9185802@1793930445.643007633",
+                refused_why="this console is not linked to ANY-6PS", record_line="Recorded: Hedera LISTING #41",
+                credential="Orb")
+    base.update(ctx)
+    flow = Flow(RealSponsors(lambda: 0), Ledger(book="ANY-6PS", credential="Orb", world_verified=True),
+                str(tmp_path / "handler.json"), "MDGP", dict(base), today=lambda: TODAY)
+    if name in ("buy_load", "buy_done", "buy_late"):                  # paid for by now
+        flow.ledger.purchases["MDGP:BOT-A2"] = {"price": 10, "receipt": base["receipt"], "at": 0}
+    flow.start(name)
+    flow._seller = "BOT-A2"
+    flow.ctx.update({k: base[k] for k in ("refused_why", "record_line")}, **ctx)   # as the step that led here set them
+    flow._sync()
+    flow.ms_in_state = 60000
+    return flow
+
+
+_RULE = {"you_laps": None, "it_laps": None, "scout_lap": None, "target": "BOT-A6", "target_time": "1:45.42",
+         "scout_by": "Picked by PB's rule: the ghost just ahead (the model did not answer in 6 s)",
+         "scout_reason": "BOT-A6 is the listed ghost just ahead of you: 1:45.42 against your 1:46.90."}
+LIVE_SCREENS = {"board": {}, "board_humans_only": {"humans_only": True}, "scout": {}, "scout_pick": {},
+                "scout_pick_rule": _RULE,
+                "target": {"scout_down": "My scout is not answering, so here is the ghost just ahead. "},
+                "buy_check": {}, "buy_pay": {}, "buy_load": {}, "buy_done": {"chain": LIVE_CHAIN["buy"], "chain_i": 1},
+                "buy_late": {"chain": LIVE_CHAIN["late"], "chain_i": 1}, "ls_arkiv": {},
+                "ls_done": {"chain": LIVE_CHAIN["list"], "chain_i": 2}, "buy_suspended": {}, "id_done": {},
+                "id_scan": {}, "book_view": {}}
+
+
+def test_the_new_screens_live_and_their_text_fits(screen, tmp_path, monkeypatch):
+    """Drawn to tests/out/handler_live_<screen>.png (every sponsor real, live-style stub data), beside the all-mock
+    handler_<state>.png every_state_draws writes. Nothing on these cards or in PB's words is cut short."""
+    from arca_launcher.render import handler_cards, handler_view, text
+    cut, real = [], text.ellipsize
+
+    def ellipsize(s, width, measure):
+        out = real(s, width, measure)
+        if out != s:
+            cut.append(s)
+        return out
+    for module in (text, handler_cards, handler_view):
+        monkeypatch.setattr(module, "ellipsize", ellipsize)
+    drawn = _texts(screen, monkeypatch)
+    for shot, ctx in LIVE_SCREENS.items():
+        state = shot.replace("_humans_only", "").replace("_rule", "")
+        flow = live_flow(tmp_path / shot, state, **ctx)
+        if state == "scout_pick":
+            flow.ms_in_state = 1500                                   # the countdown a third of the way down
+        drawn.clear()
+        show(screen, flow, frames=2)
+        out = snapshot(screen.ren, f"handler_live_{shot}")
+        assert out.get_size() == (800, 480) and distinct_colours(out) > 3, shot
+        assert "MOCK" not in drawn, shot
+        if state == "scout_pick":                                     # and PB's whole line, typed out, fits too
+            flow.ms_in_state = 60000
+            show(screen, flow, frames=2)
+            snapshot(screen.ren, f"handler_live_{shot}_said")
+    assert cut == []
+
+
+def test_the_live_board_counts_its_tiers_and_tags_every_bot(screen, tmp_path, monkeypatch):
+    drawn = _texts(screen, monkeypatch)
+    show(screen, live_flow(tmp_path, "board"))
+    assert "HUMAN 1 · BOT 6" in drawn and "= made by a program" in drawn
+    assert drawn.count("BOT") >= 5 + 1                               # the rows on screen, and the legend's tag
+    drawn.clear()
+    flow = live_flow(tmp_path / "only", "board")
+    flow.press("square")
+    show(screen, flow)
+    assert "Humans only" in drawn and "YOU" in drawn and "ANY-6PS" not in drawn      # YOU is ANY-6PS's row
+    assert not any(f"BOT-A{n}" in drawn for n in (1, 3, 4, 5, 6))   # the BOT rows hidden (PB's words name A2)
+    assert drawn.count("BOT") == 1                                   # the legend's tag only
+    from arca_launcher.render.handler_view import hint_items
+    assert ("S", "All runners") in hint_items(flow)
+    flow.press("square")
+    assert ("S", "Humans only") in hint_items(flow)
+
+
+def test_the_chain_card_draws_the_chosen_rows_qr_big_enough_to_scan(screen, tmp_path, monkeypatch):
+    from arca_launcher.render import handler_art
+    from arca_launcher.render.handler_cards import QR_BOX
+    from arca_launcher.render.handler_view import hint_items
+    assert len(ARKIV_TX_URL) == 106
+    modules = handler_art.qr_surface(ARKIV_TX_URL).get_width()       # with its quiet zone
+    assert QR_BOX // modules >= 3, (modules, QR_BOX // modules)
+    seen, real = [], handler_art.qr
+
+    def spy(g, text, rect, t, beam=True):
+        box = real(g, text, rect, t, beam)
+        seen.append((text, beam, box.w // handler_art.qr_surface(text).get_width()))
+        return box
+    monkeypatch.setattr(handler_art, "qr", spy)
+    flow = live_flow(tmp_path, "ls_done", chain=LIVE_CHAIN["list"], chain_i=2)
+    show(screen, flow)
+    assert seen[-1][:2] == (ARKIV_TX_URL, False) and seen[-1][2] >= 3    # no scan beam over a dense code
+    flow.press("up")
+    show(screen, flow)
+    assert seen[-1][:2] == (LIVE_CHAIN["list"][1]["url"], False)
+    assert ("U/D", "Next QR") in hint_items(flow)
+    drawn = _texts(screen, monkeypatch)
+    flow = live_flow(tmp_path / "mock", "buy_done", chain=[])         # none (the mock): exactly the done card
+    show(screen, flow)
+    assert "Budget left" in drawn and ("U/D", "Next QR") not in hint_items(flow)
+    drawn.clear()
+    flow = live_flow(tmp_path / "nolink", "buy_late", chain=LIVE_CHAIN["late"], chain_i=2)
+    seen.clear()
+    show(screen, flow)
+    assert seen == [] and "waiting for the mirror" in drawn           # a row with no link: its text, no QR
+
+
+def test_my_record_book_names_this_console(screen, tmp_path, monkeypatch):
+    drawn = _texts(screen, monkeypatch)
+    show(screen, live_flow(tmp_path, "book_view"))
+    assert "C-7QZP" in drawn and any("linked to ANY-6PS" in s for s in drawn)
+    drawn.clear()
+    flow = live_flow(tmp_path / "released", "book_view", console_line="released")
+    flow.ledger.book = None
+    flow.refresh()
+    show(screen, flow)
+    snapshot(screen.ren, "handler_live_book_view_released")
+    assert "No record book on this console" in drawn
+    assert flow.line == "This console has no record book now. Its runs stay on the board."

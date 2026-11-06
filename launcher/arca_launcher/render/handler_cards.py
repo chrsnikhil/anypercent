@@ -9,6 +9,7 @@ import math
 import pygame
 
 from ..coach import fmt_time
+from ..handler.board import humans_only, tier_counts
 from ..handler.ledger import LISTING_DAYS
 from . import handler_art as art, handler_fx as fx, theme
 from .chrome import Hit
@@ -20,6 +21,9 @@ H_Y, ROWS_Y, WHAT_Y, BIG_ROWS_Y = 12, 56, 106, 114
 H_SIZE, ROW_SIZE, ROW_H, WHAT_SIZE, WHAT_H, LABEL_W = 34, 24, 29, 20, 23, 112
 BOARD_PITCH, HUMAN_SIZE = 28, 18          # the board's rows; its HUMAN badges and their legend
 HUMAN_LEGEND = "= one {world} ID, one record book"
+BOT_LEGEND = "= made by a program"
+CHAIN_LABEL, CHAIN_VALUE, CHAIN_PITCH = 22, 18, 46   # the chain card's rows: a label over its value
+PICK_ROW, PICK_PITCH, PICK_REASON, PICK_BY = 22, 28, 20, 18
 BIG_SIZE = 76
 LISTING_H = ROW_H + WHAT_H + 8            # a listing's two lines and the gap after them
 PICTURE = pygame.Rect(58, 44, 128, 128)   # the icon or ring, from the card's top left
@@ -235,24 +239,46 @@ def human_badge(g, x, cy, t_ms):
     return tag.right
 
 
+def bot_tag(g, x, cy):
+    """BOT beside a ghost made by a program, where a person's run shows HUMAN: amber on the warning ground. Returns its
+    right edge."""
+    tag = pygame.Rect(x, cy - 10, g.measure("BOT", HUMAN_SIZE, "pixel")[0] + 16, 20)
+    g.round_rect(tag, WARN_BG, 10)
+    g.text("BOT", HUMAN_SIZE, tag.centerx, cy, weight="pixel", color=AMBER, anchor="center")
+    return tag.right
+
+
+def tier_note(counts):
+    """The board's tier counts as its heading note: "HUMAN 1 \u00b7 BOT 6" (and "\u00b7 OPEN 2" when there are)."""
+    note = f"HUMAN {counts['human']} \u00b7 BOT {counts['bot']}"
+    return note + (f" \u00b7 OPEN {counts['open']}" if counts["open"] else "")
+
+
 def board(g, spec, rect, t_ms, ctx):
     names = spec.get("names")
-    note = f"verified runs, {names.board}" if names is not None else ""
+    every = list(ctx.get("board_rows") or ())
+    only = bool(ctx.get("humans_only"))
+    counts = tier_counts(every)
+    note = "Humans only" if only else tier_note(counts) if every else ""
     room = rect.w - PAD - 20 - (g.measure(note, 22, "pixel")[0] + 14 if note else 0)
     head = g.text(ellipsize(_v(ctx, "game") or "Board", room, _m(g, H_SIZE)), H_SIZE, rect.x + PAD, rect.y + H_Y,
                   weight="pixel")
     if note:                                                 # on the heading's baseline
         base = head.y + g.font(H_SIZE, "pixel").get_ascent()
-        g.text(note, 22, head.right + 14, base - g.font(22, "pixel").get_ascent(), weight="pixel", color=DIM)
-    rows = list(ctx.get("board_rows") or ())
+        g.text(note, 22, head.right + 14, base - g.font(22, "pixel").get_ascent(), weight="pixel",
+               color=AMBER if only else DIM)
+    rows = list(humans_only(every)) if only else every       # YOU stay; the ranks are the whole board's
     x, w = rect.x + PAD, rect.w - 2 * PAD
     if not rows:
         g.text("No times on the board yet", 25, x + 10, rect.y + 54, weight="pixel", color=SOFT)
         return
-    legend_y = rect.bottom - 12                              # one line under the rows: what HUMAN means
+    legend_y = rect.bottom - 12                              # one line under the rows: what HUMAN (and BOT) mean
     right = human_badge(g, x + 10, legend_y, t_ms)
     legend = names.fill(HUMAN_LEGEND) if names is not None else HUMAN_LEGEND.format(world="World")
-    g.text(legend, HUMAN_SIZE, right + 8, legend_y, weight="pixel", color=DIM, anchor="midleft")
+    end = g.text(legend, HUMAN_SIZE, right + 8, legend_y, weight="pixel", color=DIM, anchor="midleft").right
+    if counts["bot"]:
+        right = bot_tag(g, end + 18, legend_y)
+        g.text(BOT_LEGEND, HUMAN_SIZE, right + 8, legend_y, weight="pixel", color=DIM, anchor="midleft")
     n = max(1, (legend_y - 12 - (rect.y + 52)) // BOARD_PITCH)
     marks = [i for i, r in enumerate(rows) if r.you or r.target] or [0]
     start = max(0, min(len(rows) - n, min(marks) - 1))
@@ -271,7 +297,9 @@ def board(g, spec, rect, t_ms, ctx):
                 colour = WHITE
             g.text(str(row.rank), 25, line.x + 10, line.centery, weight="pixel", color=DIM, anchor="midleft")
             r = g.text(row.name, 25, line.x + 54, line.centery, weight="pixel", color=colour, anchor="midleft")
-            right = human_badge(g, r.right + 10, line.centery, t_ms) if row.human else r.right
+            kind = row.tier
+            right = (human_badge(g, r.right + 10, line.centery, t_ms) if kind == "human"
+                     else bot_tag(g, r.right + 10, line.centery) if kind == "bot" else r.right)
             if row.listed:
                 tag = pygame.Rect(right + 10, line.centery - 9, g.measure("selling", 18, "pixel")[0] + 12, 18)
                 g.round_rect(tag, TRACK, 9)
@@ -284,7 +312,7 @@ def target(g, spec, rect, t_ms, ctx):
     _title(g, "Next run to beat", rect, rect.x + PAD)
     gap = _v(ctx, "gap")
     _big(g, rect, f"{_v(ctx, 'target')} {_v(ctx, 'target_time')}".strip(), f"+{gap} on you" if gap else "", GREEN)
-    rows = tuple(spec.get("rows", ())) + (f"Her ghost: *{_v(ctx, 'price')} USDC*",)
+    rows = tuple(spec.get("rows", ())) + (f"The ghost: *{_v(ctx, 'price')} USDC*",)
     _rows(g, rows, rect.x + PAD, rect.y + BIG_ROWS_Y, rect.w - PAD - 20, rect.bottom - 8)
 
 
@@ -321,7 +349,12 @@ def result(g, spec, rect, t_ms, ctx):
 def book(g, spec, rect, t_ms, ctx):
     _title(g, "Record book", rect, rect.x + PAD)
     _big(g, rect, spec.get("book") or "none", "", GREEN)
-    rows = (f"Credential: *{spec.get('credential', '')}*", f"*{_v(ctx, 'runs') or 0}* runs on the board")
+    if spec.get("book"):
+        rows = (f"Credential: *{spec.get('credential', '')}*", f"*{_v(ctx, 'runs') or 0}* runs on the board")
+    else:                                                    # released, while on this screen
+        rows = ("No record book on this console",)
+    if _v(ctx, "console_tag"):                               # the console as World's bridge tags it, and its binding
+        rows += (f"Console *{_v(ctx, 'console_tag')}*: {_v(ctx, 'console_line')}",)
     _rows(g, rows, rect.x + PAD, rect.y + BIG_ROWS_Y, rect.w - PAD - 20, rect.bottom - 8)
 
 
@@ -380,9 +413,85 @@ def toast(g, spec, rect, t_ms, ctx):
             g.text(ellipsize(line, w, _m(g, 25)), 25, x, rect.y + 46 + i * 30, weight="pixel")
 
 
+def _secs(frames):
+    return "%.2f" % (frames / 60)
+
+
+def pick(g, spec, rect, t_ms, ctx):
+    """The scout's pick: its ghost and time, YOU against it lap by lap (the lap the reason is about highlighted), the
+    reason, who picked it, and the seconds left before PB buys it."""
+    x, w = rect.x + PAD, rect.w - PAD - 20
+    head = g.text("Scout's pick", H_SIZE, x, rect.y + H_Y, weight="pixel")
+    big = f"{_v(ctx, 'target')} {_v(ctx, 'target_time')}".strip()
+    g.text(ellipsize(big, rect.right - 20 - head.right - 16, _m(g, H_SIZE)), H_SIZE, head.right + 16, rect.y + H_Y,
+           weight="pixel", color=GREEN)
+    you, it, focus, name = ctx.get("you_laps"), ctx.get("it_laps"), ctx.get("scout_lap"), _v(ctx, "target")
+    y = rect.y + 56
+    if you and it and len(you) == len(it):
+        pitch = PICK_PITCH if len(you) <= 3 else 24
+        col_you, col_it = x + 96, x + 236
+        for k, (a, b) in enumerate(zip(you, it), start=1):
+            line = pygame.Rect(x, y, w, pitch - 2)
+            colour = SOFT
+            if k == focus:
+                g.round_rect(line, WARN_BG, 4)
+                colour = AMBER
+            delta = (b - a) / 60
+            cy = line.centery
+            g.text(f"Lap {k}", PICK_ROW, x + 10, cy, weight="pixel", color=colour, anchor="midleft")
+            g.text(f"you {_secs(a)}", PICK_ROW, col_you, cy, weight="pixel", color=colour, anchor="midleft")
+            label = ellipsize(f"{name} {_secs(b)}", line.right - 90 - col_it, _m(g, PICK_ROW))
+            g.text(label, PICK_ROW, col_it, cy, weight="pixel", color=WHITE if k == focus else colour,
+                   anchor="midleft")
+            g.text("%+.2f" % delta, PICK_ROW, line.right - 10, cy, weight="pixel",
+                   color=GREEN if delta < 0 else DIM, anchor="midright")
+            y += pitch
+    else:                                                    # PB's rule with no lap times: the two times only
+        line = f"You {_v(ctx, 'you_time')} \u00b7 {name} {_v(ctx, 'target_time')}"
+        g.text(ellipsize(line, w, _m(g, PICK_ROW)), PICK_ROW, x + 10, y + 2, weight="pixel", color=SOFT)
+        y += PICK_PITCH
+    y += 6
+    m = _m(g, PICK_REASON)
+    for runs in wrap_rich(_v(ctx, "scout_reason"), w, m, max_lines=2):
+        _runs(g, runs, PICK_REASON, x, y, colour=WHITE)
+        y += 23
+    by = _v(ctx, "scout_by")
+    g.text(ellipsize(by, w, _m(g, PICK_BY)), PICK_BY, x, y + 2, weight="pixel", color=DIM)
+    track = pygame.Rect(x, rect.bottom - 14, rect.w - 2 * PAD, 6)
+    g.round_rect(track, TRACK, 3)
+    total, left = spec.get("total_ms") or 0, spec.get("left_ms") or 0
+    if total and left:                                       # shrinks as the purchase comes closer
+        art.meter(g, track, left / total, ORANGE)
+
+
+def chain(g, spec, rect, t_ms, ctx):
+    """A finished step's chain ids: up to three rows (a label over its id), the chosen one's link as a QR code on the
+    left (Up and Down choose). With none (the mock writes nothing anywhere) it is the done card."""
+    rows = list(ctx.get("chain") or ())
+    if not rows:
+        done(g, spec, rect, t_ms, ctx)
+        return
+    i = max(0, min(len(rows) - 1, int(ctx.get("chain_i") or 0)))
+    url = rows[i].get("url")
+    if not (url and art.qr(g, url, qr_box(rect), t_ms, beam=False)):
+        art.icon(g, "done", PICTURE.move(rect.topleft), t_ms)  # a row with no link to show: its text says it
+    x, w = rect.x + SIDE, rect.w - SIDE - 20
+    if spec.get("h"):
+        _title(g, spec["h"], rect, x)
+    first = max(0, min(len(rows) - 3, i - 1))
+    for n, row in enumerate(rows[first:first + 3]):
+        y = rect.y + ROWS_Y + n * CHAIN_PITCH
+        if first + n == i:
+            g.round_rect(pygame.Rect(x - 12, y, 4, CHAIN_PITCH - 6), AMBER, 2)
+        with _fade_up(g, fx.stagger(t_ms, n, step=150, start=200)):
+            g.text(ellipsize(row.get("label") or "", w, _m(g, CHAIN_LABEL)), CHAIN_LABEL, x, y, weight="pixel")
+            g.text(ellipsize(row.get("value") or "", w, _m(g, CHAIN_VALUE)), CHAIN_VALUE, x, y + 23, weight="pixel",
+                   color=SOFT)
+
+
 DRAWERS = {"status": status, "qr": qr, "wait": wait, "load": load, "done": done, "no": no, "warn": warn,
            "time": time, "back": back, "board": board, "target": target, "offer": offer, "result": result,
-           "toast": toast, "hub": hub, "book": book, "listings": listings}
+           "toast": toast, "hub": hub, "book": book, "listings": listings, "pick": pick, "chain": chain}
 
 
 def draw(gfx, kind, spec, rect, t_ms, ctx):

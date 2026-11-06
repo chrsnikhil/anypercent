@@ -69,8 +69,9 @@ def test_a_done_steps_tick_pops_without_the_icons_overshoot(fx):
 
 def test_load_bar_reaches_90_percent_in_the_steps_usual_time_then_creeps_to_its_deadline(fx):
     from arca_launcher.handler.mock import _DELAY_MS
-    assert set(fx.EXPECTED_MS) == {"idkit_verify", "check_listing", "pay", "load_ghost", "record", "publish"}
-    assert all(fx.EXPECTED_MS[step] == _DELAY_MS[step] - 100 for step in fx.EXPECTED_MS)
+    assert set(fx.EXPECTED_MS) == {"idkit_verify", "check_listing", "pay", "load_ghost", "record", "publish", "scout"}
+    assert all(fx.EXPECTED_MS[step] == _DELAY_MS[step] - 100 for step in fx.EXPECTED_MS if step != "scout")
+    assert fx.fill(2500, "scout", 12000) == pytest.approx(0.9)                # the scout: no mock, a live guess
     approx = pytest.approx
     assert fx.fill(0, "pay", 8000) == 0 and fx.fill(950, "pay", 8000) == approx(0.45)
     assert fx.fill(1900, "pay", 8000) == approx(0.9) and fx.fill(4950, "pay", 8000) == approx(0.95)
@@ -393,7 +394,11 @@ def test_each_load_bar_is_near_90_percent_as_its_mock_call_lands(screen, tmp_pat
     from arca_launcher.render.handler_cards import SIDE
     from arca_launcher.render.handler_view import CARD
     loads = [st for st in STATES.values() if st.card["t"] == "load" and st.call]
-    assert {st.name for st in loads} == {"id_verifying", "buy_check", "buy_pay", "buy_load", "ls_record", "ls_arkiv"}
+    assert {st.name for st in loads} == {"id_verifying", "buy_check", "buy_pay", "buy_load", "ls_record", "ls_arkiv",
+                                         "scout"}
+    loads = [st for st in loads if st.call in _DELAY_MS]              # the scout runs only with Hedera real
+    from arca_launcher.render.handler_fx import EXPECTED_MS
+    assert EXPECTED_MS["scout"] < STATES["scout"].deadline_ms
     images = _spy(monkeypatch, screen.gfx, "image")
     track = pygame.Rect(CARD.x + SIDE, CARD.y + 176, CARD.w - SIDE - 22, 14)
     for st in loads:

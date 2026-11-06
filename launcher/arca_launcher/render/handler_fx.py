@@ -121,8 +121,9 @@ def stripes(t):
 
 
 # How long each call step usually takes, in ms (the mock's delay less 100 ms); a step not listed takes the default.
+# The scout (Hedera real only): a replay, two Arkiv reads and one model call on Groq.
 EXPECTED_MS = {"idkit_verify": 1600, "check_listing": 1300, "pay": 1900, "load_ghost": 1100, "record": 1900,
-               "publish": 1300}
+               "publish": 1300, "scout": 2500}
 DEFAULT_EXPECTED_MS = 1900
 
 

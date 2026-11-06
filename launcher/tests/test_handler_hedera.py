@@ -710,7 +710,7 @@ def test_buying_pays_on_hedera_then_loads_her_ghost_with_the_transaction_id(tmp_
     assert flow.ledger.purchases["marine-drive-gp:ANY-6PS"]["receipt"] == TX and flow.ledger.spent == GHOST_PRICE
     assert ("/arkiv/ghost", {"run": run["key"], "receipt": TX}) in rig.service.posts()
     what = {flow.fill(a): flow.fill(b) for a, b in flow.state.card["what"]}
-    assert what["Receipt"] == TX_SHOWN and what["Paid"] == "0.10 USDC to ANY-6PS"
+    assert what["Receipt"] == TX_SHOWN and what["Paid"] == "0.10 USDC for ANY-6PS's ghost"
 
 
 def test_a_payment_settled_past_the_budget_lands_late_and_loads(tmp_path):
@@ -1073,6 +1073,8 @@ def test_hedera_is_real_only_on_real_world_and_arkiv(tmp_path, caplog):
         assert type(s) is HederaSponsors and type(s._inner) is ArkivSponsors and "Hedera stays" not in caplog.text
         assert not any(s.mocked(x) for x in ("world", "board", "third")) and s.mock is False
         assert s._state_dir == str(tmp_path) and s._thread.is_alive()
+        console = (tmp_path / "console-id").read_text().strip()      # this console's id, beside the ledger
+        assert s.console_id == console and made[0].console_id == console and console not in caplog.text
         s = make_sponsors(Config(**dict(base, hedera=False), world_bridge="http://127.0.0.1:9", arkiv_checker=CHECKER,
                                  arkiv_rpc="http://127.0.0.1:9"), games=("MDGP",))
         made.append(s)
@@ -1080,3 +1082,297 @@ def test_hedera_is_real_only_on_real_world_and_arkiv(tmp_path, caplog):
     finally:
         for s in made:
             s.close()
+
+
+# ---- PB's scout, the console, why a guard said no, chain ids ---------------------------------------------------------
+
+CONSOLE = "3f9c0a1b2c3d4e5f60718293a4b5c6d7"
+HOUSE = "0.0.7700001"
+BOT_LISTING, BOT_RUN, BOT_LOG_H = "0x" + "23bf" * 15 + "af44", "0x" + "56ef" * 16, "cd" * 32
+SCOUT_DONE = {"scout": "s-1a2b3c4d", "seller": "BOT-A2",
+              "pick": {"name": "BOT-A2", "label": "BOT-A2", "book": None, "listing": BOT_LISTING, "run": BOT_RUN,
+                       "log_h": BOT_LOG_H, "frames": 6236, "time": "1:43.93", "splits": [2248, 1994, 1994],
+                       "price_c": 10, "pay_to": HOUSE, "human": False},
+              "you": {"frames": 6414, "time": "1:46.90", "splits": [2140, 2165, 2109]},
+              "lap": 2, "reason": "You lose 2.85 s in lap 2: BOT-A2 runs it in 33.23 s, you in 36.08 s.",
+              "by": "model", "text": "model", "model": "openai/gpt-oss-120b", "note": None, "candidates": 6,
+              "skipped": 0}
+PICKED = {"scout": "s-1a2b3c4d", "seller": "BOT-A2", "label": "BOT-A2", "book": None, "listing": BOT_LISTING,
+          "run": BOT_RUN, "log_h": BOT_LOG_H, "frames": 6236, "time": "1:43.93", "it": (2248, 1994, 1994),
+          "you": (2140, 2165, 2109), "you_frames": 6414, "you_time": "1:46.90", "lap": 2,
+          "reason": SCOUT_DONE["reason"], "by": "model", "model": "openai/gpt-oss-120b", "note": None,
+          "pay_to": HOUSE, "human": False}
+
+
+class ScoutHedera(StubHedera):
+    """StubHedera with POST /scout and GET /scout/{id}; /health says the scout runs."""
+
+    def __init__(self):
+        super().__init__()
+        self.health["scout"] = "model"
+
+    def __call__(self, method, path, body, timeout_s):
+        if path == "/scout" or path.startswith("/scout/"):
+            self.requests.append((method, path, body))
+            if self.down:
+                raise urllib.error.URLError("connection refused")
+            if method == "POST":
+                jid = "s-%08x" % (0x1a2b3c4d + len(self.jobs))
+                self.jobs[jid] = {"stage": "replay", "ok": None, "failure": None, "data": {}}
+                return {"id": jid, "expires_s": 60}
+            jid = path.rsplit("/", 1)[1]
+            if jid in self.jobs:
+                return json.loads(json.dumps(self.jobs[jid]))
+            raise urllib.error.HTTPError(path, 404, "unknown_id", {}, None)
+        return super().__call__(method, path, body, timeout_s)
+
+
+def scout_rig(tmp_path, console=CONSOLE):
+    """The chain over stubs with a console id (World's), YOU's best MDGP run of 6414 frames on this console."""
+    from arca_launcher.handler.world import WorldSponsors
+    from test_handler_world import ConsoleBridge
+    rig = Rig(tmp_path)
+    rig.arkiv.bridge = rig.bridge = ConsoleBridge()
+    rig.arkiv.inner = WorldSponsors("http://bridge.test:8787", rig.clock, transport=rig.bridge, background=False,
+                                    console=console)
+    rig.arkiv.sponsors = rig.arkiv.make()
+    rig.hedera = ScoutHedera()
+    rig.sponsors = rig.make()
+    rig.arkiv.best("MDGP", acl("6ps-best"), 6414)
+    return rig
+
+
+def scout_payload(**over):
+    payload = {"game": "marine-drive-gp", "arcade_id": "MDGP", "title": "MARINE DRIVE GP", "book": "ANY-6PS",
+               "frames": 6414, "best_frames": 6414, "price": GHOST_PRICE, "seller": None}
+    payload.update(over)
+    return payload
+
+
+def test_the_scout_sends_your_log_and_the_console_from_the_worker(tmp_path):
+    rig = scout_rig(tmp_path)
+    call = rig.sponsors.begin("scout", scout_payload())
+    assert call.poll() is None and rig.hedera.posts("/scout") == []    # the frame never reads the log or sends
+    rig.sponsors.work()
+    (path, body), = rig.hedera.posts("/scout")
+    assert body == {"book": "ANY-6PS", "game": "MDGP", "log": base64.b64encode(acl("6ps-best")).decode(),
+                    "console": CONSOLE, "price_c": GHOST_PRICE}
+    for stage in ("replay", "read", "think"):
+        rig.hedera.move(stage)
+        rig.step(call)
+        assert call.poll() is None and rig.sponsors.status()["third"] == "busy"
+    assert rig.hedera.gets("/scout/")[-1] == "/scout/s-1a2b3c4d"
+    rig.hedera.move("done", ok=True, data=SCOUT_DONE)
+    rig.step(call)
+    assert call.poll() == Result(ok=True, data=PICKED)
+
+
+def test_a_scout_with_no_console_id_sends_none(tmp_path):
+    rig = scout_rig(tmp_path, console="anypercent")
+    rig.sponsors.begin("scout", scout_payload())
+    rig.sponsors.work()
+    assert "console" not in rig.hedera.posts("/scout")[0][1]
+
+
+@pytest.mark.parametrize("what", ["no best log", "no book", "no game"])
+def test_a_scout_that_can_not_be_asked_is_down_and_sends_nothing(tmp_path, what):
+    rig = scout_rig(tmp_path)
+    over = {"no best log": {"best_frames": 6000}, "no book": {"book": None},
+            "no game": {"arcade_id": None, "game": "plain"}}[what]
+    call = rig.sponsors.begin("scout", scout_payload(**over))
+    rig.sponsors.work()
+    assert call.poll() == Result(ok=False, failure="buy_down") and rig.hedera.posts("/scout") == []
+
+
+@pytest.mark.parametrize("failure, data, out", [
+    ("buy_budget", {}, {}), ("nobody_ahead", {}, {}), ("buy_down", {}, {}),
+    ("buy_suspended", {"why": "console_not_linked"}, {"why": "console_not_linked"}),
+    ("buy_suspended", {"why": "../../x"}, {}),
+    ("rate_limited", {}, None),
+])
+def test_each_scout_failure_is_the_handlers_own(tmp_path, failure, data, out):
+    rig = scout_rig(tmp_path)
+    call = rig.sponsors.begin("scout", scout_payload())
+    rig.sponsors.work()
+    rig.hedera.move("done", ok=False, failure=failure, data=data)
+    rig.step(call)
+    expected = Result(ok=False, failure="buy_down") if out is None else Result(ok=False, failure=failure, data=out)
+    assert call.poll() == expected
+
+
+def _off(change):
+    done = json.loads(json.dumps(SCOUT_DONE))
+    change(done)
+    return done
+
+
+@pytest.mark.parametrize("why, done", [
+    ("a bad scout id", _off(lambda d: d.update(scout="s-xyz"))),
+    ("a seller no listing names", _off(lambda d: d.update(seller="Somebody"))),
+    ("a BOT pick said to be human", _off(lambda d: d["pick"].update(human=True))),
+    ("a pick that is not the seller", _off(lambda d: d["pick"].update(label="BOT-A3"))),
+    ("a pick with no account", _off(lambda d: d["pick"].update(pay_to=None))),
+    ("a bad listing key", _off(lambda d: d["pick"].update(listing="0x12"))),
+    ("frames not a number", _off(lambda d: d["pick"].update(frames="6236"))),
+    ("no reason", _off(lambda d: d.update(reason=""))),
+    ("a reason with a control character", _off(lambda d: d.update(reason="You\nlose"))),
+    ("a pick by nobody", _off(lambda d: d.update(by="oracle"))),
+])
+def test_a_pick_the_console_can_not_show_is_down(tmp_path, why, done):
+    rig = scout_rig(tmp_path)
+    call = rig.sponsors.begin("scout", scout_payload())
+    rig.sponsors.work()
+    rig.hedera.move("done", ok=True, data=done)
+    rig.step(call)
+    assert call.poll() == Result(ok=False, failure="buy_down"), why
+
+
+def test_a_rule_pick_without_lap_times_still_shows(tmp_path):
+    rig = scout_rig(tmp_path)
+    call = rig.sponsors.begin("scout", scout_payload())
+    rig.sponsors.work()
+    rule = _off(lambda d: (d.update(by="rule", model=None, lap=None, note="no lap times for your run",
+                                    reason="ANY-4HJ is the listed ghost just ahead of you: 1:43.00 against your 1:46.90.",
+                                    seller="ANY-4HJ"),
+                           d["pick"].update(name="ANY-4HJ", label=None, book="ANY-4HJ", human=True, splits=None,
+                                            pay_to="0.0.6007788"),
+                           d["you"].update(splits=None)))
+    rig.hedera.move("done", ok=True, data=rule)
+    rig.step(call)
+    got = call.poll()
+    assert got.ok and (got.data["seller"], got.data["it"], got.data["you"], got.data["lap"], got.data["by"],
+                       got.data["note"]) == ("ANY-4HJ", None, None, None, "rule", "no lap times for your run")
+
+
+def test_a_scout_the_service_goes_quiet_on_is_down(tmp_path):
+    rig = scout_rig(tmp_path)
+    call = rig.sponsors.begin("scout", scout_payload())
+    rig.sponsors.work()
+    rig.hedera.down = True
+    for _ in range(8):
+        rig.step(call)
+    assert call.poll() == Result(ok=False, failure="buy_down")
+
+
+def test_the_scout_runs_when_health_says_so(tmp_path):
+    rig = scout_rig(tmp_path)
+    assert rig.sponsors.scouts is False                               # not heard from yet
+    rig.sponsors.work()
+    assert rig.sponsors.scouts is True
+    for said, on in (("rule", True), ("off", False), (None, False), ("model", True)):
+        rig.hedera.health["scout"] = said
+        rig.step(ms=hedera.HEALTH_MS)
+        assert rig.sponsors.scouts is on, said
+    assert rig.sponsors.console_id == CONSOLE and rig.sponsors.console_state() is None   # World's, not asked yet
+
+
+def test_the_buy_names_the_console_and_the_scouts_pick(tmp_path):
+    rig = scout_rig(tmp_path)
+    rig.sponsors.begin("pay", buy_payload(book="ANY-6PS", scout_id="s-1a2b3c4d"))
+    rig.sponsors.work()
+    assert rig.hedera.posts("/hedera/buy")[0][1] == dict(BUY_BODY, book="ANY-6PS", console=CONSOLE,
+                                                         scout="s-1a2b3c4d")
+    rig = scout_rig(tmp_path / "odd")
+    rig.sponsors.begin("pay", buy_payload(book="ANY-6PS", scout_id="s-../x"))
+    rig.sponsors.work()
+    assert "scout" not in rig.hedera.posts("/hedera/buy")[0][1]
+
+
+def test_a_guard_refusal_says_why(tmp_path):
+    rig = Rig(tmp_path)
+    call = _pay(rig)
+    rig.hedera.move("done", ok=False, failure="buy_suspended", data={"why": "not_house"})
+    rig.step(call)
+    assert call.poll() == Result(ok=False, failure="buy_suspended", data={"why": "not_house"})
+
+
+INTENT = {"seq": 7, "tx": "0.0.9185802@1762412340.000000001",
+          "hashscan": "https://hashscan.io/testnet/transaction/0.0.9185802-1762412340-000000001"}
+RECEIPT_MSG = {"seq": 8, "tx": "0.0.9185802@1762412360.000000001",
+               "hashscan": "https://hashscan.io/testnet/transaction/0.0.9185802-1762412360-000000001"}
+
+
+def test_a_payment_names_its_intent_and_its_receipt_fills_in_later(tmp_path):
+    rig = Rig(tmp_path)
+    call = _pay(rig)
+    rig.hedera.move("done", ok=True, data=dict(PAID, intent=INTENT, receipt_msg=None))
+    rig.step(call)
+    assert call.poll() == Result(ok=True, data=dict(PAID, intent=INTENT, receipt_msg=None))
+    assert rig.sponsors.chain_update() == {"receipt": TX, "intent": INTENT, "receipt_msg": None}
+    asked = len(rig.hedera.gets("/hedera/buy/"))
+    rig.step(ms=1000)
+    assert len(rig.hedera.gets("/hedera/buy/")) == asked              # every 2 s
+    rig.step(ms=1000)
+    assert len(rig.hedera.gets("/hedera/buy/")) == asked + 1
+    rig.hedera.move("done", ok=True, data=dict(PAID, intent=INTENT, receipt_msg=RECEIPT_MSG))
+    rig.step(ms=2000)
+    assert rig.sponsors.chain_update() == {"receipt": TX, "intent": INTENT, "receipt_msg": RECEIPT_MSG}
+    asked = len(rig.hedera.gets("/hedera/buy/"))
+    rig.step(ms=2000)
+    assert len(rig.hedera.gets("/hedera/buy/")) == asked              # filled: asked no more
+
+
+def test_the_receipt_is_asked_for_only_while_someone_looks_and_for_90_seconds(tmp_path):
+    rig = Rig(tmp_path)
+    call = _pay(rig)
+    rig.hedera.move("done", ok=True, data=dict(PAID, intent=INTENT, receipt_msg=None))
+    rig.step(call)
+    asked = len(rig.hedera.gets("/hedera/buy/"))
+    rig.clock.ms += hedera.IDLE_MS
+    for _ in range(5):
+        rig.clock.ms += 2000
+        rig.sponsors.work()
+    assert len(rig.hedera.gets("/hedera/buy/")) == asked              # nobody looking
+    rig.clock.ms += 90000
+    rig.step(ms=2000)
+    assert len(rig.hedera.gets("/hedera/buy/")) == asked              # past its 90 s
+    assert rig.sponsors.chain_update()["receipt_msg"] is None
+
+
+@pytest.mark.parametrize("intent", [{"seq": "7", "tx": "x", "hashscan": "https://hashscan.io/x"},
+                                    {"seq": 7, "tx": "0.0.1@2", "hashscan": "javascript:alert(1)"}, "not a dict"])
+def test_chain_ids_off_the_contract_are_left_off(tmp_path, intent):
+    rig = Rig(tmp_path)
+    call = _pay(rig)
+    rig.hedera.move("done", ok=True, data=dict(PAID, intent=intent))
+    rig.step(call)
+    got = call.poll()
+    assert got.ok and "intent" not in got.data
+
+
+def test_the_scout_picks_and_pb_buys_the_bot_ghost_on_its_own(tmp_path):
+    """The solo demo's steps 6 and 7: Cross on the board, the scout's pick, four seconds, then the purchase, paid to
+    the house, its INTENT, payment and RECEIPT on the chain card."""
+    rig = scout_rig(tmp_path)
+    log = acl("bot-a2")
+    run = rig.node.run("BOT-A2", 6236, log=log, book=False, listed=True, pay_to=HOUSE, splits=(2248, 1994, 1994))
+    rig.service.ghosts[run["key"]] = log
+    rig.arkiv.replays.know(log, 6236)
+    rig.arkiv.prefetch()
+    rig.sponsors.work()
+    done = json.loads(json.dumps(SCOUT_DONE))
+    done["pick"].update(listing=rig.node.listing_of(run)["key"], run=run["key"], log_h=sha(log))
+    flow = rig.flow(book="ANY-6PS", best_frames=6414, target="ANY-9MX", board_rows=())
+    flow.start("board")
+    flow.press("cross")
+    assert flow.state.name == "scout"
+    rig.wait(flow, 100)
+    rig.hedera.move("done", ok=True, data=done)
+    rig.wait(flow, 600)
+    assert flow.state.name == "scout_pick" and flow.ctx["target"] == "BOT-A2" and flow.ctx["target_pay_to"] == HOUSE
+    rig.wait(flow, 4000)
+    assert flow.state.name in ("buy_check", "buy_pay")
+    rig.wait(flow, 300)
+    assert flow.state.name == "buy_pay"
+    (path, body), = rig.hedera.posts("/hedera/buy")
+    assert (body["seller"], body["scout"], body["console"], body["listing"]) == ("BOT-A2", "s-1a2b3c4d", CONSOLE,
+                                                                                done["pick"]["listing"])
+    rig.hedera.move("done", ok=True, data=dict(PAID, intent=INTENT, receipt_msg=None))
+    rig.service.sales[TX] = run["key"]
+    rig.wait(flow, 1000)
+    assert flow.state.name == "buy_done"
+    assert [row["label"] for row in flow.ctx["chain"]] == ["Hedera INTENT #7", "Paid 0.10 USDC", "Hedera RECEIPT"]
+    rig.hedera.move("done", ok=True, data=dict(PAID, intent=INTENT, receipt_msg=RECEIPT_MSG))
+    rig.wait(flow, 2200)
+    assert flow.ctx["chain"][2]["label"] == "Hedera RECEIPT #8"
+    assert flow.ledger.purchases["marine-drive-gp:BOT-A2"]["receipt"] == TX

@@ -5,6 +5,9 @@ test log), shown as one mock runner (RIA) at the log's real time. The other mock
 offsets from that same log; only RIA's ghost can ever be bought in mock mode, so "listed"
 (shown on the board as selling) and "sells" (actually purchasable) are tracked separately.
 
+Tiers: HUMAN (a World-verified record book), BOT (a BOT- label: a ghost made by a program and sold by the house,
+never HUMAN) and OPEN (the team's other runs). The Humans only toggle hides every row but the human tier's and YOU.
+
 HUMAN: a run whose record book World verified (one World ID, one record book) carries `human`
 and, when known, the credential World checked. The real board (Arkiv) will carry the same
 attribute on each run row, written by the checker from the book's World status. Here the mock
@@ -43,6 +46,11 @@ class Row:
     credential: str | None = None   # what World checked ("Orb", "Selfie Check"), when known
     key: str | None = None          # the real board's run row on Arkiv (None: a mock runner, or YOU's local best)
     listing: str | None = None      # the live listing that offers this run's ghost, on the real board
+
+    @property
+    def tier(self) -> str:
+        """"human" | "bot" | "open" (tier() below). YOU's follows YOU's own HUMAN mark."""
+        return tier(self)
 
 
 @dataclass(frozen=True)
@@ -143,6 +151,8 @@ def build_real(rows, best_frames: int | None, you_book: str | None, you_human: s
         listed = run is not None and run.listing is not None
         if you and run is None:
             human, credential = you_human is not None, you_human
+        elif not you and name.startswith("BOT-"):           # a program's run: never HUMAN
+            human, credential = False, None
         else:
             human, credential = run.human, run.credential if run.human else None
         out.append(Row(rank=rank, name=name, frames=frames, you=you, listed=listed,
@@ -151,6 +161,35 @@ def build_real(rows, best_frames: int | None, you_book: str | None, you_human: s
                        key=run.key if run is not None else None, listing=run.listing if run is not None else None))
     rows_out = tuple(out)
     return Board(rows=rows_out, target=next((row for row in rows_out if row.target), None), case=case)
+
+
+def ordinal(n):
+    """1 -> "1st", 12 -> "12th", 23 -> "23rd"; None -> ""."""
+    if n is None:
+        return ""
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
+
+
+def tier(row) -> str:
+    """"bot" for a BOT ghost (a label starting BOT-: made by a program, never HUMAN, whatever else the row says),
+    "human" for a run with a World-verified record book behind it, else "open" (the team's runs)."""
+    if row.name.startswith("BOT-") and not row.you:
+        return "bot"
+    return "human" if row.human else "open"
+
+
+def humans_only(rows):
+    """The rows the Humans only toggle shows: the human tier's, and YOU always. Ranks stay the full board's."""
+    return tuple(row for row in rows if row.you or tier(row) == "human")
+
+
+def tier_counts(rows) -> dict:
+    """How many runs of each tier the board shows: {"human": n, "bot": m, "open": k} (YOU with no time yet: none)."""
+    counts = {"human": 0, "bot": 0, "open": 0}
+    for row in rows:
+        if row.frames is not None:
+            counts[tier(row)] += 1
+    return counts
 
 
 def mark_you(rows, you_human: str | None):

@@ -7,7 +7,12 @@ characters the service and the web board send, and every one pins `$creator` to 
 here, never trusted: one whose `arkiv.schema` or creator is not the expected one, or that lacks a column or carries
 one of the wrong type, is dropped and counted. The checker goes into a query in its EIP-55 form, as the service and
 the web board write it (the node refuses a mixed-case address whose checksum is wrong, so it is computed here, never
-copied); keys go in lowercase."""
+copied); keys go in lowercase.
+
+A run row may carry its lap times (s1..s4, split_kind "lap"): kept only when they are contiguous from s1, every one
+above 0, and add up to the run's frames; otherwise the run is kept without them. A listing names its seller by exactly
+one of book (a person's record book) and label (the house's BOT ghost); one with both or neither is dropped. A run with
+no record book is never HUMAN: nobody's World ID stands behind it."""
 import functools
 import json
 import re
@@ -37,10 +42,14 @@ _BAD = object()
 RUN_COLUMNS = {"game": "str", "title": "str", "frames": "u64", "runner": "str", "book": "str", "label": "str",
                "human": "bool", "credential": "str", "log_h": "str", "rules": "u64"}
 RUN_OPTIONAL = frozenset({"book", "label", "credential", "log"})
+# A run's lap times: selected with it, and read leniently (one that does not check out is left off, the run kept).
+SPLIT_COLUMNS = {"s1": "u64", "s2": "u64", "s3": "u64", "s4": "u64", "split_kind": "str"}
+SPLIT_KIND = "lap"
 LISTING_COLUMNS = {"run": "key", "game": "str", "season": "i32", "frames": "u64", "log_h": "str", "price": "dec",
-                   "seller": "str", "book": "str", "human": "bool", "pay_to": "str"}
-# A listing written before Hedera (or with Hedera off) has no pay_to: it is on the board, but not for sale.
-LISTING_OPTIONAL = frozenset({"pay_to"})
+                   "seller": "str", "book": "str", "label": "str", "human": "bool", "pay_to": "str"}
+# A listing written before Hedera (or with Hedera off) has no pay_to: it is on the board, but not for sale. It names
+# exactly one of book and label.
+LISTING_OPTIONAL = frozenset({"pay_to", "book", "label"})
 
 
 class RpcError(Exception):
@@ -215,9 +224,10 @@ def _text_ok(text):
             and not any(ord(ch) < 32 or ord(ch) == 127 for ch in text))
 
 
-def _row(entity, schema, columns, optional, checker):
+def _row(entity, schema, columns, optional, checker, lenient=None):
     """entity's key, creator, expiry and columns, decoded; None when it is not a row of schema that checker created,
-    with every required column present in its own type."""
+    with every required column present in its own type. lenient: more columns, each its value or None when absent or
+    not in its type (never a reason to drop the row)."""
     if not isinstance(entity, dict):
         return None
     key, creator = _value("key", entity.get("key")), _value("addr", entity.get("creator"))
@@ -250,7 +260,25 @@ def _row(entity, schema, columns, optional, checker):
         out[name] = value
     if not _HASH.fullmatch(out.get("log_h") or ""):
         return None
+    for name, kind in (lenient or {}).items():
+        typed, raw = got.get(name, (None, None))
+        value = _value(kind, raw) if typed == kind else _BAD
+        out[name] = None if value is _BAD or (kind == "str" and not _text_ok(value)) else value
     return out
+
+
+def _splits(row):
+    """The run's lap times as a tuple, or None when it has none that check out: s1.. contiguous, none 0, of kind
+    "lap", adding up to its frames."""
+    laps = []
+    for name in ("s1", "s2", "s3", "s4"):
+        if row.get(name) is None:
+            break
+        laps.append(row[name])
+    rest = [name for name in ("s1", "s2", "s3", "s4")[len(laps):] if row.get(name) is not None]
+    if not laps or rest or row.get("split_kind") != SPLIT_KIND or 0 in laps or sum(laps) != row["frames"]:
+        return None
+    return tuple(laps)
 
 
 def _yield(i):
@@ -267,10 +295,12 @@ def decode_runs(data, game, checker, schema=RUN_SCHEMA, with_log=False):
     rows, dropped = [], 0
     for i, entity in enumerate(data):
         _yield(i)
-        row = _row(entity, schema, columns, RUN_OPTIONAL, checker)
+        row = _row(entity, schema, columns, RUN_OPTIONAL, checker, lenient=SPLIT_COLUMNS)
         if row is None or (game is not None and row["game"] != game) or not (row["book"] or row["label"]):
             dropped += 1
             continue
+        row["splits"] = _splits(row)
+        row["human"] = row["human"] and row["book"] is not None    # no record book: nobody's World ID behind it
         rows.append(row)
     return rows, dropped
 
@@ -284,6 +314,7 @@ def decode_listings(data, game, checker, season=None, schema=LISTING_SCHEMA):
         _yield(i)
         row = _row(entity, schema, LISTING_COLUMNS, LISTING_OPTIONAL, checker)
         if (row is None or game not in (None, row["game"]) or season not in (None, row["season"])
+                or (row["book"] is None) == (row["label"] is None)
                 or (row["pay_to"] is not None and not PAY_TO.fullmatch(row["pay_to"]))):
             dropped += 1
             continue
@@ -297,7 +328,8 @@ def run_row(row, listing=None):
                   book=row["book"], label=row["label"], human=row["human"],
                   credential=row["credential"] if row["human"] else None, log_h=row["log_h"], rules=row["rules"],
                   expires_block=row["expires"], listing=listing["key"] if listing else None,
-                  price=listing["price"] if listing else None, pay_to=listing["pay_to"] if listing else None)
+                  price=listing["price"] if listing else None, pay_to=listing["pay_to"] if listing else None,
+                  splits=row.get("splits"))
 
 
 # ---- the readers ---------------------------------------------------------------------------------------------------
@@ -307,7 +339,7 @@ def read_board(send, game, season, checker):
     listing (Q2) when one offers that very run (same log, time and game); the later block of the two reads; how many
     rows were dropped as not our checker's or misfit. RpcError when either read fails."""
     checker = checker_address(checker)
-    data, block = query(send, q1(game, season, checker), _select(RUN_COLUMNS))
+    data, block = query(send, q1(game, season, checker), _select(dict(RUN_COLUMNS, **SPLIT_COLUMNS)))
     runs, dropped = decode_runs(data, game, checker)
     data, listed_at = query(send, q2(game, season, checker), _select(LISTING_COLUMNS))
     listings, more = decode_listings(data, game, checker, season)
@@ -337,6 +369,6 @@ def read_run(send, key, checker, with_log=False):
     its plain `log` too (None on a listed run, whose ghost is encrypted and comes from the service)."""
     checker, key = checker_address(checker), entity_key(key)
     columns = dict(RUN_COLUMNS, log="bytes") if with_log else RUN_COLUMNS
-    data, _ = query(send, q6(RUN_SCHEMA, key, checker), _select(columns), limit=1)
+    data, _ = query(send, q6(RUN_SCHEMA, key, checker), _select(dict(columns, **SPLIT_COLUMNS)), limit=1)
     rows, _ = decode_runs(data, None, checker, with_log=with_log)
     return next((row for row in rows if row["key"] == key), None)

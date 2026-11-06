@@ -9,16 +9,22 @@ looking (PB's screen polls a call and reads status() every frame), so it goes qu
 
 One bridge request (an IDKit or Agent Pass session) carries several of the flow's steps: idkit_scan, idkit_confirm,
 idkit_verify on one, approve_scan, approve on the other. Each step resolves ok once the request's stage has moved
-past it, or with the request's failure at "done". A bridge that does not answer fails the step as World down."""
+past it, or with the request's failure at "done". A bridge that does not answer fails the step as World down.
+
+One console, one person: the sign-up sends this console's id (handler/console_id.py), and with every /health the worker
+asks GET /console/{id}, the console's binding to a record book as the bridge holds it (console_state(); the glue makes
+the ledger follow it). The id goes nowhere else and is never logged: on screen the console is its tag."""
 import json
 import logging
 import platform
+import re
 import threading
 import urllib.parse
 import urllib.request
 
 from arca_launcher.handler.mock import MockSponsors
-from arca_launcher.handler.sponsors import PAY_TO, TIMEOUT_MS, Result, SponsorNames
+from arca_launcher.handler.console_id import CONSOLE_RE
+from arca_launcher.handler.sponsors import BOOK, PAY_TO, TIMEOUT_MS, Result, SponsorNames
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +47,9 @@ _WAITS = {"idkit_scan": ("scan",), "idkit_confirm": ("scan", "confirm"), "idkit_
           "approve_scan": ("scan",), "approve": ("scan", "approve")}
 _STAGES = {"idkit": ("scan", "confirm", "verify", "done"), "agentpass": ("scan", "approve", "done")}
 # The handler's own failure names (mock.py's _OUTCOMES and _DOWN_FAILURE). Anything else the bridge says is World down.
-_FAILURES = {"idkit": ("id_rejected", "id_expired", "id_nocred", "id_dup", "id_offline"),
+# id_taken: another person's sign-up on a console bound to a book, refused before World's portal (an older bridge
+# never sends it).
+_FAILURES = {"idkit": ("id_rejected", "id_expired", "id_nocred", "id_dup", "id_taken", "id_offline"),
              "agentpass": ("ls_denied", "ls_expired", "ls_wrong", "ls_mismatch", "ls_reused", "ls_world_down")}
 _DOWN = {"idkit": "id_offline", "agentpass": "ls_world_down"}
 _EXPIRED = {"idkit": "id_expired", "agentpass": "ls_expired"}
@@ -49,6 +57,9 @@ _CANCELLED = {"idkit": "id_cancel", "agentpass": "ls_cancel"}   # where Circle w
 # What a success must carry to be shown: the record book (one per person) or the approval's one-time id. A duplicate
 # may come without its book (World App refused the second sign-up before any proof): the flow says so, unnamed.
 _NEEDS = {"idkit": "book", "agentpass": "jti"}
+_TAG = re.compile(r"C-[A-Z0-9]{3,8}")              # a console as the bridge tags it, the only way it is shown
+_CONSOLE_STATES = ("bound", "unbound", "released")
+CREDENTIAL_MAX = 32
 
 
 def http_transport(bridge_url):
@@ -135,13 +146,17 @@ class WorldSponsors:
     """Sponsors with World for real through its bridge, Arkiv and Hedera still mocked."""
 
     mock = True     # Arkiv and Hedera still are: their Square outcome lists and "Start over (mock)" stay
+    scouts = False  # PB's scout runs only with Hedera real (hedera.py)
+    explorer_origin = None   # Arkiv's explorer, as /arkiv/config names it: the Arkiv adapter's
 
     def __init__(self, bridge_url, clock_ms, names=SponsorNames(), *, transport=None, background=True, console=None):
         self.names = names
         self._clock_ms = clock_ms
         self._mock = MockSponsors(clock_ms, names)
         self._send = transport or http_transport(bridge_url)
-        self._console = console or platform.node() or "anypercent"
+        self._console = console or platform.node() or "anypercent"   # what a sign-up names (the host: older callers)
+        # This console's id (console_id.load_or_create), only as given and only one the bridge takes: never a host name.
+        self._console_id = console if isinstance(console, str) and CONSOLE_RE.fullmatch(console) else None
         self._lock = threading.Lock()
         self._request = None       # the latest request; a new one drops (and cancels) the one before it
         self._cancels = []         # dropped Agent Pass requests the bridge still has to hear about
@@ -150,6 +165,7 @@ class WorldSponsors:
         self.approvals = "agentpass"   # /health's "approvals"; an older bridge (or none yet) says nothing: Agent Pass
         self._wanted_ms = clock_ms()
         self._verify = None        # the latest idkit_verify call: World shows busy while it runs
+        self._binding = None       # GET /console/{id}'s last answer in the contract's shape; None until one
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread = None
@@ -161,6 +177,21 @@ class WorldSponsors:
 
     def mocked(self, service: str) -> bool:
         return service != "world"
+
+    @property
+    def console_id(self):
+        """This console's id as the bridge takes it, or None (none given, or one it would refuse: never sent)."""
+        return self._console_id
+
+    def console_state(self):
+        """The console's binding as the bridge last said it: {"tag", "book", "state", "credential"}, or None. Read every
+        frame by the glue: it never counts as someone looking (status() does)."""
+        with self._lock:
+            return dict(self._binding) if self._binding is not None else None
+
+    def chain_update(self):
+        """Hedera's late chain ids: the Hedera adapter's. Here there are none."""
+        return None
 
     def status(self) -> dict[str, str]:
         out = self._mock.status()
@@ -255,6 +286,24 @@ class WorldSponsors:
                 if isinstance(reply, dict):        # no answer: the last word on approvals stands
                     said = reply.get("approvals")
                     self.approvals = said if said in ("idkit", "agentpass") else "agentpass"
+            if isinstance(reply, dict) and self.console_id is not None:
+                self._read_binding()
+
+    def _read_binding(self):
+        """GET /console/{id}: the console's binding. No answer, a 404 from an older bridge or a reply off the contract
+        leaves the last good one, and never puts World down (/health says that)."""
+        try:
+            reply = self._send("GET", f"/console/{_quote(self._console_id)}", None, ASK_TIMEOUT_S)
+        except Exception:
+            return
+        binding = _binding(reply)
+        if binding is None:
+            return
+        with self._lock:
+            changed, self._binding = binding != self._binding, binding
+        if changed:                                # its tag only: the console's id is never logged
+            log.info("World: console %s %s%s", binding["tag"], binding["state"],
+                     f" to {binding['book']}" if binding["book"] else "")
 
     def _run(self):
         while not self._stop.is_set():
@@ -348,6 +397,22 @@ class WorldSponsors:
         if step == "idkit_scan":
             return {"console": self._console}
         return {"book": payload.get("book") or "", "action": _digest(payload)}
+
+
+def _binding(reply):
+    """GET /console/{id}'s reply as {"tag", "book", "state", "credential"}, or None when it is off the contract: a
+    bound console names its book, every book is a record book's id, the tag is a console tag."""
+    if not isinstance(reply, dict):
+        return None
+    tag, book, state, credential = (reply.get(k) for k in ("tag", "book", "state", "credential"))
+    if not (isinstance(tag, str) and _TAG.fullmatch(tag) and state in _CONSOLE_STATES):
+        return None
+    if not (book is None or (isinstance(book, str) and BOOK.fullmatch(book))) or (state == "bound" and book is None):
+        return None
+    if not (credential is None or (isinstance(credential, str) and 0 < len(credential) <= CREDENTIAL_MAX
+                                   and credential.isprintable())):
+        return None
+    return {"tag": tag, "book": book, "state": state, "credential": credential}
 
 
 def _title(payload):
