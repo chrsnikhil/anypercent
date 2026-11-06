@@ -12,14 +12,15 @@ copied); keys go in lowercase.
 A run row may carry its lap times (s1..s4, split_kind "lap"): kept only when they are contiguous from s1, every one
 above 0, and add up to the run's frames; otherwise the run is kept without them. A listing names its seller by exactly
 one of book (a person's record book) and label (the house's BOT ghost); one with both or neither is dropped. A run with
-no record book is never HUMAN: nobody's World ID stands behind it."""
+no record book is never HUMAN: nobody's World ID stands behind it. A listing's LISTING message on Hedera (hcs,
+"<topic>/<seq>") is kept only in that form; any other leaves it off, never the listing."""
 import functools
 import json
 import re
 import time
 import urllib.request
 
-from arca_launcher.handler.sponsors import PAY_TO, RunRow
+from arca_launcher.handler.sponsors import HCS_MSG, PAY_TO, RunRow
 
 RABDI_RPC = "https://rpc.rabdi.db-chain.testnet.arkiv.network"   # the public endpoint: no key on the console
 RUN_SCHEMA, LISTING_SCHEMA = "anypercent.run", "anypercent.listing"
@@ -50,6 +51,9 @@ LISTING_COLUMNS = {"run": "key", "game": "str", "season": "i32", "frames": "u64"
 # A listing written before Hedera (or with Hedera off) has no pay_to: it is on the board, but not for sale. It names
 # exactly one of book and label.
 LISTING_OPTIONAL = frozenset({"pay_to", "book", "label"})
+# A listing's LISTING message on Hedera ("<topic>/<seq>"): selected with it and read leniently, since it names a
+# record, never who is paid (one in any other form is left off, the listing kept).
+LISTING_LENIENT = {"hcs": "str"}
 
 
 class RpcError(Exception):
@@ -307,17 +311,20 @@ def decode_runs(data, game, checker, schema=RUN_SCHEMA, with_log=False):
 
 def decode_listings(data, game, checker, season=None, schema=LISTING_SCHEMA):
     """(the valid listing rows of data, as dicts in data's order, how many were dropped). game, season None: any. A
-    pay_to that is not a plain `0.0.N` account makes the row a misfit: PB never pays an account it cannot read."""
+    pay_to that is not a plain `0.0.N` account makes the row a misfit: PB never pays an account it cannot read. An hcs
+    that is not "<topic>/<seq>" is only left off (None)."""
     checker = checker_address(checker)
     rows, dropped = [], 0
     for i, entity in enumerate(data):
         _yield(i)
-        row = _row(entity, schema, LISTING_COLUMNS, LISTING_OPTIONAL, checker)
+        row = _row(entity, schema, LISTING_COLUMNS, LISTING_OPTIONAL, checker, lenient=LISTING_LENIENT)
         if (row is None or game not in (None, row["game"]) or season not in (None, row["season"])
                 or (row["book"] is None) == (row["label"] is None)
                 or (row["pay_to"] is not None and not PAY_TO.fullmatch(row["pay_to"]))):
             dropped += 1
             continue
+        if row["hcs"] is not None and not HCS_MSG.fullmatch(row["hcs"]):
+            row["hcs"] = None
         rows.append(row)
     return rows, dropped
 
@@ -329,7 +336,7 @@ def run_row(row, listing=None):
                   credential=row["credential"] if row["human"] else None, log_h=row["log_h"], rules=row["rules"],
                   expires_block=row["expires"], listing=listing["key"] if listing else None,
                   price=listing["price"] if listing else None, pay_to=listing["pay_to"] if listing else None,
-                  splits=row.get("splits"))
+                  splits=row.get("splits"), hcs=listing.get("hcs") if listing else None)
 
 
 # ---- the readers ---------------------------------------------------------------------------------------------------
@@ -341,7 +348,7 @@ def read_board(send, game, season, checker):
     checker = checker_address(checker)
     data, block = query(send, q1(game, season, checker), _select(dict(RUN_COLUMNS, **SPLIT_COLUMNS)))
     runs, dropped = decode_runs(data, game, checker)
-    data, listed_at = query(send, q2(game, season, checker), _select(LISTING_COLUMNS))
+    data, listed_at = query(send, q2(game, season, checker), _select(dict(LISTING_COLUMNS, **LISTING_LENIENT)))
     listings, more = decode_listings(data, game, checker, season)
     offers = {}
     for listing in listings:
@@ -359,7 +366,7 @@ def read_board(send, game, season, checker):
 def read_listing(send, key, checker):
     """The live listing with this key that our checker created (Q6), decoded; None when it is gone or not ours."""
     checker, key = checker_address(checker), entity_key(key)
-    data, _ = query(send, q6(LISTING_SCHEMA, key, checker), _select(LISTING_COLUMNS), limit=1)
+    data, _ = query(send, q6(LISTING_SCHEMA, key, checker), _select(dict(LISTING_COLUMNS, **LISTING_LENIENT)), limit=1)
     rows, _ = decode_listings(data, None, checker)
     return next((row for row in rows if row["key"] == key), None)
 

@@ -1560,3 +1560,107 @@ def test_only_a_chain_card_is_saved_for_the_browser(tmp_path):
     app.frame(16, [A.Y])                                         # the hub
     assert app.handler.save_resume() is False and not os.path.exists(resume_path(tmp_path))
     app.close()
+
+
+# ---- the real board: pick any run and open its records on chain ------------------------------------------------------
+
+ENTITY = "https://rabdi.explorer.arkiv.network/entity/"
+BOT_KEY, MY_KEY = "0x" + "b0a2" * 16, "0x" + "7a2f" * 16
+
+
+class BoardSponsors(MockSponsors):
+    """Arkiv real as far as the glue can tell: MDGP's board is BOT-A2's listed run (its LISTING message on Hedera) and
+    this console's book's own run, each row's explorer link built as the Arkiv adapter builds it. World and Hedera are
+    the mock's."""
+    explorer_origin = "https://rabdi.explorer.arkiv.network"
+
+    def __init__(self, clock_ms):
+        from arca_launcher.handler.sponsors import BoardRead, RunRow
+        super().__init__(clock_ms)
+        row = dict(game="MDGP", title="MARINE DRIVE GP", human=False, credential=None, rules=4, expires_block=1,
+                   price="0.1")
+        self.read = BoardRead(rows=(
+            RunRow(key=BOT_KEY, frames=6236, runner="b" * 16, book=None, label="BOT-A2", log_h="1" * 64,
+                   listing="0x" + "1a2b" * 16, pay_to="0.0.7700001", hcs="0.0.11332437/41", **row),
+            RunRow(key=MY_KEY, frames=BEST, runner="7" * 16, book="ANY-7QZ", label=None, log_h="2" * 64, **row)),
+            block=1)
+
+    def mocked(self, service):
+        return service != "board"
+
+    def board(self, game_id, look=True):
+        return self.read if game_id == "MDGP" else None
+
+    def entity_link(self, key):
+        return ENTITY + key
+
+
+def board_app(tmp_path, **kw):
+    """PB's real board on Marine Drive GP: the hub (Triangle on Home), then Cross on its first row."""
+    app = make(tmp_path, **kw)
+    app.sponsors = BoardSponsors(lambda: app.clock[0])
+    app.frame(16, [A.Y])
+    app.frame(16, [A.A])
+    assert app.nav.handler.state.name == "board" and app.nav.handler.board_row.name == "YOU"
+    return app
+
+
+def test_up_down_and_triangle_on_the_real_board_open_a_runs_records_and_its_links(tmp_path):
+    hw = LaptopHw()
+    app = board_app(tmp_path, hw=hw)
+    flow = app.nav.handler
+    app.frame(16, [A.UP])
+    assert flow.board_row.name == "BOT-A2"
+    app.frame(16, [A.Y])
+    assert flow.state.name == "run_links" and hw.opened == [] and flow.ctx["links_run"] == "BOT-A2's 1:43.93 run"
+    assert [row["label"] for row in flow.ctx["chain"]] == ["Arkiv run", "Arkiv listing", "Hedera LISTING #41",
+                                                           "Replayed by the checker", "Pays 0.0.7700001"]
+    app.frame(16, [A.Y])                                         # its first row: the run on the explorer
+    assert hw.opened == [ENTITY + BOT_KEY] and app.nav.notice == "Opened in a window"
+    app.frame(16, [A.DOWN, A.DOWN])
+    app.frame(16, [A.Y])
+    assert hw.opened[-1] == "https://hashscan.io/testnet/topic/0.0.11332437"
+    app.frame(16, [A.B])
+    assert flow.state.name == "board" and flow.board_row.name == "BOT-A2"   # the cursor where it was
+    app.frame(16, [A.DOWN, A.Y])
+    assert flow.state.name == "run_links" and flow.ctx["links_run"] == "ANY-7QZ's 1:44.83 run"
+    app.close()
+
+
+def test_a_runs_records_come_back_after_the_browser_and_circle_finds_the_board_as_it_was(tmp_path):
+    hw = PiHw(resume=resume_path(tmp_path))
+    app = board_app(tmp_path, hw=hw)
+    app.frame(16, [A.UP])
+    app.frame(16, [A.Y])
+    flow = app.nav.handler
+    before = (list(flow.ctx["chain"]), flow.ctx["chain_i"], flow.line)
+    hand_off(app)
+    assert hw.opened == [ENTITY + BOT_KEY] and hw.saved_first == [True]
+    with open(resume_path(tmp_path), encoding="utf-8") as f:
+        saved = json.load(f)
+    assert saved["state"] == "run_links" and saved["ctx"]["board_pick"] == "BOT-A2"
+    app.close()
+    again = make(tmp_path, book=None)                            # the same console, started again
+    again.sponsors = BoardSponsors(lambda: again.clock[0])
+    again.frame(16)
+    back = again.nav.handler
+    assert again.nav.screen is Screen.HANDLER and back.state.name == "run_links"
+    assert (back.ctx["chain"], back.ctx["chain_i"], back.line) == before
+    again.frame(16, [A.B])
+    assert back.state.name == "board" and back.board_row.name == "BOT-A2"
+    again.close()
+
+
+def test_the_mock_board_keeps_its_buttons_as_they_were(tmp_path):
+    app = make(tmp_path, hw=LaptopHw())
+    app.frame(16, [A.Y])
+    app.frame(16, [A.A])
+    flow = app.nav.handler
+    assert flow.state.name == "board" and flow.board_cursor is None
+    app.frame(16, [A.UP, A.Y, A.DOWN])
+    assert flow.state.name == "board" and app.hw.opened == [] and flow.ctx.get("board_pick") is None
+    app.frame(16, [A.X])                                         # Square: Humans only, as before
+    assert flow.ctx["humans_only"] is True
+    app.frame(16, [A.A])                                         # Cross: the target, as before
+    assert flow.state.name == "target"
+    app.close()

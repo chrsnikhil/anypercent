@@ -152,7 +152,7 @@ def test_the_board_is_one_page_of_each_with_no_ghost_bytes():
                                                "human", "credential", "log_h", "rules", "s1", "s2", "s3", "s4",
                                                "split_kind"}
     assert set(o2["select"]["attributes"]) == {"arkiv.schema", "run", "game", "season", "frames", "log_h", "price",
-                                               "seller", "book", "label", "human", "pay_to"}
+                                               "seller", "book", "label", "human", "pay_to", "hcs"}
 
 
 def test_the_fixture_decodes():
@@ -315,9 +315,10 @@ def test_a_listing_by_its_key():
     got = rpc.read_listing(stub, k("l-6ps"), CHECKER)
     assert got == {"key": k("l-6ps"), "creator": CHECKER, "expires": 0x46a1d0, "run": k("6ps-fast"), "game": "MDGP",
                    "season": 1, "frames": 6170, "log_h": h("6ps-fast"), "price": "0.1", "seller": "3f9a0c21d4e5b6a7",
-                   "book": "ANY-6PS", "label": None, "human": True, "pay_to": None}
+                   "book": "ANY-6PS", "label": None, "human": True, "pay_to": None, "hcs": None}
     method, (query, options), _ = stub.requests[0]
     assert query == rpc.q6(rpc.LISTING_SCHEMA, k("l-6ps"), CHECKER) and options["limit"] == "0x1"
+    assert "hcs" in options["select"]["attributes"]
 
 
 def _with_pay_to(value, kind="str"):
@@ -341,6 +342,27 @@ def test_a_listing_names_the_account_it_pays_when_it_has_one():
                                          ("0.0.5123456", "key"), ("0x4e2d40", "u64")])
 def test_a_listing_naming_an_account_x402_cannot_pay_is_a_misfit(value, kind):
     assert rpc.decode_listings([_with_pay_to(value, kind)], None, CHECKER) == ([], 1)
+
+
+def _with_hcs(value, kind="str"):
+    listing = _with_pay_to("0.0.5123456")
+    listing["attributes"].append({"name": "hcs", "type": kind, "value": value})
+    return listing
+
+
+def test_a_listing_names_its_hedera_listing_message_and_a_misfit_one_is_left_off():
+    """hcs ("<topic>/<seq>": the listing's LISTING message on Hedera) is optional and read leniently: one in any other
+    form is left off and the listing kept, since it names a record, never who is paid."""
+    listing = _with_hcs("0.0.11332437/41")
+    assert rpc.read_listing(StubRpc(page(listing)), k("l-6ps"), CHECKER)["hcs"] == "0.0.11332437/41"
+    rows, _, _ = rpc.read_board(StubRpc(Q1_PAGE, page(listing, block="0x3fe91")), "MDGP", 1, CHECKER)
+    assert next(r for r in rows if r.key == k("6ps-fast")).hcs == "0.0.11332437/41"
+    rows, _, _ = rpc.read_board(StubRpc(Q1_PAGE, Q2_PAGE), "MDGP", 1, CHECKER)
+    assert all(r.hcs is None for r in rows)                             # listings written before it: none
+    for value, kind in (("0.0.11332437", "str"), ("0.0.1/x", "str"), ("1.2.3/4", "str"), ("0.0.1/41/2", "str"),
+                        ("0.0.1/" + "9" * 21, "str"), ("0.0.1/41 ", "str"), ("0x29", "u64")):
+        (got,), dropped = rpc.decode_listings([_with_hcs(value, kind)], None, CHECKER)
+        assert dropped == 0 and got["hcs"] is None and got["pay_to"] == "0.0.5123456", (value, kind)
 
 
 def test_a_listing_that_is_gone_or_not_ours_is_none():

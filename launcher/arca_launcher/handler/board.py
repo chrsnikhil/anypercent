@@ -46,6 +46,9 @@ class Row:
     credential: str | None = None   # what World checked ("Orb", "Selfie Check"), when known
     key: str | None = None          # the real board's run row on Arkiv (None: a mock runner, or YOU's local best)
     listing: str | None = None      # the live listing that offers this run's ghost, on the real board
+    owner: str | None = None        # whose run row it is on Arkiv: its book or label (YOU's own book too)
+    pay_to: str | None = None       # the Hedera account that live listing pays
+    hcs: str | None = None          # that listing's LISTING message on Hedera ("<topic>/<seq>")
 
     @property
     def tier(self) -> str:
@@ -119,7 +122,9 @@ def build_real(rows, best_frames: int | None, you_book: str | None, you_human: s
       ahead is "nobody_ahead"; no run rows at all is "no_board".
 
     HUMAN and its credential come from each row's own fields. YOU's come from YOU's own row when the board shows it,
-    else from you_human (the credential World checked for the console's book, with a real World proof behind it)."""
+    else from you_human (the credential World checked for the console's book, with a real World proof behind it).
+    Every row from Arkiv carries its records on chain: its key, its owner (book or label), and its live listing's key,
+    payout account and LISTING message on Hedera; YOU's local best has none."""
     if not rows:
         return Board(rows=(), target=None, case="no_board")
     mine, others, seen = None, [], set()
@@ -155,10 +160,11 @@ def build_real(rows, best_frames: int | None, you_book: str | None, you_human: s
             human, credential = False, None
         else:
             human, credential = run.human, run.credential if run.human else None
+        on_chain = {} if run is None else {"key": run.key, "listing": run.listing, "owner": run.book or run.label,
+                                           "pay_to": run.pay_to, "hcs": run.hcs}
         out.append(Row(rank=rank, name=name, frames=frames, you=you, listed=listed,
                        sells=listed and not you and for_sale(run),
-                       target=run is not None and run is target, human=human, credential=credential,
-                       key=run.key if run is not None else None, listing=run.listing if run is not None else None))
+                       target=run is not None and run is target, human=human, credential=credential, **on_chain))
     rows_out = tuple(out)
     return Board(rows=rows_out, target=next((row for row in rows_out if row.target), None), case=case)
 

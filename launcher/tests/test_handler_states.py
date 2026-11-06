@@ -34,7 +34,7 @@ _NEW_STATES = {
     "race_unverified", "book_view", "listings_view", "start_over",
     "board_new", "buy_check_fail", "buy_load_fail", "ls_publish_fail",
     "buy_late", "own_result", "own_again", "id_dup_unnamed", "ls_confirm", "ls_copied",
-    "id_taken", "scout", "scout_pick",
+    "id_taken", "scout", "scout_pick", "run_links",
 }
 
 # Sample values for every non-sponsor-name placeholder the table uses, so copy can be filled
@@ -53,7 +53,7 @@ _SAMPLES = {
     "scout_reason": "You lose 2.85 s in lap 2: BOT-A2 runs it in 33.23 s, you in 36.08 s.",
     "scout_down": "My scout is not answering, so here is the ghost just ahead. ",
     "refused_why": "a BOT listing must pay the house", "payee": "the house account 0.0.9473064",
-    "record_line": "Recorded: Hedera LISTING #41",
+    "record_line": "Recorded: Hedera LISTING #41", "links_run": "BOT-A2's 1:43.93 run",
 }
 
 # The prototype states whose own S entry carries a `what` (handler-states.html). A fix round
@@ -74,7 +74,7 @@ def _filled(text: str) -> str:
 
 def test_every_prototype_state_is_here():
     assert _PROTOTYPE_STATES | _NEW_STATES == set(STATES)
-    assert len(STATES) == 65
+    assert len(STATES) == 66
 
 
 def test_start_matches_the_brief():
@@ -399,7 +399,7 @@ def test_placeholders_constant_matches_what_the_table_uses():
         "rank", "new_rank", "run_time", "price", "budget_left", "book", "other_book", "code",
         "wallet", "buyer", "ghost_look", "split", "game", "runs", "sold", "jti", "listing_days",
         "ghost_kept", "credential", "approve_how", "approve_via", "now_price", "receipt_text",
-        "console_tag", "scout_reason", "scout_down", "refused_why", "payee", "record_line",
+        "console_tag", "scout_reason", "scout_down", "refused_why", "payee", "record_line", "links_run",
     }
     assert PLACEHOLDERS == expected
 
@@ -519,3 +519,12 @@ def test_the_finished_steps_show_their_chain_ids_and_the_console_its_tag():
     assert "Paid: {receipt_text}" in STATES["buy_load"].card["rows"]
     assert "Pays {payee}" in STATES["buy_check"].card["rows"] and "To {payee}" in STATES["buy_pay"].card["rows"]
     assert len(STATES["buy_pay"].card["rows"]) == 2                  # the coins fly under them: two rows at most
+
+
+def test_a_board_runs_records_are_a_chain_card_that_goes_back_to_the_board():
+    from arca_launcher.handler.flow import CHAIN_STATES
+    state = STATES["run_links"]
+    assert state.card == {"t": "chain", "h": "{links_run}"} and "run_links" in CHAIN_STATES
+    assert state.on == {"cross": "board", "circle": "board"}         # the flow keeps the board's cursor
+    assert state.call is None and not state.steps and state.kind == "" and state.fx == ""
+    assert "{links_run}" in state.say and "Triangle" in state.say

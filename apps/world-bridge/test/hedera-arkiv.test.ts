@@ -205,6 +205,22 @@ describe("old rows and the readers", () => {
     assert.ok(page.ACCOUNT_RE.test(ACCT) && page.HCS_RE.test("0.0.8001/41") && !page.HCS_RE.test("0.0.8001"));
     assert.ok(html.includes("pays ${l.pay_to}") && html.includes("approved on Hedera") && html.includes("https://hashscan.io/testnet"));
   });
+
+  it("the web board links each run, and a listed run's listing, on the Arkiv explorer", () => {
+    const html = readFileSync(join(appDir, "public", "board.html"), "utf8");
+    const js = html.split("<script>")[1].split("</script>")[0].split("// ---- State")[0];
+    const page = runInNewContext(`${js}\n;({ entityUrl, EXPLORER })`, { BigInt, Number, document: {}, location: {} }) as {
+      entityUrl: (key: unknown) => string | null;
+      EXPLORER: string;
+    };
+    const run = "0x" + "12ab".repeat(16);
+    assert.equal(page.EXPLORER, "https://rabdi.explorer.arkiv.network");
+    assert.equal(page.entityUrl(run), `${page.EXPLORER}/entity/${run}`); // as the service's explorer_entity builds it
+    for (const odd of [undefined, null, 7, "", "0x12", run + "00", run.toUpperCase(), `../${run}`]) assert.equal(page.entityUrl(odd), null, String(odd));
+    const body = html.split("// ---- State")[1];
+    assert.ok(body.includes('"on Arkiv"') && body.includes('"listing"') && body.includes("arkivLinks(meta, r)"));
+    assert.ok(/hederaLinks\(meta, r\.listing\);\s*\n\s*arkivLinks\(meta, r\);/.test(body), "next to the Hedera links");
+  });
 });
 
 describe("the payout registry (data/payto.json)", () => {

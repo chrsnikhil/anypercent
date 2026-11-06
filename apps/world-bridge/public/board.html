@@ -174,6 +174,9 @@ const LISTING_REQUIRED = ["run", "game", "season", "frames", "log_h", "price", "
 const ACCOUNT_RE = /^0\.0\.\d{1,10}$/;
 const HCS_RE = /^(0\.0\.\d{1,10})\/\d{1,20}$/;
 const BOOK_RE = /^ANY-[A-Z0-9]{3,8}$/;
+const KEY_RE = /^0x[0-9a-f]{64}$/;
+/** A row's page on the Arkiv explorer (its entity key, lower case as decode() keeps it), as the service's explorer_entity builds it; null for anything else. */
+const entityUrl = (key) => (typeof key === "string" && KEY_RE.test(key) ? `${EXPLORER}/entity/${key}` : null);
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
@@ -359,8 +362,23 @@ function runnerCell(r) {
   } else if (!r.book) meta.append(el("span", "badge open", "OPEN"));
   if (r.listing) meta.append(el("span", "badge listed", "LISTED"), `${r.listing.price} USDC`);
   if (r.listing) hederaLinks(meta, r.listing);
+  arkivLinks(meta, r);
   if (meta.childNodes.length) td.append(meta);
   return td;
+}
+
+/** "on Arkiv" (the run's entity page on the explorer) and, for a listed run, "listing" (its listing's page). */
+function arkivLinks(parent, r) {
+  const run = entityUrl(r.key);
+  if (run) {
+    const a = el("a", "", "on Arkiv"); a.href = run; a.rel = "noopener"; a.target = "_blank"; a.title = `run ${r.key}`;
+    parent.append(" ", a);
+  }
+  const listing = r.listing ? entityUrl(r.listing.key) : null;
+  if (listing) {
+    const a = el("a", "", "listing"); a.href = listing; a.rel = "noopener"; a.target = "_blank"; a.title = `listing ${r.listing.key}`;
+    parent.append(" ", a);
+  }
 }
 
 /** "pays 0.0.N" (its HashScan account) and "approved on Hedera" (the market topic) when the row has them. */

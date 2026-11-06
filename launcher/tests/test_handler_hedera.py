@@ -626,6 +626,19 @@ def test_hedera_is_real_on_top_of_real_world_and_arkiv(tmp_path):
     assert [mocked.mocked(x) for x in ("world", "board", "third")] == [True, False, False] and mocked.mock is True
 
 
+def test_an_arkiv_rows_explorer_link_is_the_arkiv_adapters(tmp_path):
+    rig = Rig(tmp_path)
+    run = "0x" + "12ab" * 16
+    assert rig.sponsors.entity_link(run) is None                    # /arkiv/config not read yet
+    rig.service.config.update(explorer_tx="https://rabdi.explorer.arkiv.network/tx/{tx}",
+                              explorer_entity="https://rabdi.explorer.arkiv.network/entity/{key}")
+    rig.arkiv.prefetch()
+    assert rig.sponsors.entity_link(run) == "https://rabdi.explorer.arkiv.network/entity/" + run
+    bare = HederaSponsors(MockSponsors(rig.clock), "http://bridge.test:8787", rig.clock, rig.state_dir,
+                          transport=rig.hedera, background=False)
+    assert bare.entity_link(run) is None                            # no Arkiv adapter under it: no link
+
+
 def test_the_hedera_pill_follows_health_and_a_running_job(tmp_path):
     rig = Rig(tmp_path)
     s = rig.sponsors

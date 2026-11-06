@@ -8,6 +8,8 @@ from typing import Protocol
 
 # A seller's Hedera account as a listing names it: a plain `0.0.N` id, the only form x402 pays (never an EVM alias).
 PAY_TO = re.compile(r"0\.0\.[0-9]{1,10}")
+# A listing's LISTING message on Hedera as its row names it (hcs): "<topic>/<seq>", as the web board reads it.
+HCS_MSG = re.compile(r"(0\.0\.[0-9]{1,10})/([0-9]{1,20})")
 BOOK = re.compile(r"ANY-[A-Z0-9]{3,8}")              # a record book's id, as the bridge makes them
 HOUSE_LABEL = re.compile(r"BOT-[A-Z]{1,2}[1-8]")     # a house BOT ghost's label: a program's run, never a person's
 
@@ -61,7 +63,8 @@ class RunRow:
     are the row's own fields, the only source of a HUMAN badge. expires_block is the row's `$expiresAt`; price is
     the listing's price in USDC as Arkiv holds it (a decimal string such as "0.1"); pay_to the seller's Hedera account
     the listing names (PAY_TO), None on a listing written without one: listed, but not for sale. splits: the run's lap
-    times in frames (s1..s4 on its row: MDGP's laps), only when they add up to its frames; None on a row without."""
+    times in frames (s1..s4 on its row: MDGP's laps), only when they add up to its frames; None on a row without. hcs:
+    the listing's LISTING message on Hedera (HCS_MSG, "<topic>/<seq>"), None on a listing written without one."""
     key: str
     game: str
     title: str
@@ -78,6 +81,7 @@ class RunRow:
     price: str | None = None
     pay_to: str | None = None
     splits: tuple[int, ...] | None = None
+    hcs: str | None = None
 
 
 @dataclass(frozen=True)

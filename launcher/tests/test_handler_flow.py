@@ -1557,10 +1557,13 @@ def test_the_words_the_flow_and_cards_add_keep_the_copy_rules():
              C.HUMAN_LEGEND, "Scout's pick", "No record book on this console", "Humans only", "All runners",
              "Next QR", "linked to ANY-6PS", "not linked yet", "released", "HOUSE", F.REPLAYED_CHECKER,
              F.REPLAYED_HERE, "1:42.83 = 6170 frames · end 225d59fd", "1:43.93 = 6236 frames, same as the board",
-             "1:43.93 = 6236 frames, checked when first loaded", "Open link", "Next", *A.HANDOFF,
+             "1:43.93 = 6236 frames, checked when first loaded", "Pick", "On chain", "Arkiv run", "Arkiv listing",
+             "Hedera LISTING #41", "topic 0.0.11332437", "1:43.93 = 6236 frames", "Pays 0.0.7700001",
+             "the house account", "ANY-6PS's account", "BOT-A2's 1:43.93 run", "Open link", "Next", *A.HANDOFF,
              "The browser could not start", "Opened in a window", "Links open on the handheld or the laptop"]
     assert all(text in inspect_source(A) for text in texts[-3:])
     assert "Humans only" in inspect_source(V) and "Scout's pick" in inspect_source(C)
+    assert "On chain" in inspect_source(V) and "the house account" in inspect_source(F)
     for text in texts:
         low = text.lower()
         for word in BANNED_WORDS:
@@ -1793,3 +1796,179 @@ def test_a_restore_counts_for_one_start_only(tmp_path):
     flow = _restored(rig)
     flow.start("ls_done")                                            # a fresh start after it: arriving counts again
     assert len(flow.ledger.listings) == 2
+
+
+# ---- the real board's cursor, and a board run's records on chain (run_links) -----------------------------------------
+
+ENTITY = "https://rabdi.explorer.arkiv.network/entity/"
+BOT_KEY, BOT_LISTING, MINE = "0x" + "b0a2" * 16, "0x" + "1a2b" * 16, "0x" + "08e7" * 16
+MSG = "0.0.11332437/41"
+
+
+class LinkSponsors(RealSponsors):
+    """Every sponsor real, the explorer named: entity_link builds a row's link as the Arkiv adapter does."""
+    explorer_origin = "https://rabdi.explorer.arkiv.network"
+
+    def entity_link(self, key):
+        return ENTITY + key.lower()
+
+
+def _real_board(best=6414):
+    """The real board as build_real makes it, YOU's book ANY-6PS: BOT-A2 listed by the house with its LISTING message on
+    Hedera (1st), TEAM's run with no listing (2nd), YOU's own listed run (3rd), ANY-9MX listed before payout accounts
+    and messages (4th)."""
+    import dataclasses
+    from arca_launcher.handler.board import build_real
+    from test_handler_board import run
+    rows = (run("BOT-A2", 6236, book=False, listed=True, key=BOT_KEY, pay_to=HOUSE, hcs=MSG),
+            run("TEAM", 6300, book=False), run("ANY-6PS", 6414, listed=True, key=MINE, pay_to="0.0.9473064"),
+            run("ANY-9MX", 6500, listed=True))
+    rows = (dataclasses.replace(rows[0], listing=BOT_LISTING),) + rows[1:]
+    return build_real(rows, best, "ANY-6PS", "Orb", need_pay_to=True).rows
+
+
+def _on_board(tmp_path, sponsors=LinkSponsors, **ctx):
+    base = dict(board_rows=_real_board(), board_case="ok", best_frames=6414)
+    base.update(ctx)
+    rig = Rig(tmp_path, book="ANY-6PS", sponsors=sponsors, **base)
+    rig.flow.start("board")
+    return rig
+
+
+def _picked(flow):
+    row = flow.board_row
+    return row.name if row is not None else None
+
+
+def test_the_real_board_has_a_cursor_that_starts_on_you_and_stays_on_the_rows(tmp_path):
+    rig = _on_board(tmp_path)
+    flow = rig.flow
+    assert rig.state == "board" and flow.board_cursor == 2 and _picked(flow) == "YOU"
+    for press, name in (("up", "TEAM"), ("up", "BOT-A2"), ("up", "BOT-A2"), ("down", "TEAM"), ("down", "YOU"),
+                        ("down", "ANY-9MX"), ("down", "ANY-9MX")):
+        assert flow.press(press) is None and _picked(flow) == name, press
+    flow.press("square")                                            # Humans only: YOU and ANY-9MX shown
+    assert [row.name for row in flow.board_shown] == ["YOU", "ANY-9MX"] and flow.board_cursor == 1
+    flow.press("up")
+    assert _picked(flow) == "YOU"
+    flow.press("square")
+    flow.press("up")
+    assert _picked(flow) == "TEAM"
+    flow.press("square")                                            # its row hidden: YOU's, never off the rows
+    assert _picked(flow) == "YOU" and flow.board_cursor == 0
+    flow.press("square")
+    assert _picked(flow) == "TEAM"                                  # shown again: the runner picked
+    flow.ctx["board_rows"] = tuple(r for r in _real_board() if r.name != "TEAM")   # a new read without that runner
+    assert _picked(flow) == "YOU" and flow.board_cursor == 1
+    flow.ctx["board_rows"] = ()
+    assert flow.board_cursor is None and flow.board_row is None
+    assert flow.press("down") is None and flow.press("triangle") is None and rig.state == "board"
+    flow.ctx["board_rows"] = _real_board()
+    flow.press("up")
+    flow.press("circle")                                            # the hub
+    assert flow.state.name == "hub" and flow.board_cursor is None
+    flow.pick(0)                                                    # the board again: a new look starts on YOU
+    assert rig.state == "board" and _picked(flow) == "YOU"
+    rig = _on_board(tmp_path / "new", board_case="no_best")         # board_new has it too
+    assert rig.state == "board_new" and _picked(rig.flow) == "YOU"
+    rig.flow.press("up")
+    assert _picked(rig.flow) == "TEAM"
+
+
+def test_the_mock_board_has_no_cursor_and_triangle_does_nothing(tmp_path):
+    from arca_launcher.handler.board import build
+    rig = Rig(tmp_path, board_rows=build(6070, 6290).rows)
+    rig.flow.start("board")
+    assert rig.flow.board_cursor is None and rig.flow.board_row is None
+    for press in ("up", "down", "triangle"):
+        assert rig.flow.press(press) is None and rig.state == "board", press
+
+
+def test_triangle_on_a_board_row_shows_that_runs_records_on_chain(tmp_path):
+    from arca_launcher.handler.flow import OpenLink
+    rig = _on_board(tmp_path)
+    flow = rig.flow
+    flow.press("up")
+    flow.press("up")
+    assert flow.press("triangle") is None and rig.state == "run_links"
+    assert flow.ctx["links_run"] == "BOT-A2's 1:43.93 run" and flow.ctx["chain_i"] == 0
+    assert flow.ctx["chain"] == [
+        {"label": "Arkiv run", "value": "0xb0a2…b0a2", "url": ENTITY + BOT_KEY},
+        {"label": "Arkiv listing", "value": "0x1a2b…1a2b", "url": ENTITY + BOT_LISTING},
+        {"label": "Hedera LISTING #41", "value": "topic 0.0.11332437",
+         "url": "https://hashscan.io/testnet/topic/0.0.11332437"},
+        {"label": "Replayed by the checker", "value": "1:43.93 = 6236 frames", "url": ENTITY + BOT_KEY},
+        {"label": "Pays 0.0.7700001", "value": "the house account",
+         "url": "https://hashscan.io/testnet/account/0.0.7700001"}]
+    assert flow.fill(flow.state.card["h"]) == "BOT-A2's 1:43.93 run"
+    flow.press("down")
+    assert flow.press("triangle") == OpenLink(ENTITY + BOT_LISTING)
+    flow.press("up")
+    flow.press("up")                                                # Up and Down go round, as on any chain card
+    assert flow.press("triangle") == OpenLink("https://hashscan.io/testnet/account/0.0.7700001")
+    assert flow.press("circle") is None and rig.state == "board" and _picked(flow) == "BOT-A2"   # the same cursor
+    flow.press("down")
+    flow.press("down")
+    flow.press("triangle")
+    assert flow.ctx["links_run"] == "ANY-6PS's 1:46.90 run"         # YOU's row: the book's run
+    assert [(r["label"], r["value"]) for r in flow.ctx["chain"]] == [
+        ("Arkiv run", "0x08e7…08e7"), ("Arkiv listing", "0x0000…190f"),
+        ("Replayed by the checker", "1:46.90 = 6414 frames"), ("Pays 0.0.9473064", "ANY-6PS's account")]
+    assert flow.press("cross") is None and rig.state == "board" and _picked(flow) == "YOU"   # Cross: as Circle
+    flow.press("up")
+    flow.press("triangle")                                          # TEAM: a run with no listing
+    assert [r["label"] for r in flow.ctx["chain"]] == ["Arkiv run", "Replayed by the checker"]
+    flow.press("circle")
+    flow.press("down")
+    flow.press("down")
+    flow.press("triangle")                                          # ANY-9MX: listed with no account, no message
+    assert [r["label"] for r in flow.ctx["chain"]] == ["Arkiv run", "Arkiv listing", "Replayed by the checker"]
+
+
+def test_a_row_on_no_chain_opens_nothing_and_links_wait_for_the_explorer(tmp_path):
+    rig = _on_board(tmp_path, board_rows=_real_board(best=6000))   # YOU's local best: not on the board yet
+    assert _picked(rig.flow) == "YOU" and rig.flow.board_row.key is None
+    assert rig.flow.press("triangle") is None and rig.state == "board"
+
+    class NoExplorer(RealSponsors):                                 # /arkiv/config not read: no Arkiv link
+        explorer_origin = None
+    rig = _on_board(tmp_path / "plain", sponsors=NoExplorer)
+    rig.flow.press("up")
+    rig.flow.press("up")
+    rig.flow.press("triangle")
+    assert rig.state == "run_links"
+    assert [r["url"] for r in rig.flow.ctx["chain"]] == [None, None, "https://hashscan.io/testnet/topic/0.0.11332437",
+                                                         None, "https://hashscan.io/testnet/account/0.0.7700001"]
+
+    class Elsewhere(LinkSponsors):                                  # a link off the allowed explorer is never drawn
+        def entity_link(self, key):
+            return "https://evil.example/entity/" + key
+    rig = _on_board(tmp_path / "evil", sponsors=Elsewhere)
+    rig.flow.press("triangle")
+    assert [r["url"] for r in rig.flow.ctx["chain"]] == [None, None, None,
+                                                         "https://hashscan.io/testnet/account/0.0.9473064"]
+
+
+def test_run_links_never_takes_a_payments_late_receipt_and_comes_back_after_the_browser(tmp_path):
+    rig = _bought(tmp_path)
+    assert rig.flow.chain_pay is not None
+    rig.flow.press("circle")                                        # the hub, then the real board
+    rig.flow.ctx.update(board_rows=_real_board(), board_case="ok")
+    rig.flow.pick(0)
+    rig.flow.press("up")
+    rig.flow.press("up")
+    rig.flow.press("triangle")
+    assert rig.state == "run_links" and rig.flow.chain_pay is None
+    rows = list(rig.flow.ctx["chain"])
+    rig.sponsors.update = {"receipt": TX, "intent": PAID["intent"], "receipt_msg": {
+        "seq": 8, "tx": "0.0.9185802@1762412360.000000001",
+        "hashscan": "https://hashscan.io/testnet/transaction/0.0.9185802-1762412360-000000001"}}
+    rig.wait(200)
+    assert rig.flow.ctx["chain"] == rows                            # the purchase's rows never come back over it
+    rig.flow.press("down")
+    flow = _restored(rig)
+    assert flow.state.name == "run_links" and flow.ctx["chain"] == rows and flow.ctx["chain_i"] == 1
+    assert flow.line == rig.flow.line and "BOT-A2's 1:43.93 run" in flow.line
+    flow.ctx["board_rows"] = _real_board()                          # the glue builds the board again
+    flow.press("circle")
+    assert flow.state.name == "board" and _picked(flow) == "BOT-A2"

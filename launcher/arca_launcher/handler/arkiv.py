@@ -13,6 +13,7 @@ one and runs them.
 - Each run is replayed before the console calls it checked: publish passes on the checker's replay (its frames and
   final hash), load_ghost says the frames this console's own replay gave (or that it was replayed when first loaded)
   and links the bought run on the explorer, its link built from /arkiv/config's template as the service builds one.
+  entity_link() builds any board row's link the same way (PB's run_links card: a run and its listing).
 
 All network work and every replay runs on one background thread. begin(), poll(), status() and board() only read and
 mark what that thread last saw, so a slow or missing Arkiv never holds up a frame. The thread reads every arcade game's
@@ -35,7 +36,7 @@ from decimal import Decimal
 
 from arca_launcher.handler import arkiv_rpc
 from arca_launcher.handler.ledger import GHOST_PRICE
-from arca_launcher.handler.sponsors import PAY_TO, TIMEOUT_MS, BoardRead, Result, RunRow
+from arca_launcher.handler.sponsors import HCS_MSG, PAY_TO, TIMEOUT_MS, BoardRead, Result, RunRow
 from arca_launcher.handler.world import _digest, _pay_to, _title, http_transport
 
 log = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ _ROW_FIELDS = {"key": (str, False), "game": (str, False), "title": (str, False),
                "runner": (str, False), "book": (str, True), "label": (str, True), "human": (bool, False),
                "credential": (str, True), "log_h": (str, False), "rules": (int, False),
                "expires_block": (int, False), "listing": (str, True), "price": (str, True), "pay_to": (str, True),
-               "splits": (list, True)}
+               "splits": (list, True), "hcs": (str, True)}
 LINK_MAX = 300                # an explorer link's length, as the service builds them (an Arkiv tx's is about 106)
 _ORIGIN = re.compile(r"https://[a-z0-9.-]{1,200}(:[0-9]{1,5})?")
 
@@ -146,7 +147,7 @@ class ArkivSponsors:
         self._config_due = 0       # when /arkiv/config is next asked; None once it answered
         self.pin_differs = None    # what the service's /arkiv/config says that this console's pin does not (or None)
         self.explorer_origin = None   # the Arkiv explorer's https origin /arkiv/config names: links there may be drawn
-        self._entity_link = None   # /arkiv/config's explorer_entity ({key}), on that origin: a bought run's link
+        self._entity_link = None   # /arkiv/config's explorer_entity ({key}), on that origin: a row's link
         self._wanted_ms = clock_ms()
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -448,19 +449,22 @@ class ArkivSponsors:
 
     def _loaded(self, path, run_key, replay):
         data = dict({"ghost_log": path}, **replay)
-        link = self._run_link(run_key)
+        link = self.entity_link(run_key)
         if link is not None:
             data["explorer"] = {"run": link}
         return data
 
-    def _run_link(self, run_key):
-        """The run's Arkiv explorer link, built as the service builds its own (explorer_entity's {key}, the key in lower
-        case), only on the explorer origin /arkiv/config named; None before it answered."""
+    def entity_link(self, key):
+        """An Arkiv row's explorer link (a run or a listing, by its entity key), built as the service builds its own
+        (explorer_entity's {key}, the key in lower case), only on the explorer origin /arkiv/config named; None before
+        it answered, or for anything that is not an entity key. A lock read: the frame may ask it."""
+        if not _is_key(key):
+            return None
         with self._lock:
             template, origin = self._entity_link, self.explorer_origin
         if template is None or origin is None:
             return None
-        link = template.replace("{key}", run_key.lower())
+        link = template.replace("{key}", key.lower())
         return link if _link(link) and link.startswith(origin + "/") else None
 
     def _listed_ghost(self, run_key, receipt):
@@ -683,9 +687,11 @@ def _time_frames(path):
 
 def _cached_row(row):
     """A RunRow from the cache file, or None when the entry is not one. A row cached before listings named a payout
-    account has no pay_to: not for sale; one cached before lap times, or with laps that do not add up, has none."""
-    if isinstance(row, dict) and "pay_to" not in row:
-        row = dict(row, pay_to=None)
+    account has no pay_to: not for sale; one cached before lap times, or with laps that do not add up, has none; one
+    cached before listings named their LISTING message has no hcs."""
+    for name in ("pay_to", "hcs"):
+        if isinstance(row, dict) and name not in row:
+            row = dict(row, **{name: None})
     if isinstance(row, dict):
         laps = row.get("splits")
         good = (isinstance(laps, list) and 0 < len(laps) <= 4 and all(type(x) is int and x > 0 for x in laps)
@@ -699,7 +705,8 @@ def _cached_row(row):
             return None
     if not (_KEY.fullmatch(row["key"]) and _HASH.fullmatch(row["log_h"]) and _GAME.fullmatch(row["game"])
             and (row["listing"] is None or _KEY.fullmatch(row["listing"])) and (row["book"] or row["label"])
-            and (row["pay_to"] is None or PAY_TO.fullmatch(row["pay_to"]))):
+            and (row["pay_to"] is None or PAY_TO.fullmatch(row["pay_to"]))
+            and (row["hcs"] is None or HCS_MSG.fullmatch(row["hcs"]))):
         return None
     return RunRow(**dict(row, splits=tuple(row["splits"]) if row["splits"] is not None else None))
 

@@ -187,6 +187,11 @@ class HederaSponsors:
     def explorer_origin(self):
         return getattr(self._inner, "explorer_origin", None)
 
+    def entity_link(self, key):
+        """An Arkiv row's explorer link: the Arkiv adapter's (None with no Arkiv adapter under this one)."""
+        link = getattr(self._inner, "entity_link", None)
+        return link(key) if link is not None else None
+
     def console_state(self):
         read = getattr(self._inner, "console_state", None)
         return read() if read is not None else None

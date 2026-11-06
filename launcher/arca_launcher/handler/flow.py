@@ -19,6 +19,14 @@ RECEIPT, and last the run's replay (the checker's for a listing, this console's 
 ghost; never the mock's). A url is kept only on HashScan's testnet or the Arkiv explorer the
 service names. Triangle on a chain card opens the chosen row's link (OpenLink, for the app).
 
+The real board has a cursor (never the mock's): Up and Down move it over the rows the card
+draws, starting on YOU's; it follows the runner it is on (ctx["board_pick"]) through a Humans
+only toggle or a new read, back on YOU's row when that runner is not shown. Triangle there opens
+run_links, a chain card of that run's records: its run and listing on Arkiv, its listing's
+LISTING message and payout account on HashScan, and the checker's replay (every time on the board
+is the one the checker's replay gave before it wrote the row). Cross and Circle go back to the
+board with its cursor where it was.
+
 A chain card can come back after the browser took the screen (handler_glue.py): restore() before
 start() lands on it as it was, its rows already in ctx, with nothing of arriving done again, and
 the payment data chain_pay gave so a RECEIPT still waiting for the mirror keeps filling in.
@@ -30,10 +38,10 @@ import time
 from dataclasses import dataclass
 
 from arca_launcher import coach
-from arca_launcher.handler.board import mark_you, ordinal
+from arca_launcher.handler.board import humans_only, mark_you, ordinal
 from arca_launcher.handler.ledger import (GHOST_PRICE, LISTING_DAYS, budget_left, buy, make_book,
                                           owns, save, start_over)
-from arca_launcher.handler.sponsors import BOOK, Outcome, SponsorNames
+from arca_launcher.handler.sponsors import BOOK, HCS_MSG, PAY_TO, Outcome, SponsorNames
 from arca_launcher.handler.states import PLACEHOLDER_RE, START, STATES
 
 
@@ -82,7 +90,8 @@ _TARGET_KEYS = ("target", "target_time", "target_frames", "target_run", "target_
                 "target_pay_to", "gap", "new_rank")
 _SCOUT_KEYS = ("scout_id", "scout_reason", "scout_by", "scout_model", "scout_note", "you_laps", "it_laps",
                "scout_lap", "you_time")
-CHAIN_STATES = ("ls_done", "buy_done", "buy_late")   # the chain card's screens: Up and Down pick a row's QR
+# The chain card's screens: Up and Down pick a row's QR. run_links: a board run's records (Triangle on the board).
+CHAIN_STATES = ("ls_done", "buy_done", "buy_late", "run_links")
 REPLAYED_CHECKER = "Replayed by the checker"   # a listing's last chain row: the checker's replay before it wrote
 REPLAYED_HERE = "Replayed on this console"     # a purchase's: this console's replay of the ghost it loaded
 HASHSCAN = "https://hashscan.io/testnet/"
@@ -109,7 +118,7 @@ class Flow:
 
     Read-only for the view and the app: state, line, ms_in_state, in_flight, busy, arcade,
     outcomes_open, outcomes ((label, state) rows), outcome_index, hub_index, hub_rows,
-    hub_count and mock_rows()."""
+    hub_count, board_shown, board_cursor, board_row and mock_rows()."""
 
     def __init__(self, sponsors, ledger, ledger_path, game, ctx, today, rng=None):
         self.sponsors = sponsors
@@ -177,6 +186,30 @@ class Flow:
         rows = _HUB_ROWS if self.arcade else _HUB_ROWS[2:]  # no board to race, no run to list
         return rows if self.sponsors.mock else rows[:-1]
 
+    @property
+    def board_shown(self):
+        """The board's rows as its card draws them: with Humans only, the human tier's and YOU's."""
+        rows = tuple(self.ctx.get("board_rows") or ())
+        return humans_only(rows) if self.ctx.get("humans_only") else rows
+
+    @property
+    def board_cursor(self):
+        """The real board's chosen row as an index into board_shown, or None: off the board, on the mock board (no
+        cursor there) or with no rows. The row of the runner ctx["board_pick"] names while it is shown, else YOU's,
+        else the first: a toggle or a new read never leaves the cursor off the rows."""
+        rows = self.board_shown
+        if not rows or self.state.name not in _BOARD_STATES or self.sponsors.mocked("board"):
+            return None
+        pick = self.ctx.get("board_pick")
+        return next((i for i, row in enumerate(rows) if row.name == pick),
+                    next((i for i, row in enumerate(rows) if row.you), 0))
+
+    @property
+    def board_row(self):
+        """The real board's chosen row (board_cursor's), or None."""
+        i = self.board_cursor
+        return None if i is None else self.board_shown[i]
+
     def fill(self, text: str) -> str:
         """Fill {placeholders} from ctx and the sponsor names; a missing or None value fills as
         "". *Emphasis* marks are kept for the view. {payee} is worked out from the target as it is
@@ -235,6 +268,9 @@ class Flow:
                 self.hub_index = max(0, min(self.hub_count - 1, self.hub_index + move))
             elif self.state.name in CHAIN_STATES and self.ctx["chain"]:
                 self.ctx["chain_i"] = (self.ctx.get("chain_i", 0) + move) % len(self.ctx["chain"])
+            elif self.board_cursor is not None:      # the real board: the cursor, held to the rows
+                rows = self.board_shown
+                self.ctx["board_pick"] = rows[max(0, min(len(rows) - 1, self.board_cursor + move))].name
             return None
         if event == "square":
             if self.state.name in _BOARD_STATES:     # Humans only: the board hides non-human rows (YOU stay)
@@ -247,7 +283,7 @@ class Flow:
         if self.in_flight:
             return None
         if event == "triangle":
-            return self._open_link()
+            return self._open_run_links() if self.state.name in _BOARD_STATES else self._open_link()
         if event == "cross":
             if self.state.name == "hub":
                 return self.pick(self.hub_index)
@@ -382,6 +418,8 @@ class Flow:
             if previous == "scout_pick" and self._board_target is not None:
                 self.ctx.update(self._board_target)       # Circle on the pick: the board's own target again
             self._board_target = None
+            if previous != "run_links":                   # back from a run's records: the cursor where it was
+                self.ctx["board_pick"] = None
         elif name == "scout":
             self.ctx["scout_down"] = ""
             self.ctx.update(dict.fromkeys(_SCOUT_KEYS))
@@ -632,6 +670,39 @@ class Flow:
             return None
         url = rows[max(0, min(len(rows) - 1, int(self.ctx.get("chain_i") or 0)))].get("url")
         return OpenLink(url) if isinstance(url, str) and url else None
+
+    def _open_run_links(self):
+        """Triangle on the real board: the chosen run's records as the run_links chain card ("BOT-A2's 1:43.93 run"),
+        its first row chosen. None for a row on no chain (YOU's best not on the board yet) and on the mock board. A
+        payment's chain rows go (_clear_chain), so a RECEIPT still filling in never lands on this card."""
+        row = self.board_row
+        if row is None or not isinstance(row.key, str) or not _frames(row.frames):
+            return None
+        rows = self._run_rows(row)
+        self._clear_chain()
+        self.ctx.update(chain=rows, chain_i=0, links_run=f"{row.owner or row.name}'s {coach.fmt_time(row.frames)} run")
+        return self._enter("run_links")
+
+    def _run_rows(self, row):
+        """A board run's records, each only when the row has it: its run and its listing on Arkiv (their explorer
+        pages, built by the Arkiv adapter from /arkiv/config: entity_link), the listing's LISTING message on Hedera
+        (hcs "<topic>/<seq>": the topic on HashScan), the checker's replay (the run's time is the one it gave before
+        it wrote the row: linked to the run) and the account the listing pays (on HashScan)."""
+        names = self.sponsors.names
+        link = getattr(self.sponsors, "entity_link", None) or (lambda key: None)
+        run = link(row.key)
+        rows = [self._row(f"{names.board} run", _short(row.key), run)]
+        if isinstance(row.listing, str):
+            rows.append(self._row(f"{names.board} listing", _short(row.listing), link(row.listing)))
+        message = HCS_MSG.fullmatch(row.hcs) if isinstance(row.hcs, str) else None
+        if message is not None:
+            topic, seq = message.groups()
+            rows.append(self._row(f"{names.third} LISTING #{int(seq)}", f"topic {topic}", f"{HASHSCAN}topic/{topic}"))
+        rows.append(self._row(REPLAYED_CHECKER, f"{coach.fmt_time(row.frames)} = {row.frames} frames", run))
+        if isinstance(row.pay_to, str) and PAY_TO.fullmatch(row.pay_to):
+            whose = "the house account" if row.tier == "bot" else f"{row.owner or row.name}'s account"
+            rows.append(self._row(f"Pays {row.pay_to}", whose, f"{HASHSCAN}account/{row.pay_to}"))
+        return rows
 
     def _msg_row(self, label, msg):
         seq, tx = msg.get("seq"), msg.get("tx")

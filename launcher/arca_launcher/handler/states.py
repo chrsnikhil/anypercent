@@ -25,7 +25,9 @@ the JS object `S`) with controller-ruled amendments layered on top:
 - and three with one console, one person and PB's scout: `id_taken` (another person's sign-up on a
   console bound to a record book, refused before anything reached World), `scout` (PB's scout
   compares your laps with the listed ghosts' on the service) and `scout_pick` (its pick, bought
-  after `auto_ms` unless Circle stops it).
+  after `auto_ms` unless Circle stops it);
+- and `run_links`: any real board run's records on chain (its run and listing on the board's
+  chain, its listing's message and payout account on the record rail), a chain card.
 
 The buy path never says "her" or "she": a target may be a BOT ghost, made by a program.
 
@@ -202,6 +204,14 @@ STATES: dict[str, State] = {
         say="Here is the *{game}* board. No time from you yet. *{target}* is the one to beat: "
             "{target_time}.",
         on={"cross": "target", "circle": "hub"},
+    ),
+    # Triangle on the real board's chosen row: that run's records, a chain card (the flow fills its rows). Cross and
+    # Circle go back to the board, its cursor where it was.
+    "run_links": State(
+        name="run_links", mood="happy", card={"t": "chain", "h": "{links_run}"},
+        say="*{links_run}* on {board} and {third}. Its time is the one the checker's replay gave. "
+            "Triangle opens a link.",
+        on={"cross": "board", "circle": "board"},
     ),
     "target": State(
         name="target", mood="serious", card={"t": "target", "rows": ("Faster from {split}",)},

@@ -54,10 +54,15 @@ def has_outcomes(flow):
 def hint_items(flow):
     """The button hints: Cross and Circle (or "working..." while a call runs), Square's Humans only toggle on the
     board, else its mock outcomes, and on a chain card Up/Down with more than one row and Triangle when the chosen
-    row has a link to open. Four at most there, short enough to stay right of a notice (chrome.TOAST_MAX_W)."""
+    row has a link to open. Four at most there, short enough to stay right of a notice (chrome.TOAST_MAX_W). The real
+    board adds Triangle when the run under its cursor is on chain (the amber bar shows the cursor: no Up/Down hint),
+    so its four stay right of the launcher's notices too."""
     items = [("", "working...")] if flow.in_flight else [("X", "OK"), ("O", "Back")]
     if flow.state.name in ("board", "board_new"):
         items.append(("S", "All runners" if flow.ctx.get("humans_only") else "Humans only"))
+        row = flow.board_row                        # None on the mock board: no cursor there
+        if row is not None and row.key:
+            items.append(("Y", "On chain"))
     elif has_outcomes(flow):
         items.append(("S", "Mock"))
     if flow.state.card["t"] == "chain":
@@ -135,6 +140,8 @@ class HandlerView:
             spec["total_ms"] = min((ms for ms in lives if ms), default=0)   # the request's own life, if shorter
             spec["left_ms"] = max(0, spec["total_ms"] - flow.ms_in_state)
             spec["mock"] = flow.sponsors.mocked("world")   # a fake code: it says so
+        elif card["t"] == "board":                  # the real board's chosen row (None on the mock board)
+            spec["cursor"] = flow.board_cursor
         elif card["t"] == "pick":                   # the bar shrinks to the purchase
             spec["total_ms"] = st.auto_ms or 0
             spec["left_ms"] = max(0, spec["total_ms"] - flow.ms_in_state)

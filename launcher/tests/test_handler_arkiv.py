@@ -67,10 +67,10 @@ class StubNode:
         self.block = 0x3fe90
 
     def run(self, name, frames, log=None, plain=False, listed=False, human=True, book=True, creator=CHECKER,
-            game="MDGP", price="0.1", pay_to=None, splits=None):
+            game="MDGP", price="0.1", pay_to=None, splits=None, hcs=None):
         """A run row (and its listing when listed). name: its book, or with book=False an open-tier label (a BOT-
         label: the house's). pay_to: the seller's Hedera account the listing names (None: a listing written without
-        one). splits: its lap times (s1.., split_kind "lap")."""
+        one). splits: its lap times (s1.., split_kind "lap"). hcs: the listing's LISTING message ("<topic>/<seq>")."""
         log = log if log is not None else acl(name + str(frames))
         attrs = [_attr("arkiv.schema", "str", "anypercent.run"), _attr("game", "str", game),
                  _attr("title", "str", "MARINE DRIVE GP"), _attr("season", "i32", SEASON),
@@ -97,7 +97,8 @@ class StubNode:
                                       _attr("seller", "str", (name.lower() * 4)[:16]),
                                       _attr("book" if book else "label", "str", name),
                                       _attr("human", "bool", human and book)]
-                                  + ([_attr("pay_to", "str", pay_to)] if pay_to is not None else [])})
+                                  + ([_attr("pay_to", "str", pay_to)] if pay_to is not None else [])
+                                  + ([_attr("hcs", "str", hcs)] if hcs is not None else [])})
         return entity
 
     def listing_of(self, run):
@@ -1645,3 +1646,43 @@ def test_no_run_link_unless_the_template_is_on_the_allowed_explorer(tmp_path, co
     rig.replays.know(log, 6200)
     result = _load(rig, target_payload(rig.node, run))
     assert result.ok and "explorer" not in result.data, config
+    assert rig.sponsors.entity_link(run["key"]) is None, config        # nor any row's (the board's own links)
+
+
+# ---- a board run's records: its listing's Hedera message, any row's explorer link -----------------------------------
+
+def test_a_listing_names_its_hedera_message_and_the_cache_keeps_it(tmp_path):
+    rig = Rig(tmp_path)
+    rig.node.run("BOT-A2", 6236, book=False, listed=True, pay_to="0.0.7700001", hcs="0.0.11332437/41")
+    rig.node.run("ANY-6PS", 6414, listed=True, pay_to="0.0.9473064")    # listed before the message was kept: none
+    rig.node.run("ANY-K2P", 6500, listed=True, hcs="0.0.11332437")       # not "<topic>/<seq>": left off, still listed
+    rig.prefetch()
+    rows = rig.sponsors.board("MDGP").rows
+    assert [(r.book or r.label, r.listing is not None, r.hcs) for r in rows] == [
+        ("BOT-A2", True, "0.0.11332437/41"), ("ANY-6PS", True, None), ("ANY-K2P", True, None)]
+    rig.node.down = True
+    assert rig.make().board("MDGP").rows == rows                        # the cache keeps it
+    path = os.path.join(rig.state_dir, arkiv.CACHE_FILE)
+    with open(path, encoding="utf-8") as f:
+        cached = json.load(f)
+    for row in cached["boards"]["MDGP"]["rows"]:
+        del row["hcs"]                                                  # a cache written before it
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cached, f)
+    read = rig.make().board("MDGP")
+    assert read.stale and [r.hcs for r in read.rows] == [None, None, None] and read.rows[0].listing is not None
+    cached["boards"]["MDGP"]["rows"][0]["hcs"] = "0.0.11332437"         # not one the board would have read
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cached, f)
+    assert rig.make().board("MDGP") is None
+
+
+def test_any_rows_explorer_link_is_built_as_the_service_builds_it(tmp_path):
+    run = key("ANY-6PS run")
+    assert Rig(tmp_path).sponsors.entity_link(run) is None              # /arkiv/config not read yet
+    rig = _explorer_rig(tmp_path / "config")
+    link = "https://rabdi.explorer.arkiv.network/entity/" + run
+    assert rig.sponsors.entity_link(run) == link
+    assert rig.sponsors.entity_link(run.upper().replace("0X", "0x")) == link   # the key as the explorer names it
+    for odd in (None, "", 7, "0x12", run + "00", "../" + run, run[2:]):
+        assert rig.sponsors.entity_link(odd) is None, odd

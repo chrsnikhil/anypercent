@@ -28,7 +28,7 @@ CTX = {"game": "Marine Drive GP", "target": "RIA", "target_time": "1:41.27", "ga
        "console_tag": "C-7QZP", "console_line": "linked to ANY-7QZ",
        "scout_reason": "You lose 1.50 s in lap 2: RIA runs it in 33.25 s, you in 34.75 s.",
        "scout_by": "Picked by openai/gpt-oss-120b on Groq", "you_laps": (2140, 2085, 2065),
-       "it_laps": (2087, 1995, 1994), "scout_lap": 2, "you_time": "1:44.83"}
+       "it_laps": (2087, 1995, 1994), "scout_lap": 2, "you_time": "1:44.83", "links_run": "RIA's 1:41.27 run"}
 
 
 class RealSponsors(MockSponsors):
@@ -316,7 +316,17 @@ LIVE_CHAIN = {
               "url": "https://hashscan.io/testnet/transaction/0.0.6421420-1793929992-000000001"},
              {"label": "Arkiv listing", "value": "0x23bf…af44",
               "url": "https://rabdi.explorer.arkiv.network/entity/0x" + "23bf" * 15 + "af44"},
-             {"label": "Arkiv tx", "value": "0x5c1d…9e02", "url": ARKIV_TX_URL}]}
+             {"label": "Arkiv tx", "value": "0x5c1d…9e02", "url": ARKIV_TX_URL}],
+    "run": [{"label": "Arkiv run", "value": "0x08e7…08e7",
+             "url": "https://rabdi.explorer.arkiv.network/entity/0x" + "08e7" * 16},
+            {"label": "Arkiv listing", "value": "0x23bf…23bf",
+             "url": "https://rabdi.explorer.arkiv.network/entity/0x" + "23bf" * 16},
+            {"label": "Hedera LISTING #41", "value": "topic 0.0.11332437",
+             "url": "https://hashscan.io/testnet/topic/0.0.11332437"},
+            {"label": "Replayed by the checker", "value": "1:46.90 = 6414 frames",
+             "url": "https://rabdi.explorer.arkiv.network/entity/0x" + "08e7" * 16},
+            {"label": "Pays 0.0.9473064", "value": "ANY-6PS's account",
+             "url": "https://hashscan.io/testnet/account/0.0.9473064"}]}
 
 
 def _live_board(humans=True):
@@ -369,7 +379,8 @@ LIVE_SCREENS = {"board": {}, "board_humans_only": {"humans_only": True}, "scout"
                 "buy_check": {}, "buy_pay": {}, "buy_load": {}, "buy_done": {"chain": LIVE_CHAIN["buy"], "chain_i": 1},
                 "buy_late": {"chain": LIVE_CHAIN["late"], "chain_i": 1}, "ls_arkiv": {},
                 "ls_done": {"chain": LIVE_CHAIN["list"], "chain_i": 2}, "buy_suspended": {}, "id_done": {},
-                "id_scan": {}, "book_view": {}}
+                "id_scan": {}, "book_view": {},
+                "run_links": {"chain": LIVE_CHAIN["run"], "chain_i": 3, "links_run": "ANY-6PS's 1:46.90 run"}}
 
 
 def test_the_new_screens_live_and_their_text_fits(screen, tmp_path, monkeypatch):
@@ -485,6 +496,69 @@ def test_the_hints_say_triangle_opens_a_link_and_keep_clear_of_the_notice(screen
     assert hint_items(live_flow(tmp_path / "one", "buy_done", chain=one)) == [("X", "OK"), ("O", "Back"),
                                                                                ("Y", "Open link")]
     assert ("Y", "Open link") not in hint_items(live_flow(tmp_path / "board", "board", chain=one))
+
+
+def _cursor_bar(screen):
+    """The y range of the amber bar left of the board's rows (the chain card's chosen-row bar), or None."""
+    from arca_launcher.render.handler_view import CARD
+    surf = screen.ren.to_surface()
+    ys = [y for y in range(CARD.y + 40, CARD.bottom - 24) for x in range(CARD.x + 8, CARD.x + 20)
+          if tuple(surf.get_at((x, y)))[:3] == AMBER]
+    return (min(ys), max(ys)) if ys else None
+
+
+def test_the_real_board_draws_its_cursor_as_the_chain_cards_amber_bar(screen, tmp_path):
+    from arca_launcher.render.handler_cards import BOARD_PITCH
+    flow = live_flow(tmp_path, "board")
+    show(screen, flow)
+    snapshot(screen.ren, "handler_live_board_cursor")
+    you = _cursor_bar(screen)
+    assert flow.board_row.name == "YOU" and you is not None and you[1] - you[0] >= 12
+    flow.press("up")
+    show(screen, flow)
+    assert flow.board_row.name == "BOT-A6" and _cursor_bar(screen) == (you[0] - BOARD_PITCH, you[1] - BOARD_PITCH)
+    for _ in range(6):                                               # to the top: the rows scroll to keep it shown
+        flow.press("up")
+    show(screen, flow)
+    assert flow.board_row.rank == 1 and _cursor_bar(screen)[0] < you[0] - BOARD_PITCH
+    show(screen, make_flow(tmp_path / "mock", "board"))
+    assert _cursor_bar(screen) is None                               # the mock board: no cursor
+
+
+def test_the_real_boards_hints_say_on_chain_and_stay_inside_the_screen(screen, tmp_path, monkeypatch):
+    import dataclasses
+    from arca_launcher.render import chrome, theme
+    from arca_launcher.render.handler_view import hint_items
+    lefts, real = [], chrome.hints
+    monkeypatch.setattr(chrome, "hints", lambda gfx, items, **kw: (lefts.append(real(gfx, items, **kw)), lefts[-1])[1])
+    flow = live_flow(tmp_path, "board")
+    assert hint_items(flow) == [("X", "OK"), ("O", "Back"), ("S", "Humans only"), ("Y", "On chain")]
+    show(screen, flow)
+    flow.press("square")                                             # Humans only: YOU's row alone
+    assert hint_items(flow) == [("X", "OK"), ("O", "Back"), ("S", "All runners"), ("Y", "On chain")]
+    show(screen, flow)
+    assert len(lefts) == 2 and min(lefts) >= theme.W // 2            # inside 800 px: the strip's right half
+    for notice in ("Links open on the handheld or the laptop", "Power off works on the handheld only",
+                   "MARINE DRIVE GP: ROM file missing", "BOT-A2's ghost could not be loaded",
+                   "New best on MARINE DRIVE GP!"):                  # the launcher's notices: none runs under them
+        assert chrome.toast(screen.gfx, notice).right < min(lefts), notice
+    rows = tuple(dataclasses.replace(r, key=None) if r.you else r for r in _live_board().rows)
+    flow = live_flow(tmp_path / "local", "board", board_rows=rows)   # YOU's best not on the board: on no chain
+    assert ("Y", "On chain") not in hint_items(flow)
+    assert hint_items(make_flow(tmp_path / "mock", "board")) == [("X", "OK"), ("O", "Back"), ("S", "Humans only")]
+    flow = live_flow(tmp_path / "links", "run_links", chain=LIVE_CHAIN["run"], links_run="ANY-6PS's 1:46.90 run")
+    assert hint_items(flow) == [("X", "OK"), ("O", "Back"), ("U/D", "Next"), ("Y", "Open link")]
+
+
+def test_a_board_runs_records_draw_as_a_chain_card_and_pb_says_it_whole(screen, tmp_path, monkeypatch):
+    from arca_launcher.render.text import plain
+    drawn = _texts(screen, monkeypatch)
+    flow = live_flow(tmp_path, "run_links", chain=LIVE_CHAIN["run"], chain_i=0, links_run="ANY-6PS's 1:46.90 run")
+    nav, views = show(screen, flow)
+    assert "ANY-6PS's 1:46.90 run" in drawn and "Arkiv run" in drawn and "Hedera LISTING #41" in drawn
+    assert [h.target for h in views.hits if h.target == ("handler", "triangle")] == [("handler", "triangle")]
+    assert views.handler.mascot.shown == " ".join(plain(flow.line).split())
+    assert plain(flow.line).startswith("ANY-6PS's 1:46.90 run on Arkiv and Hedera.")
 
 
 def test_my_record_book_names_this_console(screen, tmp_path, monkeypatch):

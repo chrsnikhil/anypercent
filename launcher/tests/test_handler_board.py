@@ -128,8 +128,9 @@ def test_row_field_order_matches_the_ruling():
     row = board.rows[0]
     assert [f.name for f in __import__("dataclasses").fields(row)] == [
         "rank", "name", "frames", "you", "listed", "sells", "target", "human", "credential", "key", "listing",
+        "owner", "pay_to", "hcs",
     ]
-    assert (row.key, row.listing) == (None, None)                      # the mock board's rows are on no chain
+    assert (row.key, row.listing, row.owner, row.pay_to, row.hcs) == (None,) * 5   # the mock's rows are on no chain
 
 
 # ---- HUMAN: one World ID, one record book --------------------------------------------------------------------------
@@ -173,16 +174,16 @@ def test_you_still_rank_where_you_did():
 
 # ---- the real board: Arkiv's run rows (build_real) ------------------------------------------------------------------
 
-def run(name, frames, listed=False, human=None, credential=None, book=True, key=None, pay_to=None):
+def run(name, frames, listed=False, human=None, credential=None, book=True, key=None, pay_to=None, hcs=None):
     """A run row as arkiv_rpc decodes it: name is the book (ANY-...) or, with book=False, an open-tier label; pay_to the
-    Hedera account its listing names."""
+    Hedera account its listing names, hcs its listing's LISTING message."""
     human = book if human is None else human
     return RunRow(key=key or "0x%064x" % (hash((name, frames)) & (2 ** 256 - 1)), game="MDGP", title="MARINE DRIVE GP",
                   frames=frames, runner=name.lower().ljust(16, "0")[:16], book=name if book else None,
                   label=None if book else name, human=human, credential=(credential or "Orb") if human else None,
                   log_h=("%064x" % frames), rules=4, expires_block=8000000,
                   listing=("0x%064x" % (frames + 1)) if listed else None, price="0.1" if listed else None,
-                  pay_to=pay_to if listed else None)
+                  pay_to=pay_to if listed else None, hcs=hcs if listed else None)
 
 
 ROWS = (run("ANY-K2P", 6000), run("ANY-7QZ", 6100, listed=True), run("TEAM", 6150, book=False),
@@ -311,6 +312,20 @@ def test_humans_only_keeps_you_and_the_human_rows_and_never_moves_the_target():
     mock = build(6070, 6290)
     assert [row.name for row in humans_only(mock.rows)] == ["KIRAN", "MEERA", "RIA", "ARJUN", "YOU", "ZOYA", "DEV"]
     assert tier_counts(mock.rows) == {"human": 6, "bot": 1, "open": 1}
+
+
+def test_each_real_row_names_whose_run_it_is_and_its_listings_account_and_message():
+    """What a run's records on chain need (handler/flow.py's run_links): the run's book or label (YOU's own book too),
+    and its live listing's payout account and LISTING message. A row with no listing has neither; YOU's local best,
+    faster than YOU's row on Arkiv, is on no chain at all."""
+    rows = (run("ANY-7QZ", 6100, listed=True, pay_to="0.0.7001", hcs="0.0.11332437/41"), run("TEAM", 6150, book=False),
+            run("BOT-A2", 6230, book=False, listed=True, pay_to="0.0.7700001"), run("ANY-6PS", 6300, listed=True))
+    board = build_real(rows, 6400, "ANY-6PS", "Orb")
+    got = {row.name: (row.owner, row.pay_to, row.hcs) for row in board.rows}
+    assert got == {"ANY-7QZ": ("ANY-7QZ", "0.0.7001", "0.0.11332437/41"), "TEAM": ("TEAM", None, None),
+                   "BOT-A2": ("BOT-A2", "0.0.7700001", None), "YOU": ("ANY-6PS", None, None)}
+    you = next(row for row in build_real(rows, 6000, "ANY-6PS", "Orb").rows if row.you)
+    assert (you.key, you.owner, you.pay_to, you.hcs) == (None, None, None, None)
 
 
 def test_ordinal():

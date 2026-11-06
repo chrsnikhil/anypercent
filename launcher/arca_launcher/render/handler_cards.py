@@ -255,6 +255,9 @@ def tier_note(counts):
 
 
 def board(g, spec, rect, t_ms, ctx):
+    """The board's rows (Humans only: the human tier's and YOU's), the window kept on YOU and the target; on the real
+    board the chosen row (spec["cursor"], an index into the rows drawn) is always in it, marked by the chain card's
+    amber bar."""
     names = spec.get("names")
     every = list(ctx.get("board_rows") or ())
     only = bool(ctx.get("humans_only"))
@@ -283,8 +286,13 @@ def board(g, spec, rect, t_ms, ctx):
     marks = [i for i, r in enumerate(rows) if r.you or r.target] or [0]
     start = max(0, min(len(rows) - n, min(marks) - 1))
     start = max(start, max(marks) - n + 1)
+    cursor = spec.get("cursor")
+    if cursor is not None and 0 <= cursor < len(rows):       # the chosen row is always shown
+        start = min(max(start, cursor - n + 1), cursor)
     for i, row in enumerate(rows[start:start + n]):
         line = pygame.Rect(x, rect.y + 52 + i * BOARD_PITCH, w, BOARD_PITCH)
+        if start + i == cursor:
+            g.round_rect(pygame.Rect(x - 12, line.y + 4, 4, BOARD_PITCH - 8), AMBER, 2)
         with _fade_up(g, fx.stagger(t_ms, i)):               # the rows fade up one by one, then the target glows
             colour = SOFT
             if row.target:
