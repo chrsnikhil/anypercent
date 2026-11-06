@@ -160,6 +160,7 @@ describe("raw rows: decoded and validated like every reader must", () => {
       { name: "arkiv.schema", type: "str", value: "anypercent.run" },
       { name: "game", type: "str", value: "MDGP" },
       { name: "title", type: "str", value: "MARINE DRIVE GP" },
+      { name: "season", type: "i32", value: 1 },
       { name: "frames", type: "u64", value: "0x181a" },
       { name: "runner", type: "str", value: "0123456789abcdef" },
       { name: "book", type: "str", value: "ANY-6PS" },

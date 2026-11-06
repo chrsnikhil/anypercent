@@ -99,6 +99,8 @@ export const GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b";
 export const GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1";
 export const ARKIV_EXPLORER_TX = "https://rabdi.explorer.arkiv.network/tx/{tx}";
 export const ARKIV_EXPLORER_ENTITY = "https://rabdi.explorer.arkiv.network/entity/{key}";
+/** The least tGLM (in wei) the house wallet must hold before a batch is staged or approved: 0.01 tGLM. */
+export const HOUSE_MIN_WEI = 10n ** 16n;
 /** A BOT label: the house's batch letter(s) and the position in the batch. */
 export const HOUSE_LABEL_RE = /^BOT-[A-Z]{1,2}[1-8]$/;
 

@@ -37,13 +37,13 @@ const stampV = (run: string, wallet: string, frames: number, logH: string) => ({
 const listingV = (run: string, frames: number, logH: string) => ({ run, game: "MDGP", season: 1, frames, log_h: logH, price: "0.1", seller: "0123456789abcdef", book: "ANY-6PS", human: true, pay_to: "0.0.5123456" });
 
 /** A row as arkiv_query answers it: typed attributes (u64 as 0x quantities, a key column tagged bytes32 as Rabdi does). */
-function raw(kind: EntityKind, schema: string, key: string, creator: string, values: Record<string, unknown>) {
+function raw(kind: EntityKind, schema: string, key: string, creator: string, values: Record<string, unknown>, owner = creator) {
   const attributes: Array<{ name: string; type: string; value: unknown }> = [{ name: "arkiv.schema", type: "str", value: schema }];
   for (const [name, v] of Object.entries(values)) {
     const t = COLUMN_DEFS[kind][name].type;
     attributes.push({ name, type: t === "key" ? "bytes32" : t, value: t === "u64" ? `0x${Number(v).toString(16)}` : v });
   }
-  return { key, creator: creator.toLowerCase(), expiresAt: "0x41eee8", attributes };
+  return { key, owner: owner.toLowerCase(), creator: creator.toLowerCase(), expiresAt: "0x41eee8", attributes };
 }
 
 function rawMix(checker: string) {
@@ -64,9 +64,10 @@ function rawMix(checker: string) {
 
 // ---- the join (board.ts) ---------------------------------------------------------------------
 
-const asRun = (key: string, creator: string, v: ReturnType<typeof runV>): RunRow => ({
+const asRun = (key: string, creator: string, v: ReturnType<typeof runV>, owner = creator): RunRow => ({
   key,
   creator,
+  owner,
   expiresAt: 1n,
   game: v.game,
   season: v.season,
@@ -78,7 +79,7 @@ const asRun = (key: string, creator: string, v: ReturnType<typeof runV>): RunRow
   splits: [v.s1, v.s2, v.s3],
 });
 const asStamp = (key: string, v: ReturnType<typeof stampV>): StampRow => ({ key, creator: C.toLowerCase(), expiresAt: 1n, run: v.run, console: v.console, game: v.game, season: v.season, frames: BigInt(v.frames), log_h: v.log_h, book: v.book, human: v.human, splits: [v.s1, v.s2, v.s3], tool: v.tool });
-const asListing = (key: string, creator: string, v: ReturnType<typeof listingV>): ListingRow => ({ key, creator, expiresAt: 1n, run: v.run, game: v.game, season: v.season, frames: BigInt(v.frames), log_h: v.log_h, price: v.price, seller: v.seller, book: v.book, human: v.human, pay_to: v.pay_to });
+const asListing = (key: string, creator: string, v: ReturnType<typeof listingV>, owner = creator): ListingRow => ({ key, creator, owner, expiresAt: 1n, run: v.run, game: v.game, season: v.season, frames: BigInt(v.frames), log_h: v.log_h, price: v.price, seller: v.seller, book: v.book, human: v.human, pay_to: v.pay_to });
 
 describe("the readers' rule: a run counts only when a checker stamp names it and its creator is the stamp's console", () => {
   const stamps = [asStamp(S4, stampV(K4, WALLET_A, 6100, H(4))), asStamp(S1, stampV(K1, WALLET_A, 6170, H(1))), asStamp(S3, stampV(K3, WALLET_A, 6180, H(3)))];
@@ -113,6 +114,22 @@ describe("the readers' rule: a run counts only when a checker stamp names it and
     assert.deepEqual(joinBoard([label], runs, []).runs, [], "label");
   });
 
+  it("a run or listing transferred after its stamp (its owner no longer the stamp's console), or one whose owner was not read, never counts", () => {
+    const st = [asStamp(S1, stampV(K1, WALLET_A, 6170, H(1)))];
+    const moved = joinBoard(st, [asRun(K1, WALLET_A, runV(6170, H(1)), WALLET_B)], []);
+    assert.deepEqual(moved.runs, []);
+    assert.ok(moved.why[0].includes("owned by another wallet than the stamp names"), moved.why.join(" | "));
+    assert.deepEqual(joinBoard(st, [{ ...asRun(K1, WALLET_A, runV(6170, H(1))), owner: undefined }], []).runs, [], "owner not read: fails closed");
+    const listed = joinBoard(st, [asRun(K1, WALLET_A, runV(6170, H(1)))], [asListing(L1, WALLET_A, listingV(K1, 6170, H(1)), STRANGER)]);
+    assert.deepEqual([listed.runs.length, listed.listings.length], [1, 0], "a listing given away no longer sells the run");
+  });
+
+  it("season is always compared: a run row without one never counts", () => {
+    const st = [asStamp(S1, stampV(K1, WALLET_A, 6170, H(1)))];
+    assert.deepEqual(joinBoard(st, [{ ...asRun(K1, WALLET_A, runV(6170, H(1))), season: undefined }], []).runs, []);
+    assert.deepEqual(joinBoard(st, [{ ...asRun(K1, WALLET_A, runV(6170, H(1))), season: 2 }], []).runs, []);
+  });
+
   it("a stamp whose run is gone counts for nothing; two stamps of one log count once", () => {
     assert.deepEqual(joinBoard([asStamp(S1, stampV(k(99), WALLET_A, 6170, H(1)))], runs, []).runs, []);
     const twice = joinBoard([asStamp(S1, stampV(K1, WALLET_A, 6170, H(1))), asStamp(k(41), stampV(K1, WALLET_A, 6170, H(1)))], runs, []);
@@ -134,11 +151,13 @@ type Raw = ReturnType<typeof raw>;
 /** A stub of arkiv_query over these rows: schema, $key, run, log_h, game, season and $creator are matched as the node would. */
 class Node extends SdkArkiv {
   sent: string[] = [];
+  selects: Array<{ owner?: boolean }> = [];
   constructor(private readonly rows: Raw[]) {
     super({ rpcUrl: "http://127.0.0.1:9", accessKey: "unused-in-tests", checkerAddress: C });
   }
-  override async query(query: string) {
+  override async query(query: string, select: { owner?: boolean } = {}) {
     this.sent.push(query);
+    this.selects.push(select);
     const attr = (r: Raw, n: string) => r.attributes.find((a) => a.name === n)?.value;
     const want = (re: RegExp) => re.exec(query)?.[1];
     const schema = want(/arkiv\.schema = str\('([^']+)'\)/);
@@ -193,6 +212,30 @@ describe("the real port reads stamps, then each stamped console's runs and listi
     assert.equal(await n.getListing(L2), null, "a stranger's listing of a stamped run");
   });
 
+  it("run and listing reads select $owner; a run or listing transferred after its stamp is dropped by every read", async () => {
+    const n = node();
+    await n.boardListings("MDGP", 1);
+    assert.ok(n.selects.slice(1).every((s) => s.owner === true), "Q1 and Q2 pinned to the console select owner");
+    const moved = rawMix(C);
+    moved.runs[0] = raw("run", "anypercent.run", K1, WALLET_A, runV(6170, H(1)), WALLET_B);
+    const m = new Node([...moved.stamps, ...moved.runs, ...moved.listings]);
+    assert.deepEqual(await m.boardRuns("MDGP", 1), []);
+    assert.equal(await m.getRun(K1, false), null);
+    assert.equal(await m.getListing(L1), null, "its run no longer counts");
+  });
+
+  it("getListing counts a listing only while its run counts: run gone, or its stamp disagreeing with it, gives null", async () => {
+    const mix = rawMix(C);
+    const gone = new Node([...mix.stamps, ...mix.runs.filter((r) => r.key !== K1), ...mix.listings]);
+    assert.equal(await gone.getListing(L1), null, "the stamped run is gone");
+    assert.deepEqual(gone.sent.slice(-1), [Q.q6Run(K1, WALLET_A)], "the run is read pinned to the stamp's console");
+    const disagree = rawMix(C);
+    disagree.runs[0] = raw("run", "anypercent.run", K1, WALLET_A, { ...runV(6170, H(1)), human: false });
+    const d = new Node([...disagree.stamps, ...disagree.runs, ...disagree.listings]);
+    assert.equal(await d.getListing(L1), null, "the run disagrees with its stamp");
+    assert.equal((await node().getListing(L1))?.key, L1, "and the good one still counts");
+  });
+
   it("the snapshot's pages (boardPages) join to the same board", async () => {
     const n = node();
     const pages = await n.boardPages("MDGP", 1);
@@ -226,6 +269,26 @@ describe("the web board mirrors the rule (public/board.html, no build step)", ()
     assert.equal(out.unstamped, 3);
     const bridge = new Node([]).joinPages({ block: 1n, stamps: rawMix(C).stamps, runs: mix.runs, listings: mix.listings });
     assert.deepEqual(out.runs.map((r) => r.key), bridge.runs.map((r) => r.key));
+  });
+
+  it("the page reads $owner and season too: a transferred run or listing, a run of another season or none is dropped", () => {
+    const p = page();
+    const kept = (runs: ReturnType<typeof raw>[], listings: ReturnType<typeof raw>[] = []) => {
+      const out = JSON.parse(JSON.stringify(p.boardFrom(rawMix(p.CHECKER).stamps, runs, listings))) as ReturnType<typeof p.boardFrom>;
+      return [out.runs.map((r) => r.key), out.listings.map((l) => l.key)];
+    };
+    const good = raw("run", "anypercent.run", K1, WALLET_A, runV(6170, H(1)));
+    assert.deepEqual(kept([good], [raw("listing", "anypercent.listing", L1, WALLET_A, listingV(K1, 6170, H(1)))]), [[K1], [L1]]);
+    assert.deepEqual(kept([raw("run", "anypercent.run", K1, WALLET_A, runV(6170, H(1)), WALLET_B)]), [[], []], "transferred run");
+    assert.deepEqual(kept([good], [raw("listing", "anypercent.listing", L1, WALLET_A, listingV(K1, 6170, H(1)), WALLET_B)]), [[K1], []], "transferred listing");
+    assert.deepEqual(kept([raw("run", "anypercent.run", K1, WALLET_A, { ...runV(6170, H(1)), season: 2 })]), [[], []], "another season");
+    const noSeason = raw("run", "anypercent.run", K1, WALLET_A, runV(6170, H(1)));
+    noSeason.attributes = noSeason.attributes.filter((a) => a.name !== "season");
+    assert.deepEqual(kept([noSeason]), [[], []], "no season");
+    const noOwner = { ...good, owner: undefined };
+    assert.deepEqual(kept([noOwner as unknown as ReturnType<typeof raw>]), [[], []], "owner not read");
+    const html = readFileSync(join(appDir, "public", "board.html"), "utf8");
+    assert.ok(html.includes("key: true, owner: true, creator: true"), "every read selects owner");
   });
 
   it("a stamp not created by the checker is not a stamp", () => {

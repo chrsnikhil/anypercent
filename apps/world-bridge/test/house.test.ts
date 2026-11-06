@@ -396,6 +396,59 @@ describe("POST /house/publish: the owner's World approval, then one Arkiv batch 
     assert.equal((await s.arkiv.boardRuns("MDGP", 1)).length, 6);
   });
 
+  it("a retry never stamps a found house run whose season, game or splits differ from this batch's: ls_publish_fail, no stamp", async () => {
+    for (const [what, change] of [
+      ["season", (v: Record<string, unknown>) => (v.season = 2)],
+      ["game", (v: Record<string, unknown>) => (v.game = "SHIP")],
+      ["splits", (v: Record<string, unknown>) => (v.s1 = 2000)],
+    ] as const) {
+      const s = setup();
+      const { batch } = await s.house.stage(s.body());
+      const realStamps = s.arkiv.writeStamps.bind(s.arkiv);
+      let refuse = true;
+      s.arkiv.writeStamps = async (specs) => {
+        if (refuse) throw new (await import("../src/arkiv/client.js")).ArkivError("reverted");
+        return realStamps(specs);
+      };
+      assert.equal((await publishDone(s.house, String(batch))).view.failure, "ls_publish_fail");
+      change(s.arkiv.runs[0].spec.values as unknown as Record<string, unknown>); // the row on Arkiv is not what this batch replayed
+      refuse = false;
+      const retry = await publishDone(s.house, String(batch));
+      assert.equal(retry.view.failure, "ls_publish_fail", what);
+      assert.ok(s.lines.some((l) => l.includes(`BOT-A1's run on Arkiv (${s.arkiv.runs[0].key}) has another `)), s.lines.join(" | "));
+      assert.equal(s.arkiv.stamps.length, 0, `${what}: nothing stamped`);
+    }
+  });
+
+  it("an unfunded house wallet is refused before staging and before the owner's World approval is asked for", async () => {
+    const s = setup();
+    s.arkiv.balances.set(HOUSE_WALLET, 0n);
+    assert.equal(await refusal(s.house.stage(s.body())), `503 house_not_funded: the house wallet ${HOUSE_WALLET} has 0.0000 tGLM: npm run arkiv:fund -- --to ${HOUSE_WALLET} --amount 1`);
+    s.arkiv.balances.set(HOUSE_WALLET, 10n ** 18n);
+    const { batch } = await s.house.stage(s.body());
+    s.arkiv.balances.set(HOUSE_WALLET, 10n ** 15n); // below HOUSE_MIN_WEI (0.01 tGLM)
+    assert.match(await refusal(s.house.publish({ batch })), /^503 house_not_funded: the house wallet .* has 0\.0010 tGLM/);
+    assert.equal(s.approvals.started.length, 0, "no World approval asked for");
+    assert.deepEqual(s.arkiv.batches, [], "nothing written");
+  });
+
+  it("the probe reads the house wallet's balance: unfunded, /health turns the house off and says why", async () => {
+    const { ArkivService } = await import("../src/arkiv/service.js");
+    const { MockPayments } = await import("../src/arkiv/payments.js");
+    const arkiv = new FakeArkiv();
+    const lines: string[] = [];
+    const svc = new ArkivService({ publicRpc: "x", chainId: arkiv.chain, season: 1, priceC: 10, checker: CHECKER, arkiv, publisher: null, payments: new MockPayments(false, { claimReceipt: () => false }), ghostSecret: "", problems: [], boardFile: "", snapshotFile: "", house: HOUSE_WALLET, log: (l) => lines.push(l) });
+    await svc.probe();
+    assert.equal(svc.houseFunds(), null, "funded");
+    arkiv.balances.set(HOUSE_WALLET, 0n);
+    await svc.probe();
+    const why = svc.houseFunds();
+    assert.equal(why, `the house wallet ${HOUSE_WALLET} has 0.0000 tGLM: npm run arkiv:fund -- --to ${HOUSE_WALLET} --amount 1`);
+    assert.ok(lines.some((l) => l === `arkiv: ${why}`), lines.join(" | "));
+    const h = pivotHealth({ consoles: null, splits: true, scout: null, house: {}, houseProblems: [], houseFunds: why, arkivWrites: true });
+    assert.deepEqual([h.house, h.house_off], [false, why]);
+  });
+
   it("a batch written before by the checker itself (no stamps) is published again from the house wallet, after a new approval", async () => {
     const s = setup();
     const { batch } = await s.house.stage(s.body());

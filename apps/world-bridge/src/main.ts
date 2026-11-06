@@ -311,6 +311,8 @@ const arkiv: ArkivService = new ArkivService({
   boardFile: join(appDir, "public", "board.html"),
   snapshotFile: resolve(appDir, "..", "..", "arkiv", "snapshot.json"),
   explorer: cfg.explorer,
+  // The house wallet's balance is probed too: an unfunded one turns the house off in /health.
+  house: houseIssues.length === 0 ? (arkivPort?.house ?? null) : null,
   log,
 });
 void arkiv.probe();
@@ -373,7 +375,7 @@ const health = () => ({
   ...makeHealth(idkit, approvals, reachable),
   ...arkiv.health(),
   ...hedera.health(),
-  ...pivotHealth({ consoles, splits: splitsReady(cfg), scout, house, houseProblems: houseIssues, arkivWrites: arkiv.health().arkiv_writes }),
+  ...pivotHealth({ consoles, splits: splitsReady(cfg), scout, house, houseProblems: houseIssues, houseFunds: arkiv.houseFunds(), arkivWrites: arkiv.health().arkiv_writes }),
 });
 
 const server = buildServer({ health, idkit, approvals, arkiv, hedera, consoles, scout, house, log });

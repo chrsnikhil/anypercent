@@ -87,9 +87,9 @@ export interface PivotHealth {
   splits: boolean;
   /** PB's scout: "model" (Groq), "rule" (no key, or the key refused), "off" (Arkiv or Hedera pay off). */
   scout: "model" | "rule" | "off";
-  /** House batches can be published (house account, owner book, the house wallet, Arkiv writes). */
+  /** House batches can be published (house account, owner book, a funded house wallet, Arkiv writes). */
   house: boolean;
-  /** Why the house is off ("set: HOUSE_ARKIV_KEY", "Arkiv writes are off"), or null while it is on. */
+  /** Why the house is off ("set: HOUSE_ARKIV_KEY", "Arkiv writes are off", "the house wallet 0x... has 0.0000 tGLM: ..."), or null while it is on. */
   house_off: string | null;
 }
 
@@ -101,11 +101,14 @@ export function pivotHealth(w: {
   house: unknown | null;
   /** houseProblems(cfg): what keeps the house off, by .env name. */
   houseProblems?: readonly string[];
+  /** ArkivService.houseFunds(): the house wallet below HOUSE_MIN_WEI at the last probe, else null. */
+  houseFunds?: string | null;
   arkivWrites: boolean;
 }): PivotHealth {
-  const on = w.house !== null && w.arkivWrites;
+  const funds = w.houseFunds ?? null;
+  const on = w.house !== null && w.arkivWrites && funds === null;
   const problems = w.houseProblems ?? [];
-  const off = on ? null : problems.length ? `set: ${problems.join(", ")}` : w.house !== null ? "Arkiv writes are off" : "not configured";
+  const off = on ? null : problems.length ? `set: ${problems.join(", ")}` : w.house === null ? "not configured" : !w.arkivWrites ? "Arkiv writes are off" : funds;
   return { console: w.consoles !== null, splits: w.splits, scout: w.scout?.mode() ?? "off", house: on, house_off: off };
 }
 

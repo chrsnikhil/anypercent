@@ -142,6 +142,7 @@ describe("readers: old rows load, splits that do not check out are absent", () =
       { name: "arkiv.schema", type: "str", value: "anypercent.run" },
       { name: "game", type: "str", value: "MDGP" },
       { name: "title", type: "str", value: "MARINE DRIVE GP" },
+      { name: "season", type: "i32", value: 1 },
       { name: "frames", type: "u64", value: "0x17bc" }, // 6076
       { name: "runner", type: "str", value: "0123456789abcdef" },
       { name: "human", type: "bool", value: false },

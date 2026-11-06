@@ -126,7 +126,10 @@ export class FakeArkiv implements ArkivPort {
   /** A transaction with more creates than this is refused (gas or size), as Arkiv would. */
   maxCreates = Infinity;
   chain = 7794095;
-  balances = new Map<string, bigint>([[CHECKER.toLowerCase(), 10n ** 18n]]);
+  balances = new Map<string, bigint>([
+    [CHECKER.toLowerCase(), 10n ** 18n],
+    [HOUSE_WALLET, 10n ** 18n],
+  ]);
   /** Throw on the next n writes (Arkiv down, a revert). */
   failWrites = 0;
   /** The next n stamp writes land and then throw (the receipt never came back). */
@@ -186,6 +189,7 @@ export class FakeArkiv implements ArkivPort {
     return {
       key: r.key,
       creator: r.creator,
+      owner: (r.owner ?? r.creator).toLowerCase(),
       expiresAt: this.expiryOf(r.key, r.spec),
       game: v.game,
       title: v.title,
@@ -334,6 +338,7 @@ export class FakeArkiv implements ArkivPort {
     return {
       key: l.key,
       creator: l.creator,
+      owner: (l.owner ?? l.creator).toLowerCase(),
       expiresAt: this.expiryOf(l.key, l.spec),
       run: l.run,
       game: v.game,
@@ -367,7 +372,10 @@ export class FakeArkiv implements ArkivPort {
     if (!l) return null;
     const st = this.stampOfRun(l.run);
     const row = this.listingRow(l);
-    return st && listingMismatch(st, row) === null ? row : null;
+    if (!st || listingMismatch(st, row) !== null) return null;
+    // The listing counts only for a run that counts.
+    const r = this.runs.find((x) => x.live && x.key === l.run && same(x.creator, st.console));
+    return r && runMismatch(st, this.runRow(r, false)) === null ? row : null;
   }
 
   /** A listing as any wallet might write it (default: the run's own wallet), for a run already here. */

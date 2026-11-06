@@ -32,11 +32,11 @@ export const Q1_TEMPLATE =
 export const Q1_STAMPS_TEMPLATE =
   "arkiv.schema = str('anypercent.stamp') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${checker}) ORDER BY frames:u64 ASC";
 
-/** What a run board selects: never `log` or `log_enc` (only one ghost at a time selects those). Splits are optional. */
-export const RUN_BOARD_ATTRS = ["game", "title", "frames", "runner", "book", "label", "human", "credential", "log_h", "rules", "s1", "s2", "s3", "s4", "split_kind"] as const;
+/** What a run board selects: never `log` or `log_enc` (only one ghost at a time selects those). Splits are optional; season is compared with the stamp's. */
+export const RUN_BOARD_ATTRS = ["game", "title", "season", "frames", "runner", "book", "label", "human", "credential", "log_h", "rules", "s1", "s2", "s3", "s4", "split_kind"] as const;
 /** What a listing read selects; `pay_to` and `hcs` are optional (rows before the Hedera module have neither); exactly one of `book` and `label`. */
 export const LISTING_ATTRS = ["run", "game", "season", "frames", "log_h", "price", "seller", "book", "label", "human", "pay_to", "hcs"] as const;
-export const RUN_ALL_ATTRS = [...RUN_BOARD_ATTRS, "season", "tool"] as const;
+export const RUN_ALL_ATTRS = [...RUN_BOARD_ATTRS, "tool"] as const;
 export const SCHEMA_ATTR = "arkiv.schema";
 /** A page holds at most this many rows (the node's maximum). */
 export const PAGE = 100;

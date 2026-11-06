@@ -167,12 +167,12 @@ const Q = {
 };
 
 // s1..s4 and split_kind are a run's lap splits (optional: rows before them have none).
-const RUN_ATTRS = ["game", "title", "frames", "runner", "book", "label", "human", "credential", "log_h", "rules", "s1", "s2", "s3", "s4", "split_kind"];
+const RUN_ATTRS = ["game", "title", "season", "frames", "runner", "book", "label", "human", "credential", "log_h", "rules", "s1", "s2", "s3", "s4", "split_kind"];
 const LISTING_ATTRS = ["run", "game", "season", "frames", "log_h", "price", "seller", "book", "label", "human", "pay_to", "hcs"];
 const STAMP_ATTRS = ["run", "console", "game", "season", "frames", "log_h", "book", "label", "human", "s1", "s2", "s3", "s4", "split_kind", "final_hash", "tool"];
-const RUN_TYPES = { game: "str", title: "str", frames: "u64", runner: "str", book: "str", label: "str", human: "bool", credential: "str", log_h: "str", rules: "u64",
+const RUN_TYPES = { game: "str", title: "str", season: "i32", frames: "u64", runner: "str", book: "str", label: "str", human: "bool", credential: "str", log_h: "str", rules: "u64",
   s1: "u64", s2: "u64", s3: "u64", s4: "u64", split_kind: "str" };
-const RUN_REQUIRED = ["game", "title", "frames", "runner", "human", "log_h", "rules"];
+const RUN_REQUIRED = ["game", "title", "season", "frames", "runner", "human", "log_h", "rules"];
 // pay_to (the seller's Hedera account, as World App showed it) and hcs ("<topic>/<seq>" of the LISTING
 // message) are optional: listings written before payouts have neither and are not for sale. A listing
 // names exactly one of book (a person's) and label (the house's BOT ghosts).
@@ -275,7 +275,7 @@ async function rpc(method, params) {
 function select(attrs) {
   const attributes = { "arkiv.schema": true };
   for (const a of attrs) attributes[a] = true;
-  return { key: true, creator: true, expiresAt: true, attributes };
+  return { key: true, owner: true, creator: true, expiresAt: true, attributes };
 }
 async function query(q, attrs, limit = 100) {
   return rpc("arkiv_query", [q, { select: select(attrs), limit: "0x" + limit.toString(16) }]);
@@ -311,7 +311,8 @@ function decode(raw, types, required, schema, pin) {
   if (/(listing|stamp)$/.test(schema) && (v.book === undefined) === (v.label === undefined)) return null;
   if (/stamp$/.test(schema)) v.console = v.console.toLowerCase();
   const expiresAt = typeof raw.expiresAt === "string" && /^0x[0-9a-fA-F]+$/.test(raw.expiresAt) ? Number(BigInt(raw.expiresAt)) : null;
-  return { key: raw.key.toLowerCase(), creator, expiresAt, ...v };
+  const owner = typeof raw.owner === "string" ? raw.owner.toLowerCase() : null;
+  return { key: raw.key.toLowerCase(), creator, owner, expiresAt, ...v };
 }
 function decodeAll(data, types, required, schema, pin) {
   const rows = []; let dropped = 0;
@@ -332,15 +333,17 @@ function splitsOf(r) {
 const isBot = (r) => typeof r.label === "string" && r.label.startsWith("BOT-") && r.human !== true && !r.book;
 
 // ---- The rule, as the service's board.ts writes it: a run counts only when a checker stamp names it, ----
-// its creator is the wallet the stamp names, and the columns the stamp copied agree with the run's. A
-// listing counts only when its creator is that wallet too and it names that run with the run's columns.
+// its creator and its current owner are the wallet the stamp names, and the columns the stamp copied agree
+// with the run's. A listing counts only when its creator and owner are that wallet too and it names that run
+// with the run's columns.
 const sameSplits = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
 function runMismatch(st, r) {
   if (!WALLET_RE.test(st.console)) return "the stamp names no wallet";
   if (r.key !== st.run) return "another run";
   if ((r.creator || "") !== st.console) return "created by another wallet than the stamp names";
+  if ((r.owner || "") !== st.console) return "owned by another wallet than the stamp names";
   if (r.game !== st.game) return "game";
-  if (r.season !== undefined && r.season !== st.season) return "season";
+  if (r.season !== st.season) return "season";
   if (r.frames !== st.frames) return "frames";
   if (r.log_h !== st.log_h) return "log_h";
   if ((r.book ?? null) !== (st.book ?? null)) return "book";
@@ -352,6 +355,7 @@ function runMismatch(st, r) {
 function listingMismatch(st, l) {
   if (l.run !== st.run) return "another run";
   if ((l.creator || "") !== st.console) return "created by another wallet than the run's";
+  if ((l.owner || "") !== st.console) return "owned by another wallet than the run's";
   if (l.game !== st.game) return "game";
   if (l.season !== st.season) return "season";
   if (l.frames !== st.frames) return "frames";

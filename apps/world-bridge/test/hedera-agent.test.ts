@@ -183,7 +183,7 @@ describe("PB's guards (one per row; nothing is signed on any refusal)", () => {
     nothingSigned(h);
   });
 
-  it("run gone or changed (log_h, log_enc, live, run key): buy_suspended", async () => {
+  it("run gone or changed (log_h, log_enc, run key): buy_suspended; a run gone from Arkiv takes its listing with it (gone)", async () => {
     const h = await setup();
     assert.equal((await buy(h, { log_h: "0".repeat(64) })).failure, "buy_suspended");
     assert.equal((await buy(h, { run: `0x${"ee".repeat(32)}` })).failure, "buy_suspended");
@@ -192,7 +192,8 @@ describe("PB's guards (one per row; nothing is signed on any refusal)", () => {
     assert.equal((await buy(h)).failure, "buy_suspended");
     h.arkiv.runs[0].spec.values.log_enc = sealed;
     h.arkiv.runs[0].live = false;
-    assert.equal((await buy(h)).failure, "buy_suspended");
+    const gone = await buy(h);
+    assert.deepEqual([gone.failure, gone.data], ["buy_changed", { now_price: "gone" }], "a listing counts only while its run does");
     nothingSigned(h);
   });
 

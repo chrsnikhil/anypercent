@@ -28,6 +28,11 @@
  * itself before console-owned records (written, no stamps) is not on any board any more: it is
  * published again from the house wallet, after a new approval.
  *
+ * The house wallet pays for its rows: with less than HOUSE_MIN_WEI tGLM, staging and publishing are
+ * refused (503 house_not_funded, `npm run arkiv:fund -- --to <house>`) before the owner's World
+ * approval is asked for, and /health says so in house_off. On a retry, a house-wallet run found on
+ * Arkiv is stamped only when its game, season, frames and splits are this batch's (else ls_publish_fail).
+ *
  * A house row is never HUMAN: `human` false, no book, no credential, `label` BOT-..., `pay_to` the
  * house. The row builders take no such fields, so a house row with HUMAN, a book or a credential
  * cannot be built.
@@ -47,6 +52,8 @@ import { CheckerError, LOG_MAX, LOG_MIN, parseHeader, splitsVerdict, verdict, ty
 import { encryptGhost, sha256Hex } from "./ghost.js";
 import { fmtTime, priceDec, priceText } from "./publish.js";
 import { GAMES, LISTING_DAYS, LISTING_FLAGS, RUN_FLAGS, STAMP_FLAGS } from "./schema.js";
+import { houseUnfunded } from "./service.js";
+import { HOUSE_MIN_WEI } from "../config.js";
 
 /** The text World App shows for a batch, word for word (at most 160 characters). */
 export function houseText(batch: string, n: number, title: string, priceC: number, houseId: string): string {
@@ -67,6 +74,7 @@ export const houseRunner = (secret: string, label: string) => runnerId(secret, `
 export const MAX_HOUSE_BODY = 192 * 1024;
 export const HOUSE_HOLD_S = 3600;
 export const HOUSE_ACTION_MAX = 160;
+
 
 /** What a BOT run row is built from. No `human`, `book` or `credential`: a house row has none. */
 export interface HouseRunInput {
@@ -180,6 +188,8 @@ export interface HouseOptions {
   /** One Arkiv transaction (90 s); the queue waits it out after that. */
   writeTimeoutMs?: number;
   approvalTtlMs?: number;
+  /** The least tGLM (wei) the house wallet must hold before a batch is staged or approved (HOUSE_MIN_WEI). */
+  minWei?: bigint;
   log?: (line: string) => void;
 }
 
@@ -237,6 +247,7 @@ export class HouseService {
   private readonly hcsTimeoutMs: number;
   private readonly writeTimeoutMs: number;
   private readonly approvalTtlMs: number;
+  private readonly minWei: bigint;
 
   constructor(private readonly opts: HouseOptions) {
     this.now = opts.now ?? Date.now;
@@ -244,6 +255,7 @@ export class HouseService {
     this.hcsTimeoutMs = opts.hcsTimeoutMs ?? 10_000;
     this.writeTimeoutMs = opts.writeTimeoutMs ?? 90_000;
     this.approvalTtlMs = opts.approvalTtlMs ?? 24 * 3_600_000;
+    this.minWei = opts.minWei ?? HOUSE_MIN_WEI;
   }
 
   private log(line: string): void {
@@ -260,9 +272,25 @@ export class HouseService {
 
   // ---- staging ---------------------------------------------------------------------------------
 
+  /**
+   * The house wallet pays for the rows: one with less than `minWei` tGLM is refused before anything
+   * is staged or approved (the owner's World approval is never spent on a batch that cannot be written).
+   */
+  private async refuseIfUnfunded(): Promise<void> {
+    const house = this.opts.arkiv.house as string;
+    let wei: bigint;
+    try {
+      wei = await this.opts.arkiv.balance(house);
+    } catch (err) {
+      throw new HouseRefused(503, "arkiv_unavailable", err instanceof ArkivError ? err.message : "read failed");
+    }
+    if (wei < this.minWei) throw new HouseRefused(503, "house_not_funded", houseUnfunded(house, wei));
+  }
+
   /** POST /house/batch. Throws HouseRefused (400, 409, 503). */
   async stage(raw: Record<string, unknown>): Promise<Record<string, unknown>> {
     this.refuseIfOff();
+    await this.refuseIfUnfunded();
     const { game, logs, gen } = raw;
     const bad = (detail: string) => new HouseRefused(400, "bad_body", detail);
     if (typeof game !== "string" || !GAMES[game]) throw bad("game must be an arcade id");
@@ -382,6 +410,7 @@ export class HouseService {
     const { batch } = raw;
     if (typeof batch !== "string" || !/^[0-9a-f]{6}$/.test(batch)) throw new HouseRefused(400, "bad_body", "batch: 6 hex");
     this.refuseIfOff();
+    await this.refuseIfUnfunded();
     const held = this.held.get(batch);
     const rec = this.opts.store.houseBatch(batch);
     if (!held || held.expiresMs < this.now() || !rec) throw new HouseRefused(404, "unknown_batch", "stage it with POST /house/batch first (logs are held 1 h)");
@@ -553,9 +582,13 @@ export class HouseService {
         }
         const r: RunRow | null = await arkiv.runByLogHash(l.log_h, house);
         if (r) {
-          if (!this.ownRow(rec, l.log_h, r) || Number(r.frames) !== l.frames) {
+          if (!this.ownRow(rec, l.log_h, r)) {
             return this.fail(j, "ls_publish_fail", `the house wallet has another run of ${rec.labels[i]}'s log (${r.key})`);
           }
+          // Its stamp copies this batch's replayed values: the run on Arkiv must carry exactly those
+          // (a season or splits changed since it was written would be stamped wrong, and every reader would drop it).
+          const off = r.game !== held.game ? "game" : r.season !== this.opts.season ? "season" : Number(r.frames) !== l.frames ? "frames" : JSON.stringify(r.splits ?? null) !== JSON.stringify(l.splits) ? "splits" : null;
+          if (off) return this.fail(j, "ls_publish_fail", `${rec.labels[i]}'s run on Arkiv (${r.key}) has another ${off} than this batch: not stamped`);
           runs[i] = r.key;
           listings[i] = (await arkiv.liveListingFor(r.key, house))?.key ?? null;
         }

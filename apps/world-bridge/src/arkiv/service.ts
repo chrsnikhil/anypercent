@@ -11,13 +11,14 @@
  *   GET  /board, /board/snapshot.json   the web board and its fallback snapshot
  *
  * and three /health fields: "arkiv" (the last probe saw eth_chainId == ARKIV_CHAIN_ID),
- * "arkiv_writes" (config complete, right chain, checker funded) and "checker".
+ * "arkiv_writes" (config complete, right chain, checker funded) and "checker". The probe also reads
+ * the house wallet's balance; `houseFunds()` says when it is below HOUSE_MIN_WEI (/health house_off).
  *
  * Errors are non-2xx {"error", "failure"}; the failure is ls_publish_fail on the publish routes and
  * buy_load_fail on /arkiv/ghost.
  */
 import { readFileSync } from "node:fs";
-import { ARKIV_EXPLORER, ARKIV_EXPLORER_ENTITY, ARKIV_EXPLORER_TX, GHOST_SECRET_RE, type ExplorerConfig } from "../config.js";
+import { ARKIV_EXPLORER, ARKIV_EXPLORER_ENTITY, ARKIV_EXPLORER_TX, GHOST_SECRET_RE, HOUSE_MIN_WEI, type ExplorerConfig } from "../config.js";
 import { ArkivError, type ArkivPort } from "./client.js";
 import { decryptGhost, sha256Hex } from "./ghost.js";
 import type { PaymentCheck } from "./payments.js";
@@ -58,6 +59,10 @@ export interface ArkivServiceOptions {
   snapshotFile: string;
   /** ARKIV_EXPLORER_TX / ARKIV_EXPLORER_ENTITY (default: Rabdi's explorer). */
   explorer?: ExplorerConfig;
+  /** The house wallet (lowercase), whose balance the probe reads too; null without HOUSE_ARKIV_KEY. */
+  house?: string | null;
+  /** The least tGLM (wei) the house wallet must hold (HOUSE_MIN_WEI). */
+  houseMinWei?: bigint;
   log?: (line: string) => void;
 }
 
@@ -68,6 +73,7 @@ export class ArkivService {
   /** What the last probe saw: null before the first one answers. */
   private chainSeen: number | null = null;
   private balanceSeen: bigint | null = null;
+  private houseSeen: bigint | null = null;
   private reachable = false;
 
   constructor(private readonly opts: ArkivServiceOptions) {}
@@ -114,6 +120,12 @@ export class ArkivService {
       this.chainSeen = await port.chainId();
       this.reachable = true;
       if (this.opts.checker) this.balanceSeen = await port.balance(this.opts.checker);
+      if (this.opts.house) {
+        const was = this.houseFunds();
+        this.houseSeen = await port.balance(this.opts.house);
+        const now = this.houseFunds();
+        if (now !== was) this.opts.log?.(now ? `arkiv: ${now}` : `arkiv: the house wallet has ${formatGlm(this.houseSeen)} tGLM`);
+      }
     } catch (err) {
       this.reachable = false;
       const why = err instanceof ArkivError ? err.message : "no answer";
@@ -132,6 +144,16 @@ export class ArkivService {
       const writes = now.arkiv_writes ? "writes on" : `writes off${off}`;
       this.opts.log?.(`arkiv reachable (${chain}${bal}); ${writes}`);
     }
+  }
+
+  /**
+   * Why the house cannot write, as far as funds go: the house wallet below HOUSE_MIN_WEI at the last
+   * probe (null: funded, not read yet, or no house wallet). /health's house_off says it.
+   */
+  houseFunds(): string | null {
+    const house = this.opts.house;
+    if (!house || this.houseSeen === null) return null;
+    return this.houseSeen < (this.opts.houseMinWei ?? HOUSE_MIN_WEI) ? houseUnfunded(house, this.houseSeen) : null;
   }
 
   // ---- routes ----------------------------------------------------------------------------
@@ -231,6 +253,11 @@ function readOrNull(file: string): Buffer | null {
   } catch {
     return null;
   }
+}
+
+/** Why an unfunded house wallet is off (/health house_off, the 503 detail of /house/*). */
+export function houseUnfunded(house: string, wei: bigint): string {
+  return `the house wallet ${house} has ${formatGlm(wei)} tGLM: npm run arkiv:fund -- --to ${house} --amount 1`;
 }
 
 /** wei -> tGLM with 4 decimals. */

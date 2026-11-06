@@ -62,6 +62,8 @@ const WALLET_RE = /^0x[0-9a-f]{40}$/;
 export interface RunRow {
   key: string;
   creator: string | null;
+  /** Its `$owner` (lowercase) when the read selected it: a reader counts a run only while owner = creator = its stamp's console. */
+  owner?: string | null;
   expiresAt: bigint | null;
   game: string;
   title?: string;
@@ -95,6 +97,8 @@ export interface StampedRun extends RunRow {
 export interface ListingRow {
   key: string;
   creator: string | null;
+  /** Its `$owner` (lowercase) when the read selected it: counted only while owner = creator = its run's console. */
+  owner?: string | null;
   expiresAt: bigint | null;
   run: string;
   game: string;
@@ -321,7 +325,7 @@ export interface ArkivPort {
   writeStamps(specs: CreateSpec<StampValues>[]): Promise<{ stamps: string[]; tx: string }>;
   /** One live run that counts (board.ts): its checker stamp, created by the stamp's console; with its ghost bytes when `withLog`. */
   getRun(runKey: string, withLog: boolean): Promise<StampedRun | null>;
-  /** One live listing that counts (board.ts): its run stamped, created by that run's console; with `pay_to` and `hcs`. */
+  /** One live listing that counts (board.ts): its run counts (stamped, held by the stamp's console), and the listing is that console's; with `pay_to` and `hcs`. */
   getListing(listingKey: string): Promise<ListingRow | null>;
   /** One batch from the checker: the run, then its listing (run = the run's predicted key). The smoke script's only. */
   writeRunAndListing(run: CreateSpec<RunValues>, listing: CreateSpec<ListingValues>): Promise<Written>;
@@ -382,6 +386,7 @@ export function runFromRow(r: DecodedRow): RunRow {
   return {
     key: r.key,
     creator: r.creator,
+    owner: r.owner,
     expiresAt: r.expiresAt,
     game: v.game as string,
     title: v.title as string | undefined,
@@ -409,6 +414,7 @@ export function listingFromRow(r: DecodedRow): ListingRow {
   return {
     key: r.key,
     creator: r.creator,
+    owner: r.owner,
     expiresAt: r.expiresAt,
     run: v.run as string,
     game: v.game as string,
@@ -670,7 +676,7 @@ export class SdkArkiv implements ArkivPort {
     const st = await this.stampForRun(runKey);
     if (!st || !WALLET_RE.test(st.console)) return null;
     const asked = withLog ? [...RUN_ALL_ATTRS, "log", "log_enc"] : [...RUN_ALL_ATTRS];
-    const res = await this.query(q6Run(runKey, st.console, this.names), selectOf(asked), 1);
+    const res = await this.query(q6Run(runKey, st.console, this.names), selectOf(asked, { owner: true }), 1);
     const page = decodePage(res.data, RUN_TYPES, asked, this.names.run, st.console);
     const r = page.rows[0] ? runFromRow(page.rows[0]) : null;
     return r && runMismatch(st, r) === null ? stamped(st, r) : null;
@@ -678,12 +684,18 @@ export class SdkArkiv implements ArkivPort {
 
   async getListing(listingKey: string): Promise<ListingRow | null> {
     const asked = [...LISTING_ATTRS];
-    const res = await this.query(q6ListingByKey(listingKey, this.names), selectOf(asked), 1);
+    const res = await this.query(q6ListingByKey(listingKey, this.names), selectOf(asked, { owner: true }), 1);
     const page = decodePage(res.data, LISTING_TYPES, asked, this.names.listing, null);
     const l = page.rows[0] ? listingFromRow(page.rows[0]) : null;
     if (!l) return null;
+    // The listing counts only for a run that counts: its stamp, then the run as its console holds it.
     const st = await this.stampForRun(l.run);
-    return st && listingMismatch(st, l) === null ? l : null;
+    if (!st || !WALLET_RE.test(st.console) || listingMismatch(st, l) !== null) return null;
+    const runAsked = [...RUN_ALL_ATTRS];
+    const runRes = await this.query(q6Run(l.run, st.console, this.names), selectOf(runAsked, { owner: true }), 1);
+    const runPage = decodePage(runRes.data, RUN_TYPES, runAsked, this.names.run, st.console);
+    const r = runPage.rows[0] ? runFromRow(runPage.rows[0]) : null;
+    return r && runMismatch(st, r) === null ? l : null;
   }
 
   /**
@@ -698,8 +710,8 @@ export class SdkArkiv implements ArkivPort {
     const consoles = [...new Set(stamps.map((s) => s.console))].filter((w) => WALLET_RE.test(w));
     const pages = await Promise.all(
       consoles.map(async (w) => ({
-        runs: want.runs ? (await this.query(q1Board(game, season, w, this.names), selectOf(RUN_BOARD_ATTRS), PAGE)).data : [],
-        listings: want.listings ? (await this.query(q2Listings(game, season, w, this.names), selectOf(LISTING_ATTRS), PAGE)).data : [],
+        runs: want.runs ? (await this.query(q1Board(game, season, w, this.names), selectOf(RUN_BOARD_ATTRS, { owner: true }), PAGE)).data : [],
+        listings: want.listings ? (await this.query(q2Listings(game, season, w, this.names), selectOf(LISTING_ATTRS, { owner: true }), PAGE)).data : [],
       })),
     );
     return { block: res.blockNumber, stamps: res.data, runs: pages.flatMap((p) => p.runs), listings: pages.flatMap((p) => p.listings) };

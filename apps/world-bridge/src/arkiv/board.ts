@@ -3,13 +3,15 @@
  * goes through (boardRuns, boardListings, getRun, getListing) and the web board mirrors line for
  * line in browser JS (public/board.html `joinBoard`; a test runs both on the same rows).
  *
- * A run counts only when a stamp the checker created names it, the run's creator is the wallet the
- * stamp names as its `console`, and the columns the stamp copied agree with the run's: game,
- * season (when the read selected it), frames, log_h, book or label, human and the lap splits. Any
+ * A run counts only when a stamp the checker created names it, the run's creator and its current
+ * owner are both the wallet the stamp names as its `console` (a readonly entity can still be
+ * transferred, so the owner is read too: a missing owner counts as a mismatch), and the columns the
+ * stamp copied agree with the run's: game, season, frames, log_h, book or label, human and the lap
+ * splits. Any
  * mismatch drops the stamp and its run. Two stamps of one log (or of one run) count once: the
  * first, which on a board read is the fastest.
  *
- * A listing counts only when its creator is that same console, its `run` names a run that counted,
+ * A listing counts only when its creator and owner are that same console, its `run` names a run that counted,
  * and its game, season, frames, log_h, book or label and human are the run's. A stamped run whose
  * listing expired still counts, as not for sale.
  *
@@ -28,8 +30,9 @@ export function runMismatch(st: StampRow, r: RunRow): string | null {
   if (!ADDRESS_RE.test(st.console)) return "the stamp names no wallet";
   if (r.key.toLowerCase() !== st.run.toLowerCase()) return "another run";
   if ((r.creator ?? "").toLowerCase() !== st.console) return "created by another wallet than the stamp names";
+  if ((r.owner ?? "").toLowerCase() !== st.console) return "owned by another wallet than the stamp names";
   if (r.game !== st.game) return "game";
-  if (r.season !== undefined && r.season !== st.season) return "season";
+  if (r.season !== st.season) return "season";
   if (r.frames !== st.frames) return "frames";
   if (r.log_h !== st.log_h) return "log_h";
   if ((r.book ?? null) !== (st.book ?? null)) return "book";
@@ -43,6 +46,7 @@ export function runMismatch(st: StampRow, r: RunRow): string | null {
 export function listingMismatch(st: StampRow, l: ListingRow): string | null {
   if (l.run.toLowerCase() !== st.run.toLowerCase()) return "another run";
   if ((l.creator ?? "").toLowerCase() !== st.console) return "created by another wallet than the run's";
+  if ((l.owner ?? "").toLowerCase() !== st.console) return "owned by another wallet than the run's";
   if (l.game !== st.game) return "game";
   if (l.season !== st.season) return "season";
   if (l.frames !== st.frames) return "frames";
