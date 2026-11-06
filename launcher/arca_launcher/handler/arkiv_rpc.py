@@ -161,6 +161,11 @@ def _select(columns):
 
 # ---- the transport and one query ----------------------------------------------------------------------------------
 
+# Rabdi's RPC sits behind Cloudflare, which refuses Python's default User-Agent (Python-urllib/3.x) with a 403: the
+# console names itself instead.
+USER_AGENT = "AnyPercent-Console/1.0 (+https://github.com/chrsnikhil/anypercent)"
+
+
 def rpc_transport(rpc_url):
     """(method, params, timeout_s) -> the node's JSON reply; raises on anything else (no answer, an HTTP error, a
     reply too large or not JSON). No proxy: an HTTP_PROXY left set on the console is never used."""
@@ -169,7 +174,8 @@ def rpc_transport(rpc_url):
     def send(method, params, timeout_s):
         body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode("utf-8")
         request = urllib.request.Request(rpc_url, data=body, method="POST",
-                                         headers={"Content-Type": "application/json", "Accept": "application/json"})
+                                         headers={"Content-Type": "application/json", "Accept": "application/json",
+                                                  "User-Agent": USER_AGENT})
         with opener.open(request, timeout=timeout_s) as reply:
             raw = reply.read(MAX_REPLY + 1)
         if len(raw) > MAX_REPLY:

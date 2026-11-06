@@ -403,6 +403,7 @@ def test_a_run_with_bad_bytes_is_dropped():
 
 class _Node(BaseHTTPRequestHandler):
     bodies = []
+    agents = []
     reply = {"jsonrpc": "2.0", "id": 1, "result": {"data": [], "blockNumber": "0x10"}}
     status = 200
 
@@ -411,6 +412,7 @@ class _Node(BaseHTTPRequestHandler):
 
     def do_POST(self):
         type(self).bodies.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+        type(self).agents.append(self.headers.get("User-Agent", ""))
         raw = json.dumps(type(self).reply).encode()
         self.send_response(type(self).status)
         self.send_header("Content-Type", "application/json")
@@ -422,6 +424,7 @@ class _Node(BaseHTTPRequestHandler):
 @pytest.fixture
 def node(monkeypatch):
     monkeypatch.setattr(_Node, "bodies", [])
+    monkeypatch.setattr(_Node, "agents", [])
     monkeypatch.setattr(_Node, "status", 200)
     monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")             # a proxy that is not there: never used
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
@@ -439,6 +442,13 @@ def test_the_transport_posts_one_json_rpc_request(node):
     first = _Node.bodies[0]
     assert first["jsonrpc"] == "2.0" and first["id"] == 1 and first["method"] == "arkiv_query"
     assert first["params"][0] == rpc.q1("MDGP", 1, CHECKER) and first["params"][1]["limit"] == "0x64"
+
+
+def test_the_transport_names_the_console_not_python(node):
+    """Rabdi's RPC sits behind Cloudflare, which answers Python's default User-Agent (Python-urllib/3.x) with 403."""
+    rpc.read_board(rpc.rpc_transport(node), "MDGP", 1, CHECKER)
+    assert _Node.agents and set(_Node.agents) == {rpc.USER_AGENT}               # every request names the console
+    assert not rpc.USER_AGENT.lower().startswith("python")
 
 
 def test_an_http_error_is_an_rpc_error(node):
