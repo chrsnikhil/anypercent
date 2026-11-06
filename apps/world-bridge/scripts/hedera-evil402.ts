@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { createClientHederaSigner, type ClientHederaSigner } from "@x402/hedera";
 import type { Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { SdkArkiv } from "../src/arkiv/client.js";
+import { SdkArkiv, sellerName } from "../src/arkiv/client.js";
 import { KEY_RE } from "../src/arkiv/queries.js";
 import { ACCOUNT_RE, arkivRpcUrl, hederaPayProblems } from "../src/config.js";
 import { Agent } from "../src/hedera/agent.js";
@@ -118,7 +118,7 @@ console.log(`evil paywall at ${evilBase}: the 402 names ${evilPayTo}; the listin
 const { id } = agent.start({
   book: buyerBook,
   game: listing.game,
-  seller: listing.book,
+  seller: sellerName(listing),          // a BOT listing has a label (BOT-A2), a person's a book
   listing: listing.key,
   run: listing.run,
   log_h: listing.log_h,
