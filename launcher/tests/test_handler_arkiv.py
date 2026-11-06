@@ -2,8 +2,10 @@
 Arkiv, around the World adapter; Hedera still mocked.
 
 Most tests run the adapter with no thread, as test_handler_world.py does: a StubNode stands in for the public Arkiv
-RPC (it answers only the spec's exact query strings), a StubService for the World bridge's /arkiv/* routes, a fake
-clock for time, and the test calls work() (one round of the worker) by hand. The last ones run the real thread."""
+RPC (it answers only the exact query strings the readers send: the checker's stamps, then each stamped wallet's runs
+and listings), a StubService for the World bridge's /arkiv/* routes (the publish job's stages, its "sign" issue and
+`written`), a FakeSigner for the console's own signer, a fake clock for time, and the test calls work() (one round of
+the worker) by hand. The last ones run the real thread."""
 import base64
 import hashlib
 import json
@@ -17,6 +19,7 @@ import pytest
 
 from arca_launcher.handler import arkiv, arkiv_rpc as rpc
 from arca_launcher.handler.arkiv import ArkivSponsors
+from arca_launcher.handler.arkiv_sign import SignError
 from arca_launcher.handler.flow import Flow
 from arca_launcher.handler.ledger import GHOST_PRICE, Ledger, load
 from arca_launcher.handler.mock import MockSponsors
@@ -25,9 +28,11 @@ from arca_launcher.handler.world import WorldSponsors
 from test_handler_world import StubBridge
 
 CHECKER = "0x5b38da6a701c568545dcfcb03fcb875f56beddc4"
+WALLET = "0x1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b9f3e"       # the consoles' wallet: it creates their runs and listings
 STRANGER = "0xab8483f64d9c6d1ecf9b849ae677dd3315835cb2"
 SEASON = 1
-PUBLISH_FAILURES = ("ls_expired", "ls_wrong", "ls_mismatch", "ls_reused", "ls_copied", "ls_publish_fail")
+PUBLISH_FAILURES = ("ls_expired", "ls_wrong", "ls_mismatch", "ls_reused", "ls_copied", "ls_not_linked",
+                    "ls_publish_fail")
 
 
 class FakeClock:
@@ -55,43 +60,63 @@ def _attr(name, kind, value):
     return {"name": name, "type": kind, "value": value}
 
 
+def board_reads(game, *owners):
+    """The queries one board read sends: the checker's stamps, then each stamped wallet's runs and listings."""
+    out = [rpc.q_stamps(game, SEASON, CHECKER)]
+    for owner in owners:
+        out += [rpc.q1(game, SEASON, owner), rpc.q2(game, SEASON, owner)]
+    return out
+
+
 class StubNode:
-    """The Rabdi node's arkiv_query in memory. It answers only the spec's exact strings: each game's Q1 and Q2, and Q6
-    by key; anything else fails the test. Only selected columns come back, as on the real node. ignore_pin: a node
-    that skips the `$creator` filter (the look-alike comes back too); down: every request fails."""
+    """The Rabdi node's arkiv_query in memory. It answers only the readers' exact strings: each game's stamps (pinned to
+    the checker), a wallet's runs and listings of a game (pinned to it), a run by key (pinned to a wallet), a run's
+    stamp and a listing by key (no pin); anything else fails the test. Only selected columns come back, as on the real
+    node, and a row's current owner when the read selects it (its creator, unless the test gave the entity an
+    "owner"). ignore_pin: a node that skips every `$creator` filter (look-alikes come back too); down: every request
+    fails."""
 
     def __init__(self):
-        self.runs, self.listings, self.queries = [], [], []
+        self.runs, self.listings, self.stamps, self.queries = [], [], [], []
         self.down = False
         self.ignore_pin = False
         self.block = 0x3fe90
 
-    def run(self, name, frames, log=None, plain=False, listed=False, human=True, book=True, creator=CHECKER,
-            game="MDGP", price="0.1", pay_to=None, splits=None, hcs=None):
-        """A run row (and its listing when listed). name: its book, or with book=False an open-tier label (a BOT-
-        label: the house's). pay_to: the seller's Hedera account the listing names (None: a listing written without
-        one). splits: its lap times (s1.., split_kind "lap"). hcs: the listing's LISTING message ("<topic>/<seq>")."""
+    def run(self, name, frames, log=None, listed=False, human=True, book=True, creator=WALLET, game="MDGP",
+            price="0.1", pay_to=None, splits=None, hcs=None, stamped=True, console=None):
+        """A run row created by creator's wallet (and its listing when listed), stamped by the checker naming console
+        (creator by default) unless stamped is False. name: its book, or with book=False the house's BOT label.
+        pay_to: the seller's Hedera account the listing names (None: a listing written without one). splits: its lap
+        times (s1.., split_kind "lap"). hcs: the listing's LISTING message ("<topic>/<seq>"). Its ghost is encrypted
+        (log_enc): every ghost is a listed one, served by the service."""
         log = log if log is not None else acl(name + str(frames))
         attrs = [_attr("arkiv.schema", "str", "anypercent.run"), _attr("game", "str", game),
                  _attr("title", "str", "MARINE DRIVE GP"), _attr("season", "i32", SEASON),
                  _attr("rules", "u64", "0x4"), _attr("frames", "u64", hex(frames)),
                  _attr("log_h", "str", sha(log)), _attr("runner", "str", (name.lower() * 4)[:16]),
-                 _attr("human", "bool", human and book), _attr("tool", "str", "arcade_replay sha256:0123456789ab")]
+                 _attr("human", "bool", human and book), _attr("tool", "str", "arcade_replay sha256:0123456789ab"),
+                 _attr("log_enc", "bytes", "0xabcdef")]
         attrs.append(_attr("book", "str", name) if book else _attr("label", "str", name))
         if human and book:
             attrs.append(_attr("credential", "str", "Orb"))
-        attrs.append(_attr("log", "bytes", "0x" + log.hex()) if plain else _attr("log_enc", "bytes", "0xabcdef"))
         if splits:
             attrs += [_attr(f"s{i}", "u64", hex(lap)) for i, lap in enumerate(splits, start=1)]
             attrs.append(_attr("split_kind", "str", "lap"))
         entity = {"key": key(f"{creator}{name}{frames}"), "creator": creator, "expiresAt": "0x7a9812",
                   "attributes": attrs}
         self.runs.append(entity)
+        if stamped:
+            copied = [a for a in attrs if a["name"] in ("game", "season", "frames", "log_h", "book", "label", "human",
+                                                         "s1", "s2", "s3", "s4", "split_kind")]
+            self.stamps.append({"key": key("stamp" + entity["key"]), "creator": CHECKER, "expiresAt": "0x7a9812",
+                                "attributes": [_attr("arkiv.schema", "str", "anypercent.stamp"),
+                                               _attr("run", "bytes32", entity["key"]),
+                                               _attr("console", "str", console or creator)] + copied})
         if listed:
             self.listings.append({"key": key("listing" + entity["key"]), "creator": creator, "expiresAt": "0x46a1d0",
                                   "attributes": [
                                       _attr("arkiv.schema", "str", "anypercent.listing"),
-                                      _attr("run", "key", entity["key"]), _attr("game", "str", game),
+                                      _attr("run", "bytes32", entity["key"]), _attr("game", "str", game),
                                       _attr("season", "i32", SEASON), _attr("frames", "u64", hex(frames)),
                                       _attr("log_h", "str", sha(log)), _attr("price", "dec", price),
                                       _attr("seller", "str", (name.lower() * 4)[:16]),
@@ -104,31 +129,53 @@ class StubNode:
     def listing_of(self, run):
         return next(x for x in self.listings if _value(x, "run") == run["key"])
 
+    def stamp_of(self, run):
+        return next(x for x in self.stamps if _value(x, "run") == run["key"])
+
     def __call__(self, method, params, timeout_s):
         assert method == "arkiv_query" and timeout_s <= 3
         text, options = params
         self.queries.append(text)
         if self.down:
             raise urllib.error.URLError("unreachable")
-        for game in ("SHIP", "MDGP", "RUSH", "SEGF", "ZIPG"):
-            for q, rows in ((rpc.q1(game, SEASON, CHECKER), self.runs), (rpc.q2(game, SEASON, CHECKER), self.listings)):
-                if text == q:
-                    assert options["limit"] == "0x64"
-                    hits = sorted((e for e in rows if _value(e, "game") == game and self._pinned(e)),
-                                  key=lambda e: int(_value(e, "frames"), 16))
-                    return self._page(hits, options)
-        m = re.fullmatch(r"arkiv\.schema = str\('(anypercent\.(?:run|listing))'\) AND \$key = key\((0x[0-9a-f]{64})\)"
+        m = re.fullmatch(r"arkiv\.schema = str\('anypercent\.(stamp|run|listing)'\) AND game = str\('([A-Z0-9]{4})'\)"
+                         r" AND season = i32\(1\) AND \$creator = addr\((0x[0-9a-fA-F]{40})\) ORDER BY frames:u64 ASC",
+                         text)
+        if m:
+            kind, game, pin = m.group(1), m.group(2), m.group(3).lower()
+            query = {"stamp": rpc.q_stamps, "run": rpc.q1, "listing": rpc.q2}[kind]
+            assert text == query(game, SEASON, pin), text
+            assert kind != "stamp" or pin == CHECKER, text
+            assert options["limit"] == "0x64"
+            rows = {"stamp": self.stamps, "run": self.runs, "listing": self.listings}[kind]
+            hits = sorted((e for e in rows if _value(e, "game") == game and self._pinned(e, pin)),
+                          key=lambda e: int(_value(e, "frames"), 16))
+            return self._page(hits, options)
+        m = re.fullmatch(r"arkiv\.schema = str\('anypercent\.stamp'\) AND run = key\((0x[0-9a-f]{64})\)"
                          r" AND \$creator = addr\((0x[0-9a-fA-F]{40})\)", text)
-        assert m and m.group(3).lower() == CHECKER and text == rpc.q6(m.group(1), m.group(2), CHECKER), text
-        rows = self.runs if m.group(1) == "anypercent.run" else self.listings
-        return self._page([e for e in rows if e["key"] == m.group(2) and self._pinned(e)], options)
+        if m:
+            assert text == rpc.q_stamp_for_run(m.group(1), CHECKER), text
+            return self._page([e for e in self.stamps if _value(e, "run") == m.group(1)
+                               and self._pinned(e, CHECKER)], options)
+        m = re.fullmatch(r"arkiv\.schema = str\('anypercent\.run'\) AND \$key = key\((0x[0-9a-f]{64})\)"
+                         r" AND \$creator = addr\((0x[0-9a-fA-F]{40})\)", text)
+        if m:
+            pin = m.group(2).lower()
+            assert text == rpc.q6(rpc.RUN_SCHEMA, m.group(1), pin), text
+            return self._page([e for e in self.runs if e["key"] == m.group(1) and self._pinned(e, pin)], options)
+        m = re.fullmatch(r"arkiv\.schema = str\('anypercent\.listing'\) AND \$key = key\((0x[0-9a-f]{64})\)", text)
+        assert m and text == rpc.q6_listing(m.group(1)), text
+        return self._page([e for e in self.listings if e["key"] == m.group(1)], options)
 
-    def _pinned(self, entity):
-        return self.ignore_pin or entity["creator"] == CHECKER
+    def _pinned(self, entity, pin):
+        return self.ignore_pin or entity["creator"] == pin
 
     def _page(self, entities, options):
         names = options["select"]["attributes"]
+        assert "log" not in names and "log_enc" not in names              # no reader selects a ghost
+        owner = {"owner": True} if options["select"].get("owner") else {}
         out = [dict({k: e[k] for k in ("key", "creator", "expiresAt")},
+                    **{k: e.get("owner", e["creator"]) for k in owner},
                     attributes=[a for a in e["attributes"] if a["name"] in names]) for e in entities]
         return {"jsonrpc": "2.0", "id": 1, "result": {"data": json.loads(json.dumps(out)),
                                                       "blockNumber": hex(self.block)}}
@@ -139,23 +186,27 @@ def _value(entity, name):
 
 
 def _name(run):
-    """A run's book, or an open-tier run's label."""
+    """A run's book, or a BOT run's label."""
     return next(a["value"] for a in run["attributes"] if a["name"] in ("book", "label"))
 
 
 class StubService:
-    """The World bridge's /arkiv/* routes in memory. One job per jti (a repeat POST answers the same id); the test
-    moves the latest job with move(). ghosts: run key -> the plain log a listed run decrypts to, for any mock receipt
-    of the right shape. down: every request fails; error: (status, failure) every request answers instead."""
+    """The World bridge's /arkiv/* routes in memory. One job per jti (a repeat POST answers the same id, the job back at
+    "check" unless it is done ok); the test moves the latest job with move(); `written` moves it to "write" unless
+    stay_at_sign. ghosts: run key -> the plain log a listed run decrypts to, for any mock receipt of the right shape.
+    down: every request fails; error: (status, failure) every request answers instead; written_error: the same for
+    `written` only (a status, or an exception to raise)."""
 
     def __init__(self):
         self.requests, self.jobs, self.by_jti, self.ghosts = [], {}, {}, {}
         self.down = False
         self.error = None
+        self.written_error = None
+        self.stay_at_sign = False
         self.config = {"chain_id": 7794095, "rpc": rpc.RABDI_RPC, "explorer": "https://rabdi.explorer.arkiv.network",
                        "checker": rpc.eip55(CHECKER), "season": SEASON,
-                       "schemas": {"run": "anypercent.run", "listing": "anypercent.listing"}, "price": "0.10",
-                       "listing_days": 7}
+                       "schemas": {"run": "anypercent.run", "listing": "anypercent.listing",
+                                   "stamp": "anypercent.stamp"}, "price": "0.10", "listing_days": 7}
 
     def __call__(self, method, path, body, timeout_s):
         self.requests.append((method, path, body))
@@ -169,8 +220,19 @@ class StubService:
             return json.loads(json.dumps(self.config))
         if (method, path) == ("POST", "/arkiv/publish"):
             jid = self.by_jti.setdefault(body["jti"], f"pub{len(self.by_jti) + 1}")
-            self.jobs.setdefault(jid, {"stage": "check", "ok": None, "failure": None, "data": {}})
+            job = self.jobs.get(jid)
+            if job is None or not (job["stage"] == "done" and job["ok"]):
+                self.jobs[jid] = {"stage": "check", "ok": None, "failure": None, "data": {}}
             return {"id": jid, "expires_s": 120}
+        parts = path.split("/")
+        if method == "POST" and len(parts) == 5 and parts[4] == "written" and parts[3] in self.jobs:
+            if isinstance(self.written_error, Exception):
+                raise self.written_error
+            if self.written_error is not None:
+                raise urllib.error.HTTPError(path, self.written_error, "not_signing", {}, None)
+            if not self.stay_at_sign:
+                self.jobs[parts[3]] = {"stage": "write", "ok": None, "failure": None, "data": {}}
+            return {"ok": True}
         if method == "GET" and path.startswith("/arkiv/publish/") and path.rsplit("/", 1)[1] in self.jobs:
             return json.loads(json.dumps(self.jobs[path.rsplit("/", 1)[1]]))
         if (method, path) == ("POST", "/arkiv/ghost") and body["run"] in self.ghosts:
@@ -183,8 +245,27 @@ class StubService:
     def move(self, stage, ok=None, failure=None, data=None):
         self.jobs[list(self.jobs)[-1]] = {"stage": stage, "ok": ok, "failure": failure, "data": data or {}}
 
-    def posts(self):
-        return [(path, body) for method, path, body in self.requests if method == "POST"]
+    def posts(self, path=None):
+        return [(p, body) for method, p, body in self.requests if method == "POST" and path in (None, p)]
+
+    def written(self):
+        return [(p, body) for method, p, body in self.requests if method == "POST" and p.endswith("/written")]
+
+
+class FakeSigner:
+    """arkiv_sign.Signer as publish uses it: every write is recorded and answers `reply` (DONE's tx and keys; a relist
+    names its run_key back), or raises `error` (a SignError)."""
+
+    def __init__(self):
+        self.calls, self.error = [], None
+        self.reply = {"tx": DONE["tx"], "run": DONE["run"], "listing": DONE["listing"]}
+
+    def write(self, key_file, rpc_url, chain_id, run, listing, timeout_s=90, run_key=None, replaces=None):
+        self.calls.append({"key_file": key_file, "rpc": rpc_url, "chain_id": chain_id, "run": run, "listing": listing,
+                           "timeout_s": timeout_s, "run_key": run_key, "replaces": replaces})
+        if self.error is not None:
+            raise self.error
+        return dict(self.reply, run=run_key) if run_key else dict(self.reply)
 
 
 class Replays:
@@ -206,6 +287,7 @@ class Replays:
 class Rig:
     def __init__(self, tmp_path, games=("MDGP", "SHIP"), inner=None, runs_dir=None):
         self.clock, self.node, self.service, self.replays = FakeClock(), StubNode(), StubService(), Replays()
+        self.signer = FakeSigner()
         self.runs_dir, self.state_dir = runs_dir or str(tmp_path / "runs"), str(tmp_path / "state")
         self.bridge = StubBridge()
         self.inner = inner or WorldSponsors("http://bridge.test:8787", self.clock, transport=self.bridge,
@@ -215,7 +297,7 @@ class Rig:
     def make(self, games=("MDGP", "SHIP")):
         return ArkivSponsors(self.inner, "http://bridge.test:8787", self.node, CHECKER, SEASON, self.runs_dir,
                              self.state_dir, self.clock, transport=self.service, background=False,
-                             replay=self.replays, games=games)
+                             replay=self.replays, games=games, signer=self.signer)
 
     def step(self, ms=arkiv.POLL_MS, look=True):
         """Let ms pass, look as PB's screen does every frame (status), and run one round of the worker."""
@@ -253,7 +335,35 @@ LIST_PAYLOAD = {"game": "marine-drive-gp", "arcade_id": "MDGP", "title": "MARINE
                 "frames": 6170, "target_run": None, "target_listing": None, "target_log_h": None,
                 "target_frames": None, "receipt": None}
 ACTION = "List MARINE DRIVE GP 1:42.83 ghost for 0.10 USDC on the public board"
-DONE = {"run": "0x" + "12ab" * 16, "listing": "0x" + "34cd" * 16, "tx": "0x" + "9f" * 32}
+DONE = {"run": "0x" + "12ab" * 16, "listing": "0x" + "34cd" * 16, "tx": "0x" + "9f" * 32,
+        "stamp": "0x" + "56ef" * 16, "stamp_tx": "0x" + "7a" * 32}
+
+
+def issue(log, frames=6170, book="ANY-6PS", price="0.1", pay_to=None, relist=False, run=None, listing=None):
+    """What the bridge issues at stage "sign" for LIST_PAYLOAD's run (SpecJSON): the run (its ghost encrypted) and its
+    listing, exactly as the console must find them; a relist issues the listing only, naming the stamped run's key.
+    run, listing: values to change in either."""
+    run_values = {"game": "MDGP", "title": "MARINE DRIVE GP", "season": SEASON, "rules": 4, "frames": frames,
+                  "log_h": sha(log), "runner": "0123456789abcdef", "book": book, "human": True, "credential": "Orb",
+                  "tool": "arcade_replay sha256:0123456789ab", "log_enc": {"$bytes": "q83v"}}
+    listing_values = {"game": "MDGP", "season": SEASON, "frames": frames, "log_h": sha(log), "price": price,
+                      "seller": "0123456789abcdef", "book": book, "human": True}
+    if pay_to is not None:
+        listing_values["pay_to"] = pay_to
+    run_values.update(run or {})
+    listing_values.update(listing or {})
+    for values in (run_values, listing_values):
+        for name in [name for name, value in values.items() if value is None]:
+            del values[name]
+    flags = {"readonly": True, "permissionlessExtension": True}
+    return {"chain_id": 7794095, "rpc": rpc.RABDI_RPC,
+            "run": None if relist else {"values": run_values, "flags": flags,
+                                        "expiry": {"kind": "atDate", "date": {"$date": "2027-01-30T00:00:00.000Z"},
+                                                   "atLeastDays": 1}},
+            "run_key": DONE["run"] if relist else None,
+            "listing": {"values": listing_values, "flags": {"readonly": True, "permissionlessExtension": False},
+                        "expiry": {"kind": "days", "days": 7}},
+            "replaces": None}
 
 
 # ---- the board: read in the background, cached, never made up ------------------------------------------------------
@@ -261,18 +371,18 @@ DONE = {"run": "0x" + "12ab" * 16, "listing": "0x" + "34cd" * 16, "tx": "0x" + "
 def test_every_arcade_board_is_read_at_start_on_the_worker(tmp_path):
     rig = Rig(tmp_path)
     rig.node.run("ANY-6PS", 6170, listed=True)
-    rig.node.run("TEAM", 6300, book=False, plain=True)
+    rig.node.run("BOT-A1", 6300, book=False)
     assert rig.sponsors.board("MDGP") is None                           # nothing read yet, and nothing asked here
     rig.sponsors.status()
     assert rig.node.queries == []
     rig.sponsors.work()
-    assert rig.node.queries == [rpc.q1("MDGP", SEASON, CHECKER), rpc.q2("MDGP", SEASON, CHECKER)]
+    assert rig.node.queries == board_reads("MDGP", WALLET)             # the stamps, then the wallet they name
     rig.sponsors.work()                                                 # one game a round: then SHIP
-    assert rig.node.queries[2:] == [rpc.q1("SHIP", SEASON, CHECKER), rpc.q2("SHIP", SEASON, CHECKER)]
+    assert rig.node.queries[3:] == board_reads("SHIP")                  # no stamp: nothing more to read
     read = rig.sponsors.board("MDGP")
     assert isinstance(read, BoardRead) and not read.stale and read.block == 0x3fe90
     assert [(r.book or r.label, r.frames, r.listing is not None) for r in read.rows] == [("ANY-6PS", 6170, True),
-                                                                                         ("TEAM", 6300, False)]
+                                                                                         ("BOT-A1", 6300, False)]
     assert rig.sponsors.board("SHIP").rows == ()
     rig.sponsors.work()
     assert len(rig.node.queries) == 4                                   # read once; nobody looked long enough since
@@ -288,7 +398,7 @@ def test_the_open_game_is_read_again_every_15_s_while_someone_looks(tmp_path):
         assert len(rig.node.queries) == asked
     rig.node.run("ANY-K2P", 6000, listed=True)                          # a new run lands meanwhile
     rig.step()
-    assert rig.node.queries[asked:] == [rpc.q1("MDGP", SEASON, CHECKER), rpc.q2("MDGP", SEASON, CHECKER)]
+    assert rig.node.queries[asked:] == board_reads("MDGP", WALLET)
     assert [r.book for r in rig.sponsors.board("MDGP").rows] == ["ANY-K2P"]
     asked = len(rig.node.queries)
     rig.clock.ms += arkiv.IDLE_MS + arkiv.REFRESH_MS                    # a game is running: nobody looks
@@ -301,9 +411,9 @@ def test_the_board_someone_opens_is_read_before_the_rest(tmp_path):
     rig = Rig(tmp_path)
     rig.sponsors.board("SHIP")                                          # PB opened during the start-up reads
     rig.sponsors.work()
-    assert rig.node.queries == [rpc.q1("SHIP", SEASON, CHECKER), rpc.q2("SHIP", SEASON, CHECKER)]
+    assert rig.node.queries == board_reads("SHIP")
     rig.sponsors.work()
-    assert rig.node.queries[2:] == [rpc.q1("MDGP", SEASON, CHECKER), rpc.q2("MDGP", SEASON, CHECKER)]
+    assert rig.node.queries[1:] == board_reads("MDGP")
 
 
 def test_a_glance_reads_nothing_new(tmp_path):
@@ -319,11 +429,14 @@ def test_a_glance_reads_nothing_new(tmp_path):
 
 
 def test_rows_another_wallet_wrote_never_reach_the_board(tmp_path):
-    """The look-alike demo: a stranger's well-formed row 10 s faster, under the owner's own book. The pinned query
-    leaves it out; a node that skipped the pin would hand it over, and the console still drops it."""
+    """The look-alike demo: a stranger's well-formed row 10 s faster, under the owner's own book. No checker stamp names
+    it: a node that skipped every pin would hand it over, and the console still leaves it off. So is a stamped run that
+    another wallet wrote than the one its stamp names."""
     rig = Rig(tmp_path)
     rig.node.run("ANY-6PS", 6170, listed=True)
-    rig.node.run("ANY-6PS", 5570, listed=True, creator=STRANGER)
+    rig.node.run("ANY-6PS", 5570, listed=True, creator=STRANGER, stamped=False)
+    rig.node.run("ANY-6PS", 5000, listed=True, creator=STRANGER, console=WALLET)
+    rig.node.run("ANY-6PS", 4900, listed=True)["owner"] = STRANGER      # stamped, then given away
     rig.node.ignore_pin = True
     rig.prefetch()
     rows = rig.sponsors.board("MDGP").rows
@@ -350,7 +463,7 @@ def test_an_outage_keeps_the_last_board_read_marked_stale(tmp_path):
 def test_the_board_survives_a_restart_with_arkiv_down(tmp_path):
     rig = Rig(tmp_path)
     rig.node.run("ANY-6PS", 6170, listed=True)
-    rig.node.run("TEAM", 6300, book=False, plain=True)
+    rig.node.run("BOT-A1", 6300, book=False)
     rig.prefetch()
     first = rig.sponsors.board("MDGP")
     with open(os.path.join(rig.state_dir, arkiv.CACHE_FILE), encoding="utf-8") as f:
@@ -364,7 +477,7 @@ def test_the_board_survives_a_restart_with_arkiv_down(tmp_path):
     assert again.board("MDGP").rows == first.rows and again.status()["board"] == "off"
 
 
-@pytest.mark.parametrize("change", ["checker", "season", "garbage", "a bad row", "a bad account"])
+@pytest.mark.parametrize("change", ["checker", "season", "garbage", "a bad row", "a bad account", "before stamps"])
 def test_a_cache_that_is_not_this_boards_is_not_shown(tmp_path, change):
     rig = Rig(tmp_path)
     rig.node.run("ANY-6PS", 6170, listed=True)
@@ -380,6 +493,8 @@ def test_a_cache_that_is_not_this_boards_is_not_shown(tmp_path, change):
         cached["boards"]["MDGP"]["rows"][0]["log_h"] = "../../x"
     elif change == "a bad account":
         cached["boards"]["MDGP"]["rows"][0]["pay_to"] = "0x12"
+    elif change == "before stamps":
+        cached["v"] = 1                                                 # the checker's own rows: they count for nothing
     with open(path, "w", encoding="utf-8") as f:
         f.write("not json" if change == "garbage" else json.dumps(cached))
     assert rig.make().board("MDGP") is None
@@ -434,8 +549,8 @@ def test_a_live_listing_at_the_price_checks_out(tmp_path):
     asked = len(rig.node.queries)
     assert _check(rig, target_payload(rig.node, run)) == Result(ok=True, data={"price": GHOST_PRICE})
     listing = rig.node.listing_of(run)
-    assert rig.node.queries[asked:] == [rpc.q6(rpc.LISTING_SCHEMA, listing["key"], CHECKER),
-                                        rpc.q6(rpc.RUN_SCHEMA, run["key"], CHECKER)]
+    run_reads = [rpc.q_stamp_for_run(run["key"], CHECKER), rpc.q6(rpc.RUN_SCHEMA, run["key"], WALLET)]
+    assert rig.node.queries[asked:] == [rpc.q6_listing(listing["key"])] + run_reads + run_reads
 
 
 def test_a_listing_that_is_gone_changed(tmp_path):
@@ -457,19 +572,42 @@ def test_a_listing_at_another_price_changed(tmp_path, price, shown):
     assert _check(rig, target_payload(rig.node, run)).ok
 
 
-@pytest.mark.parametrize("what", ["gone", "a stranger's", "another log"])
-def test_a_run_that_is_not_the_listed_one_is_suspended(tmp_path, what):
+def test_a_listing_of_another_run_than_the_boards_is_suspended(tmp_path):
     rig = Rig(tmp_path)
     run = rig.node.run("ANY-2KD", 6200, listed=True)
     payload = target_payload(rig.node, run)
-    if what == "gone":
+    payload["target_log_h"] = sha(b"another run")
+    assert _check(rig, payload) == Result(ok=False, failure="buy_suspended")
+
+
+@pytest.mark.parametrize("what", ["the run gone", "the run a stranger's", "the run given away", "its stamp gone",
+                                  "the listing given away"])
+def test_a_listing_whose_run_does_not_count_is_gone_to_the_buyer(tmp_path, what):
+    """A listing counts only for a run that counts (stamped, its owner's), and only while its owner holds it."""
+    rig = Rig(tmp_path)
+    run = rig.node.run("ANY-2KD", 6200, listed=True)
+    payload = target_payload(rig.node, run)
+    if what == "the run gone":
         rig.node.runs.clear()
-    elif what == "a stranger's":
+    elif what == "the run a stranger's":
         run["creator"] = STRANGER
         rig.node.ignore_pin = True
+    elif what == "the run given away":
+        run["owner"] = STRANGER
+    elif what == "its stamp gone":
+        rig.node.stamps.clear()
     else:
-        payload["target_log_h"] = sha(b"another run")
-    assert _check(rig, payload) == Result(ok=False, failure="buy_suspended")
+        rig.node.listing_of(run)["owner"] = STRANGER
+    assert _check(rig, payload) == Result(ok=False, failure="buy_changed", data={"now_price": "gone"}), what
+
+
+def test_a_strangers_listing_of_a_stamped_run_is_gone_to_the_buyer(tmp_path):
+    """A listing counts only from the run's owner: a stranger's copy (any price, any account) is never paid."""
+    rig = Rig(tmp_path)
+    run = rig.node.run("ANY-2KD", 6200, listed=True)
+    rig.node.listing_of(run)["creator"] = STRANGER
+    assert _check(rig, target_payload(rig.node, run)) == Result(ok=False, failure="buy_changed",
+                                                                data={"now_price": "gone"})
 
 
 def test_arkiv_down_or_a_bad_reply_is_a_failed_check(tmp_path):
@@ -493,11 +631,11 @@ def test_a_changed_listing_reads_its_board_again(tmp_path):
     _check(rig, payload)
     asked = len(rig.node.queries)
     rig.step()
-    assert rig.node.queries[asked:] == [rpc.q1("MDGP", SEASON, CHECKER), rpc.q2("MDGP", SEASON, CHECKER)]
+    assert rig.node.queries[asked:] == board_reads("MDGP", WALLET)
     assert rig.sponsors.board("MDGP").rows[0].listing is None
 
 
-# ---- load_ghost: from the row (plain) or the service (listed), checked against the row -------------------------------
+# ---- load_ghost: from the service (listed ghosts only), checked against the stamped run ------------------------------
 
 def _load(rig, payload):
     call = rig.sponsors.begin("load_ghost", payload)
@@ -510,18 +648,19 @@ def _ghost_file(rig, log):
     return os.path.join(rig.runs_dir, "ghosts", sha(log) + ".acl")
 
 
-def test_a_plain_ghost_comes_straight_from_its_row(tmp_path):
+def test_no_ghost_comes_from_a_row_and_none_of_an_unstamped_run(tmp_path):
+    """The open tier is retired: no row carries a plain log to read (no reader even selects one), so a ghost comes
+    only from the service, against a payment, and only for a run a checker stamp names."""
     rig = Rig(tmp_path)
-    log = acl("team")
-    run = rig.node.run("TEAM", 6300, log=log, plain=True, book=False)
-    rig.replays.know(log, 6300)
-    result = _load(rig, target_payload(rig.node, run, target_listing=None))
-    assert result == Result(ok=True, data={"ghost_log": _ghost_file(rig, log), "replayed": 6300})
-    with open(_ghost_file(rig, log), "rb") as f:
-        assert f.read() == log
-    assert rig.replays.calls == [("MDGP", sha(log) + ".acl.part")]
-    assert rig.node.queries[-1] == rpc.q6(rpc.RUN_SCHEMA, run["key"], CHECKER)
-    assert rig.service.requests == []                                   # nothing of ours in the read path
+    log = acl("2kd")
+    run = rig.node.run("ANY-2KD", 6200, log=log)
+    rig.service.ghosts[run["key"]] = log
+    rig.replays.know(log, 6200)
+    assert _load(rig, target_payload(rig.node, run, target_listing=None, receipt=None)).failure == "buy_load_fail"
+    assert rig.node.queries == [rpc.q_stamp_for_run(run["key"], CHECKER), rpc.q6(rpc.RUN_SCHEMA, run["key"], WALLET)]
+    rig.node.stamps.clear()
+    assert _load(rig, target_payload(rig.node, run, target_listing=None)).failure == "buy_load_fail"
+    assert rig.service.posts() == [] and not os.path.exists(_ghost_file(rig, log))
 
 
 def test_a_listed_ghost_comes_from_the_service_with_the_receipt(tmp_path):
@@ -533,11 +672,14 @@ def test_a_listed_ghost_comes_from_the_service_with_the_receipt(tmp_path):
     result = _load(rig, target_payload(rig.node, run))
     assert result == Result(ok=True, data={"ghost_log": _ghost_file(rig, log), "replayed": 6200})
     assert rig.service.posts() == [("/arkiv/ghost", {"run": run["key"], "receipt": "mock-1a2b3c4d"})]
+    with open(_ghost_file(rig, log), "rb") as f:
+        assert f.read() == log
+    assert rig.replays.calls == [("MDGP", sha(log) + ".acl.part")]
 
 
 @pytest.mark.parametrize("what", ["another log from the service", "a replay that disagrees", "a replay that fails",
                                   "no receipt", "payment refused", "the service down", "arkiv down", "the run gone",
-                                  "a short log", "not base64"])
+                                  "its stamp gone", "a short log", "not base64"])
 def test_a_ghost_that_does_not_check_out_never_loads(tmp_path, what):
     rig = Rig(tmp_path)
     log = acl("2kd")
@@ -562,6 +704,8 @@ def test_a_ghost_that_does_not_check_out_never_loads(tmp_path, what):
         rig.node.down = True
     elif what == "the run gone":
         rig.node.runs.clear()
+    elif what == "its stamp gone":
+        rig.node.stamps.clear()
     elif what == "a short log":
         rig.service.ghosts[run["key"]] = b"ACL1MDGP"
     elif what == "not base64":
@@ -602,7 +746,7 @@ def test_a_mock_target_is_still_the_mocks(tmp_path):
     assert rig.node.queries == [] and rig.service.requests == []
 
 
-# ---- publish: through the service, which replays and writes ---------------------------------------------------------
+# ---- publish: the service checks and issues, this console signs from its own wallet, the checker stamps -------------
 
 def _publish(rig, payload=LIST_PAYLOAD):
     call = rig.sponsors.begin("publish", payload)
@@ -720,6 +864,7 @@ def test_each_publish_failure_is_the_handlers_own(tmp_path, failure):
     {"stage": "done", "ok": False, "failure": None, "data": {}},
     {"stage": "done", "ok": True, "failure": None, "data": {"run": DONE["run"]}},
     {"stage": "done", "ok": True, "failure": None, "data": dict(DONE, listing="0x12")},
+    {"stage": "done", "ok": True, "failure": None, "data": dict(DONE, stamp=None)},    # unstamped: on no board
 ])
 def test_an_answer_the_handler_cannot_show_is_not_listed(tmp_path, reply):
     rig = Rig(tmp_path)
@@ -1046,8 +1191,9 @@ def apps():
 
 def arkiv_app(apps, tmp_path, book="ANY-7QZ", best=BEST, warm=False):
     """The real App (test_handler_app's library, fake bridge and runner) on ArkivSponsors over a StubNode: the same
-    runs_dir for the app and the adapter, as in the launcher. The board: K2P 6000 (not listed), TEAM 6150 (open tier),
-    2KD 6200 (listed: the target from a 6290 best), the console's own book at 6350 (listed), 9MX 6400 (listed)."""
+    runs_dir for the app and the adapter, as in the launcher. The board: K2P 6000 (not listed), BOT-T1 6150 (the
+    house's, not listed), 2KD 6200 (listed: the target from a 6290 best), the console's own book at 6350 (listed), 9MX
+    6400 (listed)."""
     from arca_launcher.app import App, Config
     from arca_launcher.handler import ledger as L
     from test_app import FakeHw, FakeRunner
@@ -1065,7 +1211,7 @@ def arkiv_app(apps, tmp_path, book="ANY-7QZ", best=BEST, warm=False):
     rig = Rig(tmp_path / "arkiv", runs_dir=runs)
     log = acl("2kd")
     rig.node.run("ANY-K2P", 6000)
-    rig.node.run("TEAM", 6150, book=False, plain=True)
+    rig.node.run("BOT-T1", 6150, book=False)
     rig.target = rig.node.run("ANY-2KD", 6200, log=log, listed=True)
     rig.node.run("ANY-7QZ", 6350, listed=True)
     rig.node.run("ANY-9MX", 6400, listed=True)
@@ -1091,7 +1237,7 @@ def test_the_hub_shows_arkivs_board_never_the_mock_runners(apps, tmp_path):
     rig.prefetch()
     app.frame(16, [A.Y])
     ctx = app.nav.handler.ctx
-    assert [r.name for r in ctx["board_rows"]] == ["ANY-K2P", "TEAM", "ANY-2KD", "YOU", "ANY-9MX"]
+    assert [r.name for r in ctx["board_rows"]] == ["ANY-K2P", "BOT-T1", "ANY-2KD", "YOU", "ANY-9MX"]
     assert [r.name for r in ctx["board_rows"] if r.human] == ["ANY-K2P", "ANY-2KD", "ANY-9MX"]   # from the rows
     assert (ctx["board_case"], ctx["target"], ctx["target_time"], ctx["target_frames"]) == ("ok", "ANY-2KD",
                                                                                              fmt_time(6200), 6200)
@@ -1149,7 +1295,7 @@ def test_racing_a_real_target_races_her_checked_log_against_her_time(apps, tmp_p
         in bridge.calls
     assert _replays_of_the_test_log(bridge) == []                       # never the test log in her place
     assert flow.state.name == "result" and flow.ctx["gap"] == "0.8 s"   # 6150 beats her 6200
-    assert flow.ctx["rank"] == "4th" and flow.ctx["new_rank"] == "2nd"   # ahead of TEAM's 6150 on a tie
+    assert flow.ctx["rank"] == "4th" and flow.ctx["new_rank"] == "2nd"   # ahead of BOT-T1's 6150 on a tie
 
 
 def test_losing_to_a_real_target_is_judged_on_her_rows_time(apps, tmp_path):
@@ -1252,7 +1398,8 @@ def test_frame_side_calls_only_read_prepared_state(tmp_path, monkeypatch):
     asked, sent = len(rig.node.queries), len(rig.service.requests)
     rpc.eip55.cache_clear()
     counters = {name: Counted(getattr(rpc, name)) for name in ("keccak256", "decode_runs", "decode_listings",
-                                                               "read_board", "read_listing", "read_run")}
+                                                               "decode_stamps", "join_board", "read_board",
+                                                               "read_listing", "read_run", "read_stamp")}
     for name, counter in counters.items():
         monkeypatch.setattr(rpc, name, counter)
     frames = 2000
@@ -1272,7 +1419,8 @@ def test_frame_side_calls_only_read_prepared_state(tmp_path, monkeypatch):
     assert per_frame < FRAME_BUDGET_MS, f"{per_frame:.3f} ms of adapter calls a frame"
 
 
-def test_the_checker_is_hashed_once_never_per_read(tmp_path, monkeypatch):
+def test_each_address_is_hashed_once_never_per_read(tmp_path, monkeypatch):
+    """The checker and the console wallet its stamps name each go into queries in EIP-55 form: hashed once each."""
     rpc.eip55.cache_clear()
     keccak = Counted(rpc.keccak256)
     monkeypatch.setattr(rpc, "keccak256", keccak)
@@ -1283,7 +1431,7 @@ def test_the_checker_is_hashed_once_never_per_read(tmp_path, monkeypatch):
         rig.step(arkiv.REFRESH_MS)
     run = rig.node.runs[0]
     _check(rig, target_payload(rig.node, run))
-    assert keccak.calls == 1
+    assert keccak.calls == 2
 
 
 def test_a_refresh_with_nothing_new_rebuilds_and_rewrites_nothing(tmp_path, monkeypatch):
@@ -1313,7 +1461,7 @@ def test_a_page_is_decoded_in_slices_that_let_the_frame_loop_in(monkeypatch):
         node.run("ANY-%03d" % i, 6000 + i, listed=True)
     rows, block, dropped = rpc.read_board(node, "MDGP", SEASON, CHECKER)
     assert len(rows) == 100 and dropped == 0
-    assert yields == [0] * (2 * (99 // rpc.YIELD_EVERY))           # every 20 rows of each page: the GIL is let go
+    assert yields == [0] * (3 * (99 // rpc.YIELD_EVERY))           # every 20 rows of each page: the GIL is let go
 
 
 def test_the_glue_rebuilds_the_board_only_when_its_rows_change(apps, tmp_path, monkeypatch):
@@ -1337,7 +1485,7 @@ def test_the_glue_rebuilds_the_board_only_when_its_rows_change(apps, tmp_path, m
             app.handler.frame(16)
             spent += time.perf_counter() - t
             frames += 1
-    assert len(rig.node.queries) == asked + 6                           # read three times, by the worker only
+    assert len(rig.node.queries) == asked + 9                           # read three times, by the worker only
     assert builds.calls == 0 and spent * 1000 / frames < FRAME_BUDGET_MS * 4
     rig.node.run("ANY-NEW", 5000, listed=True)                          # a new run: built once, then shown
     rig.step(arkiv.REFRESH_MS)
@@ -1369,9 +1517,9 @@ def test_the_real_board_draws_books_and_human_from_the_rows(screen, tmp_path, mo
     from test_handler_view import show
     from test_handler_world import _drawn
     rig = Rig(tmp_path)
-    for name, frames, listed in (("ANY-K2P", 6000, False), ("ANY-7QZ", 6100, True), ("TEAM", 6150, None),
-                                 ("ANY-2KD", 6200, True), ("BOT-7", 6250, None), ("ANY-9MX", 6400, True)):
-        rig.node.run(name, frames, listed=bool(listed), book=listed is not None, plain=listed is None)
+    for name, frames, listed in (("ANY-K2P", 6000, False), ("ANY-7QZ", 6100, True), ("BOT-T1", 6150, None),
+                                 ("ANY-2KD", 6200, True), ("BOT-A7", 6250, None), ("ANY-9MX", 6400, True)):
+        rig.node.run(name, frames, listed=bool(listed), book=listed is not None)
     rig.prefetch()
     board = build_real(rig.sponsors.board("MDGP").rows, 6290, None, None)
     drawn = _drawn(screen, monkeypatch)
@@ -1382,7 +1530,7 @@ def test_the_real_board_draws_books_and_human_from_the_rows(screen, tmp_path, mo
     from conftest import snapshot
     snapshot(screen.ren, "handler_board_arkiv")
     texts = [s for s, _ in drawn]
-    assert "ANY-2KD" in texts and "TEAM" in texts and "BOT-7" in texts
+    assert "ANY-2KD" in texts and "BOT-T1" in texts and "BOT-A7" in texts
     assert not {"KIRAN", "MEERA", "RIA", "ARJUN", "ZOYA", "DEV"} & set(texts)
     assert texts.count("HUMAN") == 1 + len([r for r in board.rows if r.human and texts.count(r.name)])
 
@@ -1566,14 +1714,17 @@ def test_a_listing_names_its_explorer_links(tmp_path):
     call = _publish(rig)
     links = {"tx": "https://rabdi.explorer.arkiv.network/tx/" + DONE["tx"],
              "run": "https://rabdi.explorer.arkiv.network/entity/" + DONE["run"],
-             "listing": "https://rabdi.explorer.arkiv.network/entity/" + DONE["listing"]}
+             "listing": "https://rabdi.explorer.arkiv.network/entity/" + DONE["listing"],
+             "stamp": "https://rabdi.explorer.arkiv.network/entity/" + DONE["stamp"],
+             "stamp_tx": "https://rabdi.explorer.arkiv.network/tx/" + DONE["stamp_tx"]}
     rig.service.move("done", ok=True, data=dict(DONE, explorer=dict(links, extra="never passed on")))
     rig.step()
     assert call.poll() == Result(ok=True, data=dict(DONE, explorer=links))
     rig = Rig(tmp_path / "odd")
     rig.best("MDGP", acl("6ps"), 6170)
     call = _publish(rig)
-    rig.service.move("done", ok=True, data=dict(DONE, explorer={"tx": 7, "run": "x" * 600, "listing": None}))
+    rig.service.move("done", ok=True, data=dict(DONE, explorer={"tx": 7, "run": "x" * 600, "listing": None,
+                                                                "stamp": "http://plain.example/x"}))
     rig.step()
     assert call.poll() == Result(ok=True, data=DONE)                     # nothing it can not draw
 
@@ -1686,3 +1837,251 @@ def test_any_rows_explorer_link_is_built_as_the_service_builds_it(tmp_path):
     assert rig.sponsors.entity_link(run.upper().replace("0X", "0x")) == link   # the key as the explorer names it
     for odd in (None, "", 7, "0x12", run + "00", "../" + run, run[2:]):
         assert rig.sponsors.entity_link(odd) is None, odd
+
+
+# ---- the console signs its own records: the sign stage, `written`, the stamp -----------------------------------------
+
+def _signing(rig, log=None, payload=LIST_PAYLOAD, **issued):
+    """A publish of LIST_PAYLOAD's run (its log the best on this console, its replay known) up to the sign stage: the
+    start is sent, then the service issues (issue(log, **issued)) and the next round signs."""
+    log = log if log is not None else acl("6ps")
+    rig.best("MDGP", log, 6170)
+    rig.replays.know(log, 6170)
+    call = _publish(rig, payload)
+    rig.service.move("sign", data={"issue": issue(log, **issued)})
+    return call, log
+
+
+def test_the_console_signs_what_was_issued_tells_the_service_and_lists_it_stamped(tmp_path):
+    rig = Rig(tmp_path)
+    call, log = _signing(rig)
+    rig.step()
+    (signed,) = rig.signer.calls
+    sent = issue(log)
+    assert signed == {"key_file": os.path.join(rig.state_dir, "arkiv-key"), "rpc": sent["rpc"],
+                      "chain_id": sent["chain_id"], "run": sent["run"], "listing": sent["listing"],
+                      "timeout_s": arkiv.SIGN_TIMEOUT_S, "run_key": None, "replaces": None}
+    assert os.path.isfile(signed["key_file"])                           # made on this console, never sent anywhere
+    assert rig.service.written() == [("/arkiv/publish/pub1/written",
+                                      {"tx": DONE["tx"], "run": DONE["run"], "listing": DONE["listing"]})]
+    assert call.poll() is None and rig.sponsors.status()["board"] == "busy"
+    rig.service.move("done", ok=True, data=DONE)
+    rig.step()
+    assert call.poll() == Result(ok=True, data=DONE)
+    assert call.poll().data["stamp"] == DONE["stamp"] and call.poll().data["stamp_tx"] == DONE["stamp_tx"]
+    assert len(rig.signer.calls) == 1 and len(rig.service.written()) == 1
+    assert rig.replays.calls == [("MDGP", "MDGP.acl")]                  # its own replay of its own log, once
+    body = [b for p, b in rig.service.posts("/arkiv/publish")][0]
+    assert "arkiv-key" not in json.dumps(body)                          # the key never leaves the console
+
+
+def test_every_look_at_the_sign_stage_repeats_the_issue_and_it_is_signed_once(tmp_path):
+    rig = Rig(tmp_path)
+    rig.service.stay_at_sign = True                                     # the service has not moved on yet
+    call, _ = _signing(rig)
+    for _ in range(6):
+        rig.step()
+    assert len(rig.signer.calls) == 1 and len(rig.service.written()) == 1
+    assert call.poll() is None
+    rig.service.move("done", ok=True, data=DONE)
+    rig.step()
+    assert call.poll().ok and len(rig.signer.calls) == 1
+
+
+@pytest.mark.parametrize("what, issued", [
+    ("another log", {"run": {"log_h": sha(b"someone else's run")}}),
+    ("another log on the listing", {"listing": {"log_h": sha(b"someone else's run")}}),
+    ("another game", {"run": {"game": "SHIP"}}),
+    ("another book", {"book": "ANY-9MX"}),
+    ("a label", {"run": {"book": None, "label": "BOT-A1"}}),
+    ("other frames", {"frames": 6100}),
+    ("frames as text", {"run": {"frames": "6170"}}),
+    ("another price", {"price": "0.5"}),
+    ("a price that is not one", {"price": "ten"}),
+    ("a payout account nobody approved", {"pay_to": "0.0.6666666"}),
+    ("its ghost in the clear", {"run": {"log": {"$bytes": "QUNMMQ=="}}}),
+    ("a run with no game", {"run": {"game": None}}),
+])
+def test_an_issue_that_is_not_what_this_console_knows_is_never_signed(tmp_path, what, issued):
+    rig = Rig(tmp_path)
+    call, _ = _signing(rig, **issued)
+    rig.step()
+    assert call.poll() == Result(ok=False, failure="ls_publish_fail"), what
+    assert rig.signer.calls == [] and rig.service.written() == []
+
+
+def test_a_run_this_consoles_replay_times_otherwise_is_never_signed(tmp_path):
+    rig = Rig(tmp_path)
+    call, log = _signing(rig)
+    rig.replays.know(log, 6171)                                         # the console's own replay disagrees
+    rig.step()
+    assert call.poll() == Result(ok=False, failure="ls_publish_fail") and rig.signer.calls == []
+    rig = Rig(tmp_path / "unfinished")
+    call, log = _signing(rig)
+    rig.replays.times.clear()                                           # the tool is there and says unfinished
+    rig.step()
+    assert call.poll() == Result(ok=False, failure="ls_publish_fail") and rig.signer.calls == []
+
+
+def test_without_a_replay_tool_the_frames_asked_are_checked(tmp_path):
+    rig = Rig(tmp_path)
+    rig.sponsors._replay = None
+    call, _ = _signing(rig)
+    rig.step()
+    assert len(rig.signer.calls) == 1 and call.poll() is None
+    rig = Rig(tmp_path / "other")
+    rig.sponsors._replay = None
+    call, _ = _signing(rig, frames=6100)
+    rig.step()
+    assert call.poll().failure == "ls_publish_fail" and rig.signer.calls == []
+
+
+def test_the_approved_payout_account_is_the_listings(tmp_path):
+    rig = Rig(tmp_path)
+    call, _ = _signing(rig, payload=dict(LIST_PAYLOAD, pay_to="0.0.5123456"), pay_to="0.0.5123456")
+    rig.step()
+    assert len(rig.signer.calls) == 1
+    rig = Rig(tmp_path / "none")
+    call, _ = _signing(rig, payload=dict(LIST_PAYLOAD, pay_to="0.0.5123456"))     # the approval named one: missing
+    rig.step()
+    assert call.poll().failure == "ls_publish_fail" and rig.signer.calls == []
+
+
+@pytest.mark.parametrize("kind, failure", [("unfunded", "ls_unfunded"), ("no_node", "ls_publish_fail"),
+                                           ("no_key", "ls_publish_fail"), ("rpc", "ls_publish_fail"),
+                                           ("rejected", "ls_publish_fail"), ("bad_reply", "ls_publish_fail")])
+def test_each_signer_failure_is_a_screen_and_nothing_is_told(tmp_path, kind, failure):
+    rig = Rig(tmp_path)
+    rig.signer.error = SignError(kind, "detail", tx="0x" + "ab" * 32 if kind == "rejected" else None)
+    call, _ = _signing(rig)
+    rig.step()
+    assert call.poll() == Result(ok=False, failure=failure)
+    assert rig.service.written() == [] and rig.sponsors.status()["board"] == "ok"
+
+
+def test_an_unfunded_wallet_lists_on_the_same_approval_once_funded(tmp_path):
+    """ls_unfunded, then Cross (the flow begins publish again with the same payload): the same jti goes to the service,
+    which issues again, and this time the funded wallet signs."""
+    rig = Rig(tmp_path)
+    rig.signer.error = SignError("unfunded", "balance 0")
+    call, log = _signing(rig)
+    rig.step()
+    assert call.poll().failure == "ls_unfunded"
+    rig.signer.error = None                                             # the owner ran npm run arkiv:fund
+    again = _publish(rig)
+    assert [b["jti"] for p, b in rig.service.posts("/arkiv/publish")] == ["3f9c0a1b2c3d4e5f"] * 2
+    rig.service.move("sign", data={"issue": issue(log)})
+    rig.step()
+    rig.service.move("done", ok=True, data=DONE)
+    rig.step()
+    assert again.poll() == Result(ok=True, data=DONE) and len(rig.signer.calls) == 2
+
+
+def test_without_node_the_listing_fails_and_the_board_still_reads(tmp_path):
+    """Review Focus 4: the real Signer with no Node binary on the console is ls_publish_fail, never a crash, and the
+    board reads on."""
+    from arca_launcher.handler.arkiv_sign import Signer
+    rig = Rig(tmp_path)
+    rig.signer = Signer(node=str(tmp_path / "no-node-here"))
+    rig.sponsors = rig.make()
+    rig.node.run("ANY-K2P", 6000, listed=True)
+    call, _ = _signing(rig)
+    rig.step()
+    assert call.poll() == Result(ok=False, failure="ls_publish_fail") and rig.service.written() == []
+    rig.sponsors.board("MDGP")
+    rig.step(arkiv.REFRESH_MS)
+    assert [r.book for r in rig.sponsors.board("MDGP").rows] == ["ANY-K2P"]
+    assert rig.sponsors.status()["board"] == "ok"
+
+
+def test_a_written_the_service_did_not_hear_is_told_again_and_a_refusal_is_not_listed(tmp_path):
+    rig = Rig(tmp_path)
+    rig.service.written_error = urllib.error.URLError("blip")
+    call, _ = _signing(rig)
+    rig.step()
+    assert len(rig.signer.calls) == 1 and call.poll() is None
+    rig.service.written_error = None
+    rig.step()
+    assert len(rig.service.written()) == 2 and len(rig.signer.calls) == 1     # told again, never signed again
+    rig.service.move("done", ok=True, data=DONE)
+    rig.step()
+    assert call.poll().ok
+    rig = Rig(tmp_path / "refused")
+    rig.service.written_error = 409
+    call, _ = _signing(rig)
+    rig.step()
+    assert call.poll() == Result(ok=False, failure="ls_publish_fail")
+
+
+def test_a_job_the_service_forgot_is_started_again_with_the_same_approval(tmp_path):
+    """The service holds a job an hour: a 404 starts it again with the same jti (the service then finds what this
+    wallet already wrote and stamps it, without a new signature)."""
+    rig = Rig(tmp_path)
+    call, _ = _signing(rig)
+    rig.step()
+    del rig.service.jobs["pub1"]                                        # pruned
+    rig.step()
+    rig.step()
+    assert [b["jti"] for p, b in rig.service.posts("/arkiv/publish")] == ["3f9c0a1b2c3d4e5f"] * 2
+    rig.service.move("done", ok=True, data=dict(DONE, tx=None))         # found on Arkiv before it was told
+    rig.step()
+    assert call.poll() == Result(ok=True, data=DONE)                    # the tx this console sent, all the same
+    assert len(rig.signer.calls) == 1
+
+
+def test_a_done_without_this_consoles_tx_still_lists_with_what_it_knows(tmp_path):
+    rig = Rig(tmp_path)
+    rig.best("MDGP", acl("6ps"), 6170)
+    call = _publish(rig)
+    rig.service.move("done", ok=True, data=dict(DONE, tx=None, stamp_tx=None))
+    rig.step()
+    assert call.poll() == Result(ok=True, data={"run": DONE["run"], "listing": DONE["listing"],
+                                                "stamp": DONE["stamp"]})
+
+
+def test_a_relist_signs_the_listing_only_and_names_the_stamped_run(tmp_path):
+    rig = Rig(tmp_path)
+    call, log = _signing(rig, relist=True)
+    rig.step()
+    (signed,) = rig.signer.calls
+    assert signed["run"] is None and signed["run_key"] == DONE["run"] and signed["replaces"] is None
+    assert signed["listing"] == issue(log)["listing"]
+    assert rig.service.written() == [("/arkiv/publish/pub1/written",
+                                      {"tx": DONE["tx"], "run": DONE["run"], "listing": DONE["listing"]})]
+    rig = Rig(tmp_path / "keyless")
+    bad = issue(acl("6ps"), relist=True)
+    bad["run_key"] = "0x12"
+    call, _ = _signing(rig, relist=True)
+    rig.service.move("sign", data={"issue": bad})
+    rig.step()
+    assert call.poll().failure == "ls_publish_fail" and rig.signer.calls == []
+
+
+@pytest.mark.parametrize("pending", [True, False])
+def test_a_console_whose_wallet_waits_on_a_new_link_lists_nothing(tmp_path, pending):
+    """Task 1's review: the binding says wallet_pending (this console's wallet is not the one World linked to the
+    book): ls_not_linked before the service is asked, since the checker would never stamp what it writes."""
+    from test_handler_world import CONSOLE, ConsoleBridge
+    bridge = ConsoleBridge()
+    bridge.console = {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb",
+                      "wallet": None if pending else WALLET, "wallet_pending": pending}
+    world = WorldSponsors("http://bridge.test:8787", FakeClock(), transport=bridge, background=False, console=CONSOLE,
+                          wallet=WALLET)
+    world.work()
+    rig = Rig(tmp_path, inner=world)
+    rig.best("MDGP", acl("6ps"), 6170)
+    call = _publish(rig)
+    if pending:
+        assert call.poll() == Result(ok=False, failure="ls_not_linked") and rig.service.requests == []
+    else:
+        assert call.poll() is None and rig.service.posts("/arkiv/publish")
+    assert rig.sponsors.arkiv_wallet == WALLET
+
+
+@pytest.mark.parametrize("change", [{"chain_id": "7794095"}, {"rpc": None}, {"listing": None}])
+def test_an_issue_with_no_chain_or_no_listing_is_never_signed(tmp_path, change):
+    rig = Rig(tmp_path)
+    call, log = _signing(rig)
+    rig.service.move("sign", data={"issue": dict(issue(log), **change)})
+    rig.step()
+    assert call.poll() == Result(ok=False, failure="ls_publish_fail") and rig.signer.calls == []

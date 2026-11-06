@@ -34,7 +34,7 @@ _NEW_STATES = {
     "race_unverified", "book_view", "listings_view", "start_over",
     "board_new", "buy_check_fail", "buy_load_fail", "ls_publish_fail",
     "buy_late", "own_result", "own_again", "id_dup_unnamed", "ls_confirm", "ls_copied",
-    "id_taken", "scout", "scout_pick", "run_links",
+    "id_taken", "scout", "scout_pick", "run_links", "ls_unfunded", "ls_not_linked",
 }
 
 # Sample values for every non-sponsor-name placeholder the table uses, so copy can be filled
@@ -54,6 +54,7 @@ _SAMPLES = {
     "scout_down": "My scout is not answering, so here is the ghost just ahead. ",
     "refused_why": "a BOT listing must pay the house", "payee": "the house account 0.0.9473064",
     "record_line": "Recorded: Hedera LISTING #41", "links_run": "BOT-A2's 1:43.93 run",
+    "console_wallet": "0x1a2b\u20269f3e",
 }
 
 # The prototype states whose own S entry carries a `what` (handler-states.html). A fix round
@@ -74,7 +75,7 @@ def _filled(text: str) -> str:
 
 def test_every_prototype_state_is_here():
     assert _PROTOTYPE_STATES | _NEW_STATES == set(STATES)
-    assert len(STATES) == 66
+    assert len(STATES) == 68
 
 
 def test_start_matches_the_brief():
@@ -172,7 +173,7 @@ def test_call_states_carry_the_ruled_deadlines_and_events():
         "ls_approve": (1200000, "ls_expired", "ls_record"),
         "ls_confirm": (300000, "ls_expired", "ls_record"),
         "ls_record": (8000, "ls_record_fail", "ls_arkiv"),
-        "ls_arkiv": (8000, "ls_publish_fail", "ls_done"),
+        "ls_arkiv": (120000, "ls_publish_fail", "ls_done"),   # the console's own signer, then the checker's stamp
         "scout": (12000, "target", "scout_pick"),
     }
     for name, (deadline_ms, timeout_to, ok_to) in expected.items():
@@ -400,6 +401,7 @@ def test_placeholders_constant_matches_what_the_table_uses():
         "wallet", "buyer", "ghost_look", "split", "game", "runs", "sold", "jti", "listing_days",
         "ghost_kept", "credential", "approve_how", "approve_via", "now_price", "receipt_text",
         "console_tag", "scout_reason", "scout_down", "refused_why", "payee", "record_line", "links_run",
+        "console_wallet",
     }
     assert PLACEHOLDERS == expected
 
@@ -528,3 +530,29 @@ def test_a_board_runs_records_are_a_chain_card_that_goes_back_to_the_board():
     assert state.on == {"cross": "board", "circle": "board"}         # the flow keeps the board's cursor
     assert state.call is None and not state.steps and state.kind == "" and state.fx == ""
     assert "{links_run}" in state.say and "Triangle" in state.say
+
+
+def test_a_wallet_with_no_tglm_says_so_and_cross_publishes_again_on_the_same_approval():
+    """The console's own wallet pays for writing its run and listing: with none, nothing was written or stamped."""
+    from arca_launcher.handler.flow import CHAIN_STATES
+    state = STATES["ls_unfunded"]
+    assert state.card["h"] == "This console's wallet needs tGLM"
+    assert state.card["rows"] == ("Wallet *{console_wallet}*",)
+    assert _filled(state.card["rows"][0]) == "Wallet *0x1a2b\u20269f3e*"
+    assert state.on == {"cross": "ls_arkiv", "circle": "home"} and state.call is None
+    assert (state.steps, state.at, state.halt, state.kind) == (STATES["ls_arkiv"].steps, 3, True, "warn")
+    assert "tGLM" in state.say and "Cross" in state.say and "ls_unfunded" not in CHAIN_STATES
+
+
+def test_a_console_whose_wallet_is_not_linked_says_the_owner_links_it_again():
+    state = STATES["ls_not_linked"]
+    assert state.card["h"] == "Link this console again"
+    assert ("Owner runs", "npm run console:link") in state.card["what"]
+    assert _filled(state.card["rows"][0]) == "Wallet *0x1a2b\u20269f3e* is not linked to *ANY-7Q3*"
+    assert state.on == {"cross": "ls_arkiv", "circle": "home"} and state.fail and state.kind == "no"
+    assert "World App" in state.say
+
+
+def test_the_listing_on_the_board_says_the_console_signs_and_the_checker_stamps():
+    say = _filled(STATES["ls_arkiv"].say)
+    assert "own wallet" in say and "stamps" in say

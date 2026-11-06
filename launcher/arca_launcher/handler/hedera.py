@@ -196,6 +196,11 @@ class HederaSponsors:
         read = getattr(self._inner, "console_state", None)
         return read() if read is not None else None
 
+    @property
+    def arkiv_wallet(self):
+        """This console's own Arkiv wallet address: the Arkiv adapter's (None without one)."""
+        return getattr(self._inner, "arkiv_wallet", None)
+
     def chain_update(self):
         """The last settled payment's HCS messages as last read: {"receipt", "intent", "receipt_msg"}, or None."""
         with self._lock:

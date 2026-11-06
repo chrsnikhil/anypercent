@@ -363,6 +363,9 @@ def book(g, spec, rect, t_ms, ctx):
         rows = ("No record book on this console",)
     if _v(ctx, "console_tag"):                               # the console as World's bridge tags it, and its binding
         rows += (f"Console *{_v(ctx, 'console_tag')}*: {_v(ctx, 'console_line')}",)
+    if _v(ctx, "console_wallet"):                            # its own Arkiv wallet, short: what signs its records
+        note = _v(ctx, "wallet_note")
+        rows += (f"Wallet *{_v(ctx, 'console_wallet')}*" + (f": {note}" if note else ""),)
     _rows(g, rows, rect.x + PAD, rect.y + BIG_ROWS_Y, rect.w - PAD - 20, rect.bottom - 8)
 
 

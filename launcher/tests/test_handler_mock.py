@@ -27,7 +27,8 @@ class FakeClock:
 def test_steps_and_timeouts_match_the_brief():
     assert STEPS == ("status", "idkit_scan", "idkit_confirm", "idkit_verify", "check_listing", "pay",
                       "load_ghost", "approve_scan", "approve", "record", "publish", "sales", "scout")
-    assert TIMEOUT_MS == {"idkit_verify": 10000, "pay": 8000, "record": 8000, "publish": 8000,
+    # publish: room for the console's own signer (Node, its transaction) and the checker's stamp after it
+    assert TIMEOUT_MS == {"idkit_verify": 10000, "pay": 8000, "record": 8000, "publish": 120000,
                            "check_listing": 8000, "load_ghost": 8000, "scout": 12000}
 
 

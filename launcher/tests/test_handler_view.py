@@ -25,7 +25,7 @@ CTX = {"game": "Marine Drive GP", "target": "RIA", "target_time": "1:41.27", "ga
        "run_frames": 6170, "run_time": "1:42.83", "ghost_look": "the *cyan kart*", "wallet": MOCK_WALLET,
        "other_book": "ANY-2KD", "runs": 14, "sold": 2, "buyer": "ARJUN", "code": "R4D-91X", "jti": "5e1f0c2a",
        "receipt": "mock-1a2b3c4d", "ghost_kept": "RIA's ghost is still yours. ", "board_rows": build(6070, 6290).rows,
-       "console_tag": "C-7QZP", "console_line": "linked to ANY-7QZ",
+       "console_tag": "C-7QZP", "console_line": "linked to ANY-7QZ", "console_wallet": "0x1a2b\u20269f3e",
        "scout_reason": "You lose 1.50 s in lap 2: RIA runs it in 33.25 s, you in 34.75 s.",
        "scout_by": "Picked by openai/gpt-oss-120b on Groq", "you_laps": (2140, 2085, 2065),
        "it_laps": (2087, 1995, 1994), "scout_lap": 2, "you_time": "1:44.83", "links_run": "RIA's 1:41.27 run"}
@@ -314,9 +314,13 @@ LIVE_CHAIN = {
              {"label": "Hedera RECEIPT", "value": "waiting for the mirror", "url": None}],
     "list": [{"label": "Hedera LISTING #41", "value": "topic 0.0.11332437 · tx 0.0.6421420@1793929992",
               "url": "https://hashscan.io/testnet/transaction/0.0.6421420-1793929992-000000001"},
+             {"label": "Arkiv run", "value": "0x08e7…08e7",
+              "url": "https://rabdi.explorer.arkiv.network/entity/0x" + "08e7" * 16},
              {"label": "Arkiv listing", "value": "0x23bf…af44",
               "url": "https://rabdi.explorer.arkiv.network/entity/0x" + "23bf" * 15 + "af44"},
-             {"label": "Arkiv tx", "value": "0x5c1d…9e02", "url": ARKIV_TX_URL}],
+             {"label": "Signed by this console", "value": "tx 0x5c1d…9e02", "url": ARKIV_TX_URL},
+             {"label": "Stamped by the checker", "value": "0x7e3a…01b2 · tx 0x44d0…aa19",
+              "url": "https://rabdi.explorer.arkiv.network/tx/0x" + "44d0" * 15 + "aa19"}],
     "run": [{"label": "Arkiv run", "value": "0x08e7…08e7",
              "url": "https://rabdi.explorer.arkiv.network/entity/0x" + "08e7" * 16},
             {"label": "Arkiv listing", "value": "0x23bf…23bf",
@@ -352,7 +356,8 @@ def live_flow(tmp_path, name, **ctx):
     base = dict(CTX, game="MARINE DRIVE GP", target="BOT-A2", target_time="1:43.93", target_frames=6236,
                 target_pay_to=HOUSE, gap="3.0 s", rank="7th", new_rank="2nd", board_rows=board.rows, best_frames=6414,
                 run_time="1:46.90", wallet="0.0.9473064", ghost_look="the *cyan kart*", other_book="ANY-6PS",
-                console_tag="C-7QZP", console_line="linked to ANY-6PS", scout_reason=REASON,
+                console_tag="C-7QZP", console_line="linked to ANY-6PS", console_wallet="0x1a2b\u20269f3e",
+                scout_reason=REASON,
                 scout_by="Picked by openai/gpt-oss-120b on Groq", you_laps=(2140, 2165, 2109),
                 it_laps=(2248, 1994, 1994), scout_lap=2, you_time="1:46.90", receipt="0.0.9185802@1793930445.643007633",
                 refused_why="this console is not linked to ANY-6PS", record_line="Recorded: Hedera LISTING #41",
@@ -378,7 +383,9 @@ LIVE_SCREENS = {"board": {}, "board_humans_only": {"humans_only": True}, "scout"
                 "target": {"scout_down": "My scout is not answering, so here is the ghost just ahead. "},
                 "buy_check": {}, "buy_pay": {}, "buy_load": {}, "buy_done": {"chain": LIVE_CHAIN["buy"], "chain_i": 1},
                 "buy_late": {"chain": LIVE_CHAIN["late"], "chain_i": 1}, "ls_arkiv": {},
-                "ls_done": {"chain": LIVE_CHAIN["list"], "chain_i": 2}, "buy_suspended": {}, "id_done": {},
+                "ls_done": {"chain": LIVE_CHAIN["list"], "chain_i": 2},
+                "ls_done_stamp": {"chain": LIVE_CHAIN["list"], "chain_i": 4}, "ls_unfunded": {}, "ls_not_linked": {},
+                "buy_suspended": {}, "id_done": {},
                 "id_scan": {}, "book_view": {},
                 "run_links": {"chain": LIVE_CHAIN["run"], "chain_i": 3, "links_run": "ANY-6PS's 1:46.90 run"}}
 
@@ -398,7 +405,7 @@ def test_the_new_screens_live_and_their_text_fits(screen, tmp_path, monkeypatch)
         monkeypatch.setattr(module, "ellipsize", ellipsize)
     drawn = _texts(screen, monkeypatch)
     for shot, ctx in LIVE_SCREENS.items():
-        state = shot.replace("_humans_only", "").replace("_rule", "")
+        state = shot.replace("_humans_only", "").replace("_rule", "").replace("_stamp", "")
         flow = live_flow(tmp_path / shot, state, **ctx)
         if state == "scout_pick":
             flow.ms_in_state = 1500                                   # the countdown a third of the way down
@@ -446,12 +453,16 @@ def test_the_chain_card_draws_the_chosen_rows_qr_big_enough_to_scan(screen, tmp_
         seen.append((text, beam, box.w // handler_art.qr_surface(text).get_width()))
         return box
     monkeypatch.setattr(handler_art, "qr", spy)
-    flow = live_flow(tmp_path, "ls_done", chain=LIVE_CHAIN["list"], chain_i=2)
+    flow = live_flow(tmp_path, "ls_done", chain=LIVE_CHAIN["list"], chain_i=3)   # the console's own transaction
     show(screen, flow)
     assert seen[-1][:2] == (ARKIV_TX_URL, False) and seen[-1][2] >= 3    # no scan beam over a dense code
     flow.press("up")
     show(screen, flow)
-    assert seen[-1][:2] == (LIVE_CHAIN["list"][1]["url"], False)
+    assert seen[-1][:2] == (LIVE_CHAIN["list"][2]["url"], False)
+    flow.press("down")
+    flow.press("down")                                                   # the checker's stamp: its transaction
+    show(screen, flow)
+    assert seen[-1][:2] == (LIVE_CHAIN["list"][4]["url"], False) and seen[-1][2] >= 3
     assert ("U/D", "Next") in hint_items(flow)
     drawn = _texts(screen, monkeypatch)
     flow = live_flow(tmp_path / "mock", "buy_done", chain=[])         # none (the mock): exactly the done card
@@ -573,3 +584,33 @@ def test_my_record_book_names_this_console(screen, tmp_path, monkeypatch):
     snapshot(screen.ren, "handler_live_book_view_released")
     assert "No record book on this console" in drawn
     assert flow.line == "This console has no record book now. Its runs stay on the board."
+
+
+def test_my_record_book_shows_this_consoles_own_wallet_short(screen, tmp_path, monkeypatch):
+    """Its own Arkiv wallet, in the short form the World App link text names it: "Wallet 0x1a2b\u20269f3e", and what a
+    linked console's wallet still needs."""
+    from arca_launcher.render.text import plain
+    drawn = _texts(screen, monkeypatch)
+    show(screen, live_flow(tmp_path, "book_view"))
+    snapshot(screen.ren, "handler_live_book_view")
+    line = plain("".join(drawn))
+    assert "Wallet 0x1a2b\u20269f3e" in line and "needs a new link" not in line
+    drawn.clear()
+    show(screen, live_flow(tmp_path / "pending", "book_view", wallet_note="needs a new link"))
+    snapshot(screen.ren, "handler_live_book_view_wallet_pending")
+    assert "Wallet 0x1a2b\u20269f3e: needs a new link" in plain("".join(drawn))
+    drawn.clear()
+    show(screen, live_flow(tmp_path / "none", "book_view", console_wallet=None))      # no wallet found (no Node)
+    assert "Wallet" not in "".join(drawn)
+
+
+def test_the_unfunded_and_not_linked_screens_name_the_wallet(screen, tmp_path, monkeypatch):
+    from arca_launcher.render.text import plain
+    drawn = _texts(screen, monkeypatch)
+    show(screen, live_flow(tmp_path, "ls_unfunded"))
+    shown = plain("".join(drawn))
+    assert "This console's wallet needs tGLM" in drawn and "Wallet 0x1a2b\u20269f3e" in shown
+    drawn.clear()
+    show(screen, live_flow(tmp_path / "link", "ls_not_linked"))
+    shown = plain("".join(drawn))
+    assert "Link this console again" in drawn and "npm run console:link" in shown

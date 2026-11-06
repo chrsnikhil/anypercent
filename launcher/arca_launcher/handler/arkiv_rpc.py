@@ -1,32 +1,48 @@
 """Arkiv's board, read straight from the public Rabdi RPC: standard library only (urllib JSON-RPC), no access key, no
-proxy, a 3 s timeout. The console's board, its listing check and a plain ghost all come from here; no backend of ours
-sits in the read path, so the board survives the laptop being off. Callers run it on a background thread.
+proxy, a 3 s timeout. The console's board and its listing check come from here; no backend of ours sits in the read
+path, so the board survives the laptop being off. Callers run it on a background thread.
 
-The query strings are the spec's Q1, Q2 and Q6 (docs/superpowers/specs/*-arkiv-integration.md, "Queries"), the same
-characters the service and the web board send, and every one pins `$creator` to our checker. Rows are still checked
-here, never trusted: one whose `arkiv.schema` or creator is not the expected one, or that lacks a column or carries
-one of the wrong type, is dropped and counted. The checker goes into a query in its EIP-55 form, as the service and
-the web board write it (the node refuses a mixed-case address whose checksum is wrong, so it is computed here, never
-copied); keys go in lowercase.
+Console-owned records (docs/superpowers/specs/2026-11-06-arkiv-console-owned-design.md): each console's own wallet
+creates its run and listing rows (the house's wallet the BOT ones), and our checker writes a separate stamp
+(anypercent.stamp) naming each run it replayed and the wallet (`console`) that owns it. A board is read as the service
+and the web board read it: the checker's stamps first (pinned to the checker's `$creator`), then the runs and listings
+of every wallet those stamps name (Q1 and Q2 pinned to that wallet). join_board is the readers' one rule (the
+bridge's board.ts, line for line): a run counts only when a checker stamp names it, the run's creator and its current
+owner are both the stamp's `console` (a read-only entity can still be transferred, so every run and listing read
+selects its owner; one whose owner is not returned does not count) and the columns the stamp copied agree (game,
+season, frames, log_h, book or label, human, the lap splits); a listing counts only when its creator and owner are that
+same console, its `run` names a run that counts and its game, season, frames, log_h, book or label and human are the
+run's. Anything else is dropped and counted; a stamped run whose listing expired still ranks, as not for sale. Two
+stamps of one log count once (the first, which on a board read is the fastest). A look-alike row (any stranger's
+wallet, any book name) has no stamp, so it never counts, even from a node that skipped a pin.
+
+The query strings are the same characters the service and the web board send (apps/world-bridge src/arkiv/queries.ts:
+q1Stamps, q1Board, q2Listings, q6Run, qStampForRun, q6ListingByKey). Rows are checked here, never trusted: one whose
+`arkiv.schema` or creator is not the expected one, or that lacks a column or carries one of the wrong type, is
+dropped and counted. An address goes into a query in its EIP-55 form, as the service and the web board write it (the
+node refuses a mixed-case address whose checksum is wrong, so it is computed here, never copied); keys go in
+lowercase.
 
 A run row may carry its lap times (s1..s4, split_kind "lap"): kept only when they are contiguous from s1, every one
-above 0, and add up to the run's frames; otherwise the run is kept without them. A listing names its seller by exactly
-one of book (a person's record book) and label (the house's BOT ghost); one with both or neither is dropped. A run with
-no record book is never HUMAN: nobody's World ID stands behind it. A listing's LISTING message on Hedera (hcs,
-"<topic>/<seq>") is kept only in that form; any other leaves it off, never the listing."""
+above 0, and add up to the run's frames; otherwise the run is kept without them. A run, a stamp and a listing each name
+their runner by exactly one of book (a person's record book) and label (the house's BOT ghost, HOUSE_LABEL); one with
+both, neither, or any other label is dropped (the open tier is retired). A run with no record book is never HUMAN:
+nobody's World ID stands behind it. A listing's LISTING message on Hedera (hcs, "<topic>/<seq>") is kept only in that
+form; any other leaves it off, never the listing. No reader selects a run's log: every ghost is a listed one, its log
+encrypted on the row and served by the service against a payment."""
 import functools
 import json
 import re
 import time
 import urllib.request
 
-from arca_launcher.handler.sponsors import HCS_MSG, PAY_TO, RunRow
+from arca_launcher.handler.sponsors import HCS_MSG, HOUSE_LABEL, PAY_TO, RunRow
 
 RABDI_RPC = "https://rpc.rabdi.db-chain.testnet.arkiv.network"   # the public endpoint: no key on the console
-RUN_SCHEMA, LISTING_SCHEMA = "anypercent.run", "anypercent.listing"
+RUN_SCHEMA, LISTING_SCHEMA, STAMP_SCHEMA = "anypercent.run", "anypercent.listing", "anypercent.stamp"
 PAGE = 100                    # one page: runners beyond the top 100 runs are not shown
 TIMEOUT_S = 3.0
-MAX_REPLY = 1 << 20           # a reply with one ghost's log (64 KiB as hex) is far below this
+MAX_REPLY = 1 << 20           # a page of 100 rows is far below this
 TEXT_MAX = 64                 # bytes of any text column (a title, a book, a label)
 YIELD_EVERY = 20              # rows decoded between letting the frame loop have the GIL (a Pi decodes slowly)
 
@@ -39,13 +55,15 @@ _DEC = re.compile(r"[0-9]{1,30}(\.[0-9]{1,18})?")
 _BYTES = re.compile(r"0x(?:[0-9a-fA-F]{2})*")
 _BAD = object()
 
-# The columns each reader selects (besides arkiv.schema), with their Arkiv types; never `log`/`log_enc` for a board.
+# The columns each reader selects (besides arkiv.schema), with their Arkiv types; never `log`/`log_enc`.
 RUN_COLUMNS = {"game": "str", "title": "str", "frames": "u64", "runner": "str", "book": "str", "label": "str",
                "human": "bool", "credential": "str", "log_h": "str", "rules": "u64"}
-RUN_OPTIONAL = frozenset({"book", "label", "credential", "log"})
+RUN_OPTIONAL = frozenset({"book", "label", "credential"})
 # A run's lap times: selected with it, and read leniently (one that does not check out is left off, the run kept).
 SPLIT_COLUMNS = {"s1": "u64", "s2": "u64", "s3": "u64", "s4": "u64", "split_kind": "str"}
 SPLIT_KIND = "lap"
+# Read leniently with a run besides its laps: its season, always compared with its stamp's (none never matches).
+RUN_LENIENT = dict(SPLIT_COLUMNS, season="i32")
 LISTING_COLUMNS = {"run": "key", "game": "str", "season": "i32", "frames": "u64", "log_h": "str", "price": "dec",
                    "seller": "str", "book": "str", "label": "str", "human": "bool", "pay_to": "str"}
 # A listing written before Hedera (or with Hedera off) has no pay_to: it is on the board, but not for sale. It names
@@ -54,6 +72,14 @@ LISTING_OPTIONAL = frozenset({"pay_to", "book", "label"})
 # A listing's LISTING message on Hedera ("<topic>/<seq>"): selected with it and read leniently, since it names a
 # record, never who is paid (one in any other form is left off, the listing kept).
 LISTING_LENIENT = {"hcs": "str"}
+# The checker's stamp of a run: the run it names, the wallet that owns that run (`console`, lowercase), and the
+# columns it copied from the run (its lap times read leniently and compared as the run's are read: both the laps that
+# check out, or both none).
+STAMP_COLUMNS = {"run": "key", "console": "str", "game": "str", "season": "i32", "frames": "u64", "log_h": "str",
+                 "book": "str", "label": "str", "human": "bool"}
+STAMP_OPTIONAL = frozenset({"book", "label"})
+# What a stamp copied from its run and must still say: compared one by one, then the lap columns.
+_COPIED = ("game", "frames", "log_h", "book", "label", "human")
 
 
 class RpcError(Exception):
@@ -97,7 +123,7 @@ def keccak256(data):
     return b"".join(a[i % 5][i // 5].to_bytes(8, "little") for i in range(4))
 
 
-@functools.lru_cache(maxsize=8)
+@functools.lru_cache(maxsize=32)
 def eip55(address):
     """An address in its EIP-55 mixed-case form (a letter is upper case where its nibble of the hash is 8 or more)."""
     low = checker_address(address)[2:]
@@ -135,34 +161,53 @@ def _season(season):
     return season
 
 
-def q1(game, season, checker):
-    """The game's checked runs this season, fastest first (the console's and the web board's Q1)."""
-    return (f"arkiv.schema = str('{RUN_SCHEMA}') AND game = str('{game_id(game)}') AND season = i32({_season(season)})"
-            f" AND $creator = addr({eip55(checker)}) ORDER BY frames:u64 ASC")
-
-
-def q2(game, season, checker):
-    """The game's live listings this season, fastest first (Q2)."""
-    return (f"arkiv.schema = str('{LISTING_SCHEMA}') AND game = str('{game_id(game)}') AND season = i32("
+def q_stamps(game, season, checker):
+    """The checker's stamps of the game this season, fastest first: the board before the join (q1Stamps)."""
+    return (f"arkiv.schema = str('{STAMP_SCHEMA}') AND game = str('{game_id(game)}') AND season = i32("
             f"{_season(season)}) AND $creator = addr({eip55(checker)}) ORDER BY frames:u64 ASC")
 
 
-def q6(schema, key, checker):
-    """One row by its key (Q6): a listing for the listing check, a run for the check and for a plain ghost."""
+def q1(game, season, owner):
+    """The game's runs this season that owner (a wallet a stamp names) created, fastest first (Q1, q1Board)."""
+    return (f"arkiv.schema = str('{RUN_SCHEMA}') AND game = str('{game_id(game)}') AND season = i32({_season(season)})"
+            f" AND $creator = addr({eip55(owner)}) ORDER BY frames:u64 ASC")
+
+
+def q2(game, season, owner):
+    """The game's live listings this season that owner created, fastest first (Q2, q2Listings)."""
+    return (f"arkiv.schema = str('{LISTING_SCHEMA}') AND game = str('{game_id(game)}') AND season = i32("
+            f"{_season(season)}) AND $creator = addr({eip55(owner)}) ORDER BY frames:u64 ASC")
+
+
+def q6(schema, key, owner):
+    """One row by its key that owner created (Q6): a run, pinned to the wallet its stamp names (q6Run)."""
     return (f"arkiv.schema = str('{schema}') AND $key = key({entity_key(key)})"
+            f" AND $creator = addr({eip55(owner)})")
+
+
+def q_stamp_for_run(key, checker):
+    """The checker's stamp of one run, if any (qStampForRun)."""
+    return (f"arkiv.schema = str('{STAMP_SCHEMA}') AND run = key({entity_key(key)})"
             f" AND $creator = addr({eip55(checker)})")
 
 
-def _select(columns):
-    """What a reader asks for: the key, its creator (checked again here) and expiry, and the named columns."""
-    return {"key": True, "creator": True, "expiresAt": True,
-            "attributes": dict({"arkiv.schema": True}, **{name: True for name in columns})}
+def q6_listing(key):
+    """One listing by its key, whoever created it (q6ListingByKey): its creator is then compared with the wallet its
+    run's stamp names."""
+    return f"arkiv.schema = str('{LISTING_SCHEMA}') AND $key = key({entity_key(key)})"
+
+
+def _select(columns, owner=False):
+    """What a reader asks for: the key, its creator (checked again here) and expiry, its current owner (owner: a run
+    or a listing, whose owner must still be the wallet its stamp names), and the named columns."""
+    return dict({"key": True, "creator": True, "expiresAt": True}, **({"owner": True} if owner else {}),
+                attributes=dict({"arkiv.schema": True}, **{name: True for name in columns}))
 
 
 # ---- the transport and one query ----------------------------------------------------------------------------------
 
 # Rabdi's RPC sits behind Cloudflare, which refuses Python's default User-Agent (Python-urllib/3.x) with a 403: the
-# console names itself instead.
+# console names itself instead, on every request.
 USER_AGENT = "AnyPercent-Console/1.0 (+https://github.com/chrsnikhil/anypercent)"
 
 
@@ -234,15 +279,16 @@ def _text_ok(text):
             and not any(ord(ch) < 32 or ord(ch) == 127 for ch in text))
 
 
-def _row(entity, schema, columns, optional, checker, lenient=None):
-    """entity's key, creator, expiry and columns, decoded; None when it is not a row of schema that checker created,
-    with every required column present in its own type. lenient: more columns, each its value or None when absent or
-    not in its type (never a reason to drop the row)."""
+def _row(entity, schema, columns, optional, creator, lenient=None):
+    """entity's key, creator, current owner (None when the node did not give one), expiry and columns, decoded; None
+    when it is not a row of schema that creator created (creator None: any wallet), with every required column present
+    in its own type. lenient: more columns, each its value or None when absent or not in its type (never a reason to
+    drop the row)."""
     if not isinstance(entity, dict):
         return None
-    key, creator = _value("key", entity.get("key")), _value("addr", entity.get("creator"))
+    key, made_by = _value("key", entity.get("key")), _value("addr", entity.get("creator"))
     expires = _value("u64", entity.get("expiresAt"))
-    if _BAD in (key, creator, expires) or creator != checker:
+    if _BAD in (key, made_by, expires) or (creator is not None and made_by != creator):
         return None
     attrs = entity.get("attributes")
     if not isinstance(attrs, list):
@@ -254,7 +300,8 @@ def _row(entity, schema, columns, optional, checker, lenient=None):
         got[attr["name"]] = (attr.get("type"), attr.get("value"))
     if got.get("arkiv.schema") != ("str", schema):
         return None
-    out = {"key": key, "creator": creator, "expires": expires}
+    owner = _value("addr", entity.get("owner"))
+    out = {"key": key, "creator": made_by, "owner": None if owner is _BAD else owner, "expires": expires}
     for name, kind in columns.items():
         if name not in got:
             if name not in optional:
@@ -275,6 +322,17 @@ def _row(entity, schema, columns, optional, checker, lenient=None):
         value = _value(kind, raw) if typed == kind else _BAD
         out[name] = None if value is _BAD or (kind == "str" and not _text_ok(value)) else value
     return out
+
+
+def _named(row):
+    """Exactly one of book and label, and a label only as the house's BOT ghosts are named (the open tier is
+    retired)."""
+    book, label = row.get("book"), row.get("label")
+    return (book is None) != (label is None) and (label is None or HOUSE_LABEL.fullmatch(label) is not None)
+
+
+def _creator(creator):
+    return None if creator is None else checker_address(creator)
 
 
 def _splits(row):
@@ -298,34 +356,32 @@ def _yield(i):
         time.sleep(0)
 
 
-def decode_runs(data, game, checker, schema=RUN_SCHEMA, with_log=False):
-    """(the valid run rows of data, as dicts in data's order, how many were dropped). game None: any game."""
-    checker = checker_address(checker)
-    columns = dict(RUN_COLUMNS, log="bytes") if with_log else RUN_COLUMNS
+def decode_runs(data, game, creator, schema=RUN_SCHEMA):
+    """(the valid run rows of data, as dicts in data's order, how many were dropped). game None: any game; creator
+    None: any wallet (join_board then compares it with the stamp's console)."""
+    creator = _creator(creator)
     rows, dropped = [], 0
     for i, entity in enumerate(data):
         _yield(i)
-        row = _row(entity, schema, columns, RUN_OPTIONAL, checker, lenient=SPLIT_COLUMNS)
-        if row is None or (game is not None and row["game"] != game) or not (row["book"] or row["label"]):
+        row = _row(entity, schema, RUN_COLUMNS, RUN_OPTIONAL, creator, lenient=RUN_LENIENT)
+        if row is None or (game is not None and row["game"] != game) or not _named(row):
             dropped += 1
             continue
         row["splits"] = _splits(row)
-        row["human"] = row["human"] and row["book"] is not None    # no record book: nobody's World ID behind it
         rows.append(row)
     return rows, dropped
 
 
-def decode_listings(data, game, checker, season=None, schema=LISTING_SCHEMA):
-    """(the valid listing rows of data, as dicts in data's order, how many were dropped). game, season None: any. A
-    pay_to that is not a plain `0.0.N` account makes the row a misfit: PB never pays an account it cannot read. An hcs
-    that is not "<topic>/<seq>" is only left off (None)."""
-    checker = checker_address(checker)
+def decode_listings(data, game, creator, season=None, schema=LISTING_SCHEMA):
+    """(the valid listing rows of data, as dicts in data's order, how many were dropped). game, season, creator None:
+    any. A pay_to that is not a plain `0.0.N` account makes the row a misfit: PB never pays an account it cannot read.
+    An hcs that is not "<topic>/<seq>" is only left off (None)."""
+    creator = _creator(creator)
     rows, dropped = [], 0
     for i, entity in enumerate(data):
         _yield(i)
-        row = _row(entity, schema, LISTING_COLUMNS, LISTING_OPTIONAL, checker, lenient=LISTING_LENIENT)
-        if (row is None or game not in (None, row["game"]) or season not in (None, row["season"])
-                or (row["book"] is None) == (row["label"] is None)
+        row = _row(entity, schema, LISTING_COLUMNS, LISTING_OPTIONAL, creator, lenient=LISTING_LENIENT)
+        if (row is None or game not in (None, row["game"]) or season not in (None, row["season"]) or not _named(row)
                 or (row["pay_to"] is not None and not PAY_TO.fullmatch(row["pay_to"]))):
             dropped += 1
             continue
@@ -335,53 +391,167 @@ def decode_listings(data, game, checker, season=None, schema=LISTING_SCHEMA):
     return rows, dropped
 
 
+def decode_stamps(data, game, checker, season=None, schema=STAMP_SCHEMA):
+    """(the valid stamps of data the checker created, as dicts in data's order, how many were dropped). game, season
+    None: any. A stamp that names no wallet as its `console` (0x and 40 lowercase hex) is a misfit."""
+    checker = checker_address(checker)
+    rows, dropped = [], 0
+    for i, entity in enumerate(data):
+        _yield(i)
+        row = _row(entity, schema, STAMP_COLUMNS, STAMP_OPTIONAL, checker, lenient=SPLIT_COLUMNS)
+        if (row is None or game not in (None, row["game"]) or season not in (None, row["season"]) or not _named(row)
+                or not _ADDR.fullmatch(row["console"])):
+            dropped += 1
+            continue
+        row["splits"] = _splits(row)
+        rows.append(row)
+    return rows, dropped
+
+
+# ---- the readers' rule ---------------------------------------------------------------------------------------------
+
+def run_mismatch(stamp, run):
+    """Why this run does not count under this stamp (a few words), or None when it does: the stamp names it, its
+    creator and its current owner are the stamp's console, and every column the stamp copied agrees as written (the
+    laps as read: the same laps that check out, or none on both). The bridge's board.ts runMismatch."""
+    if run["key"] != stamp["run"]:
+        return "another run"
+    if run["creator"] != stamp["console"]:
+        return "created by another wallet than the stamp names"
+    if run.get("owner") != stamp["console"]:
+        return "owned by another wallet than the stamp names"
+    if run.get("season") != stamp["season"]:
+        return "season"
+    for name in _COPIED:
+        if run[name] != stamp[name]:
+            return name
+    if run.get("splits") != stamp.get("splits"):
+        return "splits"
+    return None
+
+
+def listing_mismatch(stamp, listing):
+    """Why this listing does not count for the run this stamp names, or None when it does: it names that run, its
+    creator and current owner are the run's owner (the stamp's console), and its game, season, frames, log_h, book or
+    label and human are the run's. The bridge's board.ts listingMismatch."""
+    if listing["run"] != stamp["run"]:
+        return "another run"
+    if listing["creator"] != stamp["console"]:
+        return "created by another wallet than the run's"
+    if listing.get("owner") != stamp["console"]:
+        return "owned by another wallet than the run's"
+    if listing["season"] != stamp["season"]:
+        return "season"
+    for name in _COPIED:
+        if listing[name] != stamp[name]:
+            return name
+    return None
+
+
+def join_board(stamps, runs, listings):
+    """The readers' one rule over decoded rows: ([(stamp, run)] that count, in the stamps' order; {run key: its first
+    listing that counts}; how many stamps and listings did not count). A run no stamp names is simply not on the board
+    (not counted); a stamp whose run is missing or disagrees, a second stamp of one log or one run, and a listing that
+    is not its stamped run's owner's are."""
+    by_key = {}
+    for run in runs:
+        by_key.setdefault(run["key"], run)
+    kept, logs, named, dropped = [], set(), set(), 0
+    for stamp in stamps:
+        run = by_key.get(stamp["run"])
+        if (stamp["log_h"] in logs or stamp["run"] in named or run is None
+                or run_mismatch(stamp, run) is not None):
+            dropped += 1
+            continue
+        logs.add(stamp["log_h"])
+        named.add(stamp["run"])
+        kept.append((stamp, run))
+    stamp_of = {stamp["run"]: stamp for stamp, _ in kept}
+    offers = {}
+    for listing in listings:
+        stamp = stamp_of.get(listing["run"])
+        if stamp is None or listing_mismatch(stamp, listing) is not None:
+            dropped += 1
+            continue
+        offers.setdefault(listing["run"], listing)
+    return kept, offers, dropped
+
+
 def run_row(row, listing=None):
-    """A decoded run (and the live listing that offers it, if any) as the board's RunRow."""
+    """A decoded run (and the live listing that offers it, if any) as the board's RunRow. A run with no record book
+    is never HUMAN, whatever its row says: nobody's World ID stands behind it."""
+    human = row["human"] and row["book"] is not None
     return RunRow(key=row["key"], game=row["game"], title=row["title"], frames=row["frames"], runner=row["runner"],
-                  book=row["book"], label=row["label"], human=row["human"],
-                  credential=row["credential"] if row["human"] else None, log_h=row["log_h"], rules=row["rules"],
-                  expires_block=row["expires"], listing=listing["key"] if listing else None,
-                  price=listing["price"] if listing else None, pay_to=listing["pay_to"] if listing else None,
+                  book=row["book"], label=row["label"], human=human, credential=row["credential"] if human else None,
+                  log_h=row["log_h"], rules=row["rules"], expires_block=row["expires"],
+                  listing=listing["key"] if listing else None, price=listing["price"] if listing else None,
+                  pay_to=listing["pay_to"] if listing else None,
                   splits=row.get("splits"), hcs=listing.get("hcs") if listing else None)
 
 
 # ---- the readers ---------------------------------------------------------------------------------------------------
 
+_STAMP_SELECT = dict(STAMP_COLUMNS, **SPLIT_COLUMNS)
+_RUN_SELECT = dict(RUN_COLUMNS, **RUN_LENIENT)
+_LISTING_SELECT = dict(LISTING_COLUMNS, **LISTING_LENIENT)
+
+
 def read_board(send, game, season, checker):
-    """(rows, block, dropped): the game's checked runs this season (Q1, fastest first) as RunRows, each with its live
-    listing (Q2) when one offers that very run (same log, time and game); the later block of the two reads; how many
-    rows were dropped as not our checker's or misfit. RpcError when either read fails."""
+    """(rows, block, dropped): the game's stamped runs this season as RunRows, fastest first (the checker's stamps,
+    then each stamped wallet's runs and listings, joined by join_board), each with its live listing when one counts;
+    the latest block of the reads; how many rows were dropped (misfits, stamps and listings that do not count).
+    RpcError when any read fails."""
     checker = checker_address(checker)
-    data, block = query(send, q1(game, season, checker), _select(dict(RUN_COLUMNS, **SPLIT_COLUMNS)))
-    runs, dropped = decode_runs(data, game, checker)
-    data, listed_at = query(send, q2(game, season, checker), _select(dict(LISTING_COLUMNS, **LISTING_LENIENT)))
-    listings, more = decode_listings(data, game, checker, season)
-    offers = {}
-    for listing in listings:
-        offers.setdefault(listing["run"], listing)
-    rows = []
-    for run in runs:
-        offer = offers.get(run["key"])
-        if offer is not None and (offer["log_h"], offer["frames"], offer["game"]) != (run["log_h"], run["frames"],
-                                                                                       run["game"]):
-            offer = None
-        rows.append(run_row(run, offer))
-    return tuple(rows), max(block, listed_at), dropped + more
+    data, block = query(send, q_stamps(game, season, checker), _select(_STAMP_SELECT))
+    stamps, dropped = decode_stamps(data, game, checker, season)
+    runs, listings = [], []
+    for owner in dict.fromkeys(stamp["console"] for stamp in stamps):
+        data, at = query(send, q1(game, season, owner), _select(_RUN_SELECT, owner=True))
+        got, misfit = decode_runs(data, game, None)
+        runs += got
+        data, listed_at = query(send, q2(game, season, owner), _select(_LISTING_SELECT, owner=True))
+        offers, more = decode_listings(data, game, None, season)
+        listings += offers
+        dropped += misfit + more
+        block = max(block, at, listed_at)
+    kept, offers, more = join_board(stamps, runs, listings)
+    return tuple(run_row(run, offers.get(run["key"])) for _, run in kept), block, dropped + more
+
+
+def read_stamp(send, run_key, checker):
+    """The checker's live stamp of this run, decoded, or None."""
+    checker, run_key = checker_address(checker), entity_key(run_key)
+    data, _ = query(send, q_stamp_for_run(run_key, checker), _select(_STAMP_SELECT), limit=1)
+    stamps, _ = decode_stamps(data, None, checker)
+    return next((stamp for stamp in stamps if stamp["run"] == run_key), None)
+
+
+def read_run(send, key, checker, stamp=None):
+    """The live stamped run with this key, decoded with its stamp's key; None when no checker stamp names it, or the
+    run is gone, is another wallet's or disagrees with its stamp. stamp: its stamp, already read."""
+    key = entity_key(key)
+    stamp = stamp if stamp is not None else read_stamp(send, key, checker)
+    if stamp is None:
+        return None
+    data, _ = query(send, q6(RUN_SCHEMA, key, stamp["console"]), _select(_RUN_SELECT, owner=True), limit=1)
+    runs, _ = decode_runs(data, None, stamp["console"])
+    run = next((row for row in runs if row["key"] == key), None)
+    if run is None or run_mismatch(stamp, run) is not None:
+        return None
+    return dict(run, stamp=stamp["key"])
 
 
 def read_listing(send, key, checker):
-    """The live listing with this key that our checker created (Q6), decoded; None when it is gone or not ours."""
-    checker, key = checker_address(checker), entity_key(key)
-    data, _ = query(send, q6(LISTING_SCHEMA, key, checker), _select(dict(LISTING_COLUMNS, **LISTING_LENIENT)), limit=1)
-    rows, _ = decode_listings(data, None, checker)
-    return next((row for row in rows if row["key"] == key), None)
-
-
-def read_run(send, key, checker, with_log=False):
-    """The live run with this key that our checker created (Q6), decoded; None when it is gone or not ours. with_log:
-    its plain `log` too (None on a listed run, whose ghost is encrypted and comes from the service)."""
-    checker, key = checker_address(checker), entity_key(key)
-    columns = dict(RUN_COLUMNS, log="bytes") if with_log else RUN_COLUMNS
-    data, _ = query(send, q6(RUN_SCHEMA, key, checker), _select(dict(columns, **SPLIT_COLUMNS)), limit=1)
-    rows, _ = decode_runs(data, None, checker, with_log=with_log)
-    return next((row for row in rows if row["key"] == key), None)
+    """The live listing with this key, decoded, only when it counts: its run is stamped by the checker and counts
+    (read_run), and the listing is that run's owner's, with the run's columns. None when it is gone or does not
+    count."""
+    key = entity_key(key)
+    data, _ = query(send, q6_listing(key), _select(_LISTING_SELECT, owner=True), limit=1)
+    rows, _ = decode_listings(data, None, None)
+    listing = next((row for row in rows if row["key"] == key), None)
+    if listing is None:
+        return None
+    stamp = read_stamp(send, listing["run"], checker)
+    if stamp is None or listing_mismatch(stamp, listing) is not None:
+        return None
+    return listing if read_run(send, listing["run"], checker, stamp=stamp) is not None else None

@@ -27,7 +27,11 @@ the JS object `S`) with controller-ruled amendments layered on top:
   compares your laps with the listed ghosts' on the service) and `scout_pick` (its pick, bought
   after `auto_ms` unless Circle stops it);
 - and `run_links`: any real board run's records on chain (its run and listing on the board's
-  chain, its listing's message and payout account on the record rail), a chain card.
+  chain, its listing's message and payout account on the record rail), a chain card;
+- and two with console-owned records (the console's own wallet signs its run and listing, the
+  checker stamps the run): `ls_unfunded` (that wallet has no tGLM to pay for the write; Cross
+  publishes again on the same approval) and `ls_not_linked` (that wallet is not the one a World
+  App approval linked to the book; the owner links the console again with console:link).
 
 The buy path never says "her" or "she": a target may be a BOT ghost, made by a program.
 
@@ -384,8 +388,8 @@ STATES: dict[str, State] = {
         name="ls_arkiv", mood="serious", busy="board",
         card={"t": "load", "h": "Listing on {board}",
               "rows": ("Visible to every console's coach", "Ends in 7 days", "{record_line}")},
-        say="Recorded. Now putting it on *{board}* so other coaches can find it.",
-        steps=_LS, at=3, call="publish", deadline_ms=8000,
+        say="Recorded. This console now signs it onto *{board}* from its own wallet, and the checker stamps it.",
+        steps=_LS, at=3, call="publish", deadline_ms=120000,
         on={"ok": "ls_done", "timeout": "ls_publish_fail"},
     ),
     "ls_done": State(
@@ -489,6 +493,29 @@ STATES: dict[str, State] = {
         say="Your listing is recorded on {record_rail}, but {board} is not answering. Cross to "
             "try listing again.",
         steps=_LS, at=3, halt=True, on={"cross": "ls_arkiv", "circle": "home"},
+    ),
+    # The console's own wallet has no tGLM to pay for writing its run and listing: nothing was written or stamped, the
+    # approval is kept, and Cross publishes again on it once the owner has funded the wallet (npm run arkiv:fund).
+    "ls_unfunded": State(
+        name="ls_unfunded", mood="worried", kind="warn",
+        card={"t": "warn", "h": "This console's wallet needs tGLM", "rows": ("Wallet *{console_wallet}*",),
+              "what": (("Listed", "not yet"), ("Your approval", "kept for this listing"),
+                       ("Next", "fund it, then Cross"))},
+        say="Your listing is recorded, but this console's {board} wallet has no tGLM to pay for writing it. "
+            "Once the owner sends it some, Cross to try again.",
+        steps=_LS, at=3, halt=True, on={"cross": "ls_arkiv", "circle": "home"},
+    ),
+    # This console's wallet is not the one a World App approval linked to the book (a reflashed console, a new key,
+    # or one linked before consoles had wallets): the checker would never stamp what it writes, so nothing is.
+    "ls_not_linked": State(
+        name="ls_not_linked", mood="serious", kind="no",
+        card={"t": "no", "h": "Link this console again",
+              "rows": ("Wallet *{console_wallet}* is not linked to *{book}*",),
+              "what": (("Listed", "nothing yet"), ("Owner runs", "npm run console:link"),
+                       ("Then", "Cross lists it again"))},
+        say="This console's {board} wallet is not the one linked to *{book}*, so I listed nothing. The owner links "
+            "it again in World App, then Cross lists it.",
+        steps=_LS, at=3, fail=True, on={"cross": "ls_arkiv", "circle": "home"},
     ),
     "ls_world_down": State(
         name="ls_world_down", mood="worried", kind="no", down="world",

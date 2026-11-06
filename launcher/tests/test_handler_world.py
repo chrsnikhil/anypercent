@@ -1249,12 +1249,14 @@ def test_the_binding_is_asked_with_every_health_and_kept():
     assert sponsors.console_state() is None                             # not heard from yet
     sponsors.work()                                                     # once at start
     assert bridge.console_gets() == [f"/console/{CONSOLE}"]
-    assert sponsors.console_state() == {"tag": "C-7QZP", "book": None, "state": "unbound", "credential": None}
+    assert sponsors.console_state() == {"tag": "C-7QZP", "book": None, "state": "unbound", "credential": None,
+                                        "wallet": None, "wallet_pending": False}     # an older bridge: no wallet
     bridge.console = {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb"}
     step(sponsors, clock, world.HEALTH_MS - 1)
     assert sponsors.console_state()["state"] == "unbound"               # not asked again yet
     step(sponsors, clock, 1)
-    assert sponsors.console_state() == {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb"}
+    assert sponsors.console_state() == {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb",
+                                        "wallet": None, "wallet_pending": False}
     bridge.console = {"tag": "C-7QZP", "book": None, "state": "released", "credential": None}
     step(sponsors, clock, world.HEALTH_MS)
     assert sponsors.console_state()["state"] == "released"
@@ -1278,6 +1280,8 @@ def test_nobody_looking_asks_no_binding():
     {"tag": "7QZP", "book": None, "state": "unbound", "credential": None},
     {"tag": "C-7QZP", "book": "any-6ps", "state": "bound", "credential": None},
     {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "x" * 80},
+    {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb", "wallet": "0x1a2b"},
+    {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb", "wallet_pending": "yes"},
     "not a dict",
 ])
 def test_a_binding_off_the_contract_is_never_taken(reply):
@@ -1335,3 +1339,75 @@ def test_id_taken_is_a_mock_outcome_only_under_the_mock(tmp_path):
     sponsors, clock, bridge = make_console()
     assert sponsors.outcomes("idkit_confirm") == []                     # never a live screen of its own
     assert mock.console_state() is None and mock.scouts is False and mock.chain_update() is None
+
+
+# ---- the console's own Arkiv wallet, reported with every binding read --------------------------------------------
+
+WALLET = "0x1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b9f3e"
+
+
+class Finder:
+    """arkiv_wallet.address as the launcher hands it over: answers what it is given, one answer a call."""
+
+    def __init__(self, *answers):
+        self.answers, self.calls = list(answers), 0
+
+    def __call__(self):
+        self.calls += 1
+        answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+def make_wallet(finder):
+    clock, bridge = FakeClock(), ConsoleBridge()
+    sponsors = WorldSponsors("http://bridge.test:8787", clock, transport=bridge, background=False, console=CONSOLE,
+                             wallet=finder)
+    return sponsors, clock, bridge
+
+
+def test_the_console_reports_its_wallet_with_every_binding_read_and_reads_back_what_was_linked():
+    finder = Finder(WALLET.upper().replace("0X", "0x"))
+    sponsors, clock, bridge = make_wallet(finder)
+    assert sponsors.arkiv_wallet is None and finder.calls == 0         # never on the frame's side
+    bridge.console = {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb", "wallet": None,
+                      "wallet_pending": True}
+    sponsors.work()
+    assert finder.calls == 1 and sponsors.arkiv_wallet == WALLET
+    assert bridge.console_gets() == [f"/console/{CONSOLE}?wallet={WALLET}"]
+    assert sponsors.console_state() == {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb",
+                                        "wallet": None, "wallet_pending": True}
+    bridge.console = dict(bridge.console, wallet=WALLET.upper().replace("0X", "0x"), wallet_pending=False)
+    step(sponsors, clock, world.HEALTH_MS)
+    assert bridge.console_gets()[-1] == f"/console/{CONSOLE}?wallet={WALLET}" and finder.calls == 1
+    assert (sponsors.console_state()["wallet"], sponsors.console_state()["wallet_pending"]) == (WALLET, False)
+
+
+def test_a_wallet_not_found_is_asked_again_later_and_never_a_crash(caplog):
+    finder = Finder(None, RuntimeError("signer broke"), "not an address", WALLET)
+    sponsors, clock, bridge = make_wallet(finder)
+    sponsors.work()
+    assert finder.calls == 1 and bridge.console_gets() == [f"/console/{CONSOLE}"]   # no wallet: the plain read
+    step(sponsors, clock, world.HEALTH_MS)
+    assert finder.calls == 1                                            # not before WALLET_RETRY_MS
+    for _ in range(3):
+        clock.ms += world.WALLET_RETRY_MS
+        step(sponsors, clock, world.HEALTH_MS)
+    assert finder.calls == 4 and sponsors.arkiv_wallet == WALLET
+    assert bridge.console_gets()[-1] == f"/console/{CONSOLE}?wallet={WALLET}"
+    assert sponsors.status()["world"] == "ok"
+
+
+def test_a_given_address_needs_no_finder_and_without_a_console_id_nothing_is_sent():
+    clock, bridge = FakeClock(), ConsoleBridge()
+    sponsors = WorldSponsors("http://bridge.test:8787", clock, transport=bridge, background=False, console=CONSOLE,
+                             wallet=WALLET)
+    sponsors.work()
+    assert sponsors.arkiv_wallet == WALLET and bridge.console_gets() == [f"/console/{CONSOLE}?wallet={WALLET}"]
+    finder = Finder(WALLET)
+    clock, bridge = FakeClock(), ConsoleBridge()
+    sponsors = WorldSponsors("http://bridge.test:8787", clock, transport=bridge, background=False,
+                             console="anypercent", wallet=finder)
+    sponsors.work()
+    assert finder.calls == 0 and bridge.console_gets() == []

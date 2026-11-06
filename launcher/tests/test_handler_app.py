@@ -1219,6 +1219,27 @@ def test_my_record_book_names_the_console_and_follows_a_release(tmp_path, monkey
     assert "No record book on this console" in drawn
 
 
+def test_my_record_book_shows_this_consoles_wallet_and_when_it_needs_a_new_link(tmp_path):
+    """The console's own Arkiv wallet (the sponsors' arkiv_wallet), short, on My record book; while the binding says
+    the wallet waits on a new World App link, the line says so (the card itself: test_handler_view)."""
+    app = bound_app(tmp_path, book="ANY-6PS")
+    app.sponsors.arkiv_wallet = "0x1A2B3C4d5e6F708192a3B4C5d6e7f8091a2b9f3e"
+    app.sponsors.binding = {"tag": "C-7QZP", "book": "ANY-6PS", "state": "bound", "credential": "Orb",
+                            "wallet": None, "wallet_pending": True}
+    app.frame(16, [A.Y])
+    flow = app.nav.handler
+    flow.pick(2)
+    app.handler.frame(16)
+    assert flow.state.name == "book_view"
+    assert (flow.ctx["console_wallet"], flow.ctx["wallet_note"]) == ("0x1a2b…9f3e", "needs a new link")
+    app.sponsors.binding = dict(app.sponsors.binding, wallet="0x1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b9f3e",
+                                wallet_pending=False)
+    app.handler.frame(16)
+    assert (flow.ctx["console_wallet"], flow.ctx["wallet_note"]) == ("0x1a2b…9f3e", "")
+    app.sponsors.arkiv_wallet = None                                    # none found (no Node): no wallet line
+    assert "console_wallet" not in app.handler._console_ctx()
+
+
 def test_with_world_mocked_there_is_no_console_line(tmp_path):
     app = make(tmp_path)
     app.frame(16, [A.Y])

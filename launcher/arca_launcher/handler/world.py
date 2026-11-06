@@ -13,7 +13,13 @@ past it, or with the request's failure at "done". A bridge that does not answer 
 
 One console, one person: the sign-up sends this console's id (handler/console_id.py), and with every /health the worker
 asks GET /console/{id}, the console's binding to a record book as the bridge holds it (console_state(); the glue makes
-the ledger follow it). The id goes nowhere else and is never logged: on screen the console is its tag."""
+the ledger follow it). The id goes nowhere else and is never logged: on screen the console is its tag.
+
+With Arkiv real the console has its own Arkiv wallet (handler/arkiv_wallet.py): the worker finds its address once
+(wallet: a function, since it may start Node) and reports it with every binding read, GET /console/{id}?wallet=0x...
+The bridge uses it only once a World App approval of the link names it; the binding then says which wallet the owner
+approved (wallet, or None) and whether this console's reported one is still waiting for such a link
+(wallet_pending). The address is public; the key never leaves the console."""
 import json
 import logging
 import platform
@@ -60,6 +66,8 @@ _NEEDS = {"idkit": "book", "agentpass": "jti"}
 _TAG = re.compile(r"C-[A-Z0-9]{3,8}")              # a console as the bridge tags it, the only way it is shown
 _CONSOLE_STATES = ("bound", "unbound", "released")
 CREDENTIAL_MAX = 32
+_WALLET = re.compile(r"0x[0-9a-f]{40}")
+WALLET_RETRY_MS = 60000       # this console's Arkiv wallet not found (no Node, no key): looked for again this often
 
 
 def http_transport(bridge_url):
@@ -149,8 +157,14 @@ class WorldSponsors:
     scouts = False  # PB's scout runs only with Hedera real (hedera.py)
     explorer_origin = None   # Arkiv's explorer, as /arkiv/config names it: the Arkiv adapter's
 
-    def __init__(self, bridge_url, clock_ms, names=SponsorNames(), *, transport=None, background=True, console=None):
+    def __init__(self, bridge_url, clock_ms, names=SponsorNames(), *, transport=None, background=True, console=None,
+                 wallet=None):
         self.names = names
+        # This console's Arkiv wallet (Arkiv real): its address, or a function that finds it (arkiv_wallet.address:
+        # only the worker calls it). None: no wallet to report.
+        self._wallet_of = wallet if callable(wallet) else None
+        self._wallet = _wallet(wallet)
+        self._wallet_due = 0
         self._clock_ms = clock_ms
         self._mock = MockSponsors(clock_ms, names)
         self._send = transport or http_transport(bridge_url)
@@ -184,10 +198,18 @@ class WorldSponsors:
         return self._console_id
 
     def console_state(self):
-        """The console's binding as the bridge last said it: {"tag", "book", "state", "credential"}, or None. Read every
-        frame by the glue: it never counts as someone looking (status() does)."""
+        """The console's binding as the bridge last said it: {"tag", "book", "state", "credential", "wallet",
+        "wallet_pending"} (wallet: the Arkiv wallet a World App approval linked, or None; wallet_pending: this console
+        reported another one, which needs a new link before its records are stamped), or None. Read every frame by the
+        glue: it never counts as someone looking (status() does)."""
         with self._lock:
             return dict(self._binding) if self._binding is not None else None
+
+    @property
+    def arkiv_wallet(self):
+        """This console's own Arkiv wallet address (lowercase), once the worker found it; None before or without."""
+        with self._lock:
+            return self._wallet
 
     def chain_update(self):
         """Hedera's late chain ids: the Hedera adapter's. Here there are none."""
@@ -287,13 +309,34 @@ class WorldSponsors:
                     said = reply.get("approvals")
                     self.approvals = said if said in ("idkit", "agentpass") else "agentpass"
             if isinstance(reply, dict) and self.console_id is not None:
+                self._find_wallet()
                 self._read_binding()
 
-    def _read_binding(self):
-        """GET /console/{id}: the console's binding. No answer, a 404 from an older bridge or a reply off the contract
-        leaves the last good one, and never puts World down (/health says that)."""
+    def _find_wallet(self):
+        """This console's Arkiv wallet, looked for once (again every WALLET_RETRY_MS while there is none: no Node, no
+        key). A finder that fails or answers something else is no wallet, never a crash."""
+        with self._lock:
+            due = self._wallet is None and self._wallet_of is not None and self._clock_ms() >= self._wallet_due
+        if not due:
+            return
         try:
-            reply = self._send("GET", f"/console/{_quote(self._console_id)}", None, ASK_TIMEOUT_S)
+            found = _wallet(self._wallet_of())
+        except Exception:
+            log.exception("this console's Arkiv wallet")
+            found = None
+        with self._lock:
+            self._wallet = found
+            self._wallet_due = self._clock_ms() + WALLET_RETRY_MS
+
+    def _read_binding(self):
+        """GET /console/{id} (?wallet=, this console's Arkiv wallet, when it has one): the console's binding. No answer,
+        a 404 from an older bridge or a reply off the contract leaves the last good one, and never puts World down
+        (/health says that)."""
+        with self._lock:
+            wallet = self._wallet
+        path = f"/console/{_quote(self._console_id)}" + (f"?wallet={wallet}" if wallet else "")
+        try:
+            reply = self._send("GET", path, None, ASK_TIMEOUT_S)
         except Exception:
             return
         binding = _binding(reply)
@@ -400,11 +443,14 @@ class WorldSponsors:
 
 
 def _binding(reply):
-    """GET /console/{id}'s reply as {"tag", "book", "state", "credential"}, or None when it is off the contract: a
-    bound console names its book, every book is a record book's id, the tag is a console tag."""
+    """GET /console/{id}'s reply as {"tag", "book", "state", "credential", "wallet", "wallet_pending"}, or None when it
+    is off the contract: a bound console names its book, every book is a record book's id, the tag is a console tag, a
+    wallet is an address (lowercased) and wallet_pending a bool. An older bridge says neither: no wallet, not
+    pending."""
     if not isinstance(reply, dict):
         return None
     tag, book, state, credential = (reply.get(k) for k in ("tag", "book", "state", "credential"))
+    wallet, pending = reply.get("wallet"), reply.get("wallet_pending", False)
     if not (isinstance(tag, str) and _TAG.fullmatch(tag) and state in _CONSOLE_STATES):
         return None
     if not (book is None or (isinstance(book, str) and BOOK.fullmatch(book))) or (state == "bound" and book is None):
@@ -412,7 +458,16 @@ def _binding(reply):
     if not (credential is None or (isinstance(credential, str) and 0 < len(credential) <= CREDENTIAL_MAX
                                    and credential.isprintable())):
         return None
-    return {"tag": tag, "book": book, "state": state, "credential": credential}
+    if not ((wallet is None or _wallet(wallet) is not None) and isinstance(pending, bool)):
+        return None
+    return {"tag": tag, "book": book, "state": state, "credential": credential, "wallet": _wallet(wallet),
+            "wallet_pending": pending}
+
+
+def _wallet(value):
+    """An Arkiv wallet address, lowercase, or None when value is not one (0x and 40 hex digits)."""
+    low = value.lower() if isinstance(value, str) else ""
+    return low if _WALLET.fullmatch(low) else None
 
 
 def _title(payload):

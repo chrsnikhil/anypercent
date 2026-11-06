@@ -14,7 +14,8 @@ ghost: every guard runs on the purchase as before. Any scout failure but a refus
 board's own target, saying the scout did not answer.
 
 Every finished step keeps its chain ids in ctx["chain"] ([{label, value, url}], ctx["chain_i"]
-the one whose QR shows): the HCS record, the Arkiv rows, the payment with its INTENT and
+the one whose QR shows): the HCS record, the Arkiv rows (a listing's: its run and listing, the
+transaction this console's own wallet signed and the checker's stamp), the payment with its INTENT and
 RECEIPT, and last the run's replay (the checker's for a listing, this console's for a bought
 ghost; never the mock's). A url is kept only on HashScan's testnet or the Arkiv explorer the
 service names. Triangle on a chain card opens the chosen row's link (OpenLink, for the app).
@@ -24,7 +25,7 @@ draws, starting on YOU's; it follows the runner it is on (ctx["board_pick"]) thr
 only toggle or a new read, back on YOU's row when that runner is not shown. Triangle there opens
 run_links, a chain card of that run's records: its run and listing on Arkiv, its listing's
 LISTING message and payout account on HashScan, and the checker's replay (every time on the board
-is the one the checker's replay gave before it wrote the row). Cross and Circle go back to the
+is the one the checker's replay gave before it stamped the run). Cross and Circle go back to the
 board with its cursor where it was.
 
 A chain card can come back after the browser took the screen (handler_glue.py): restore() before
@@ -92,8 +93,10 @@ _SCOUT_KEYS = ("scout_id", "scout_reason", "scout_by", "scout_model", "scout_not
                "scout_lap", "you_time")
 # The chain card's screens: Up and Down pick a row's QR. run_links: a board run's records (Triangle on the board).
 CHAIN_STATES = ("ls_done", "buy_done", "buy_late", "run_links")
-REPLAYED_CHECKER = "Replayed by the checker"   # a listing's last chain row: the checker's replay before it wrote
+REPLAYED_CHECKER = "Replayed by the checker"   # a listing's last chain row: the checker's replay before it stamped
 REPLAYED_HERE = "Replayed on this console"     # a purchase's: this console's replay of the ghost it loaded
+SIGNED_HERE = "Signed by this console"         # a listing's: the transaction this console's own wallet sent
+STAMPED = "Stamped by the checker"             # and the checker's stamp of the run, linked to its transaction
 HASHSCAN = "https://hashscan.io/testnet/"
 LINK_MAX = 300
 GROQ = "Groq"                  # where the scout's model runs, as its by-line says
@@ -607,14 +610,22 @@ class Flow:
         self.ctx["chain_i"] = 0
 
     def _chain_publish(self, data):
-        """The Arkiv rows: the listing's entity key and the write's transaction, each with its explorer link; then,
-        when the service replayed the run for this listing, the checker's replay ("1:42.83 = 6170 frames · end
-        225d59fd": its time and the game's final hash), linked to the run."""
+        """The Arkiv rows: the run's and the listing's entity keys, the transaction this console's own wallet signed
+        ("Signed by this console", "tx 0x5c1d…9e02") and the checker's stamp of the run ("Stamped by the checker",
+        "0x7e3a…01b2 · tx 0x44d0…aa19", linked to the stamp's transaction), each with its explorer link; then, when
+        the service replayed the run for this listing, the checker's replay ("1:42.83 = 6170 frames · end 225d59fd":
+        its time and the game's final hash), linked to the run."""
         if self.sponsors.mocked("board"):
             return
         board, links = self.sponsors.names.board, data.get("explorer") or {}
-        rows = [self._row(f"{board} {name}", _short(data[key]), links.get(key))
-                for name, key in (("listing", "listing"), ("tx", "tx")) if isinstance(data.get(key), str)]
+        rows = [self._row(f"{board} {name}", _short(data[name]), links.get(name))
+                for name in ("run", "listing") if isinstance(data.get(name), str)]
+        if isinstance(data.get("tx"), str):
+            rows.append(self._row(SIGNED_HERE, "tx " + _short(data["tx"]), links.get("tx")))
+        if isinstance(data.get("stamp"), str):
+            stamp_tx = data.get("stamp_tx")
+            value = _short(data["stamp"]) + (f" \u00b7 tx {_short(stamp_tx)}" if isinstance(stamp_tx, str) else "")
+            rows.append(self._row(STAMPED, value, links.get("stamp_tx") or links.get("stamp")))
         replay = data.get("replay")
         if isinstance(replay, dict) and _frames(replay.get("frames")):
             frames, end = replay["frames"], replay.get("final_hash")
@@ -686,8 +697,9 @@ class Flow:
     def _run_rows(self, row):
         """A board run's records, each only when the row has it: its run and its listing on Arkiv (their explorer
         pages, built by the Arkiv adapter from /arkiv/config: entity_link), the listing's LISTING message on Hedera
-        (hcs "<topic>/<seq>": the topic on HashScan; a BOT run's is its batch's HOUSE message), the checker's replay (the run's time is the one it gave before
-        it wrote the row: linked to the run) and the account the listing pays (on HashScan)."""
+        (hcs "<topic>/<seq>": the topic on HashScan; a BOT run's is its batch's HOUSE message), the checker's replay
+        (the run's time is the one it gave before it stamped the run: linked to the run) and the account the listing
+        pays (on HashScan)."""
         names = self.sponsors.names
         link = getattr(self.sponsors, "entity_link", None) or (lambda key: None)
         run = link(row.key)

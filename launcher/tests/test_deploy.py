@@ -56,3 +56,13 @@ def test_changed_units_come_from_apply_sh():
     assert dp.changed_units(out) == ["anypercent-homekey.service", "anypercent-launcher.service"]
     assert dp.changed_units("changed: \n") == []
     assert dp.changed_units("") == []
+
+
+def test_the_console_signer_is_sent_without_its_npm_packages():
+    """launcher/arkiv_signer goes to the Pi as source and lockfile; apply.sh installs its packages there (npm ci), so
+    the laptop's node_modules (an x86 tree of ~74 MB) is never sent."""
+    names = {n for _, n in dp.files(REPO)}
+    for name in ("signer.mjs", "schemas.mjs", "package.json", "package-lock.json"):
+        assert "launcher/arkiv_signer/" + name in names
+    assert not any("node_modules" in n.split("/") for n in names)
+    assert "node_modules" in dp.SKIP_DIRS

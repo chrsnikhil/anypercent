@@ -875,8 +875,9 @@ def apps():
 
 def hedera_app(apps, tmp_path, book="ANY-6PS", hedera_real=True):
     """The real App (test_handler_app's library, fake bridge and runner) on HederaSponsors over the chain's stubs. The
-    board from a 6290 best: K2P 6000 (not listed), TEAM 6150 (open tier), 4HJ 6180 (listed with an account), 2KD 6200
-    (listed with none), the console's own ANY-6PS 6350 (listed with SELLER), 9MX 6400 (listed with an account)."""
+    board from a 6290 best: K2P 6000 (not listed), BOT-T1 6150 (the house's, not listed), 4HJ 6180 (listed with an
+    account), 2KD 6200 (listed with none), the console's own ANY-6PS 6350 (listed with SELLER), 9MX 6400 (listed with
+    an account)."""
     from arca_launcher.app import App, Config
     from arca_launcher.handler import ledger as L
     from test_app import FakeHw, FakeRunner
@@ -891,7 +892,7 @@ def hedera_app(apps, tmp_path, book="ANY-6PS", hedera_real=True):
     bridge.runs_dir = runs
     rig = Rig(tmp_path / "chain", runs_dir=runs)
     rig.node.run("ANY-K2P", 6000)
-    rig.node.run("TEAM", 6150, book=False, plain=True)
+    rig.node.run("BOT-T1", 6150, book=False)
     rig.node.run("ANY-4HJ", 6180, listed=True, pay_to="0.0.6007788")
     rig.node.run("ANY-2KD", 6200, listed=True)
     rig.node.run("ANY-6PS", 6350, listed=True, pay_to=SELLER)

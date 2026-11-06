@@ -30,7 +30,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import coach, settings
-from .handler import board, ledger
+from .handler import arkiv_wallet, board, ledger
 from .handler.board import ordinal
 from .handler.flow import CHAIN_STATES, CloseHandler, Flow
 from .model import Screen
@@ -244,14 +244,22 @@ class HandlerGlue:
             flow.refresh()
 
     def _console_ctx(self):
-        """The console's tag and what it is linked to, for "My record book" (nothing while World is mocked)."""
+        """The console's tag and what it is linked to, for "My record book" (nothing while World is mocked), and its
+        own Arkiv wallet in short form (console_wallet, "0x1a2b…9f3e", once found; wallet_note when a linked console's
+        wallet still needs a new link: its records are not stamped until then)."""
+        out = {}
+        wallet = arkiv_wallet.short(getattr(self.app.sponsors, "arkiv_wallet", None))
+        if wallet is not None:
+            out["console_wallet"] = wallet
         binding = self._binding_now()
         if binding is None:
-            return {}
+            return out
         state = binding.get("state")
         line = (f"linked to {binding.get('book')}" if state == "bound" else "released" if state == "released"
                 else "not linked yet")
-        return {"console_tag": binding.get("tag") or "", "console_line": line}
+        out.update(console_tag=binding.get("tag") or "", console_line=line,
+                   wallet_note="needs a new link" if state == "bound" and binding.get("wallet_pending") else "")
+        return out
 
     # ---- the context ------------------------------------------------------------------------------------------------
     def _context(self, game):

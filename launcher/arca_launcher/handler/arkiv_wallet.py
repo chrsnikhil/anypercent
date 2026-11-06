@@ -152,3 +152,10 @@ def address(state_dir, signer) -> "str | None":
         _logged.add(found)
         log.info("arkiv wallet %s", found)
     return found
+
+
+def short(address) -> "str | None":
+    """A wallet address as the console shows it, "0x1a2b…9f3e" (0x, its first 4 hex digits, an ellipsis, its
+    last 4), as the bridge's link text names it; None for anything that is not an address."""
+    low = address.lower() if isinstance(address, str) else ""
+    return low[:6] + "\u2026" + low[-4:] if _ADDRESS.fullmatch(low) else None

@@ -33,8 +33,9 @@ STEPS = ("status", "idkit_scan", "idkit_confirm", "idkit_verify", "check_listing
          "approve_scan", "approve", "record", "publish", "sales", "scout")
 
 # Real-adapter timeouts the flow engine enforces (Global Constraints). Phone steps have none
-# here: their deadline is the QR's own expiry, carried on Call.info["expires_s"].
-TIMEOUT_MS = {"idkit_verify": 10000, "pay": 8000, "record": 8000, "publish": 8000,
+# here: their deadline is the QR's own expiry, carried on Call.info["expires_s"]. publish has room for the
+# console's own signer (Node's start, its transaction and receipt: arkiv.SIGN_TIMEOUT_S) and the checker's stamp.
+TIMEOUT_MS = {"idkit_verify": 10000, "pay": 8000, "record": 8000, "publish": 120000,
               "check_listing": 8000, "load_ghost": 8000, "scout": 12000}
 
 
@@ -112,8 +113,9 @@ class Sponsors(Protocol):
     explorer_origin: str | None   # Arkiv's explorer (https://host) as the service names it: its links may be drawn
 
     def console_state(self) -> dict | None:
-        """This console's binding as World's bridge last said it: {"tag", "book", "state", "credential"} (state
-        "bound" | "unbound" | "released"); None while mocked or never answered."""
+        """This console's binding as World's bridge last said it: {"tag", "book", "state", "credential", "wallet",
+        "wallet_pending"} (state "bound" | "unbound" | "released"; wallet the Arkiv wallet a World App approval linked,
+        wallet_pending this console's own one waits on a new link); None while mocked or never answered."""
         ...
 
     def chain_update(self) -> dict | None:

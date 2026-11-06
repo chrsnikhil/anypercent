@@ -1402,10 +1402,14 @@ class ChainSponsors(HederaRealSponsors):
                                                              "1793929992-000000001"})
         elif step == "publish":
             tx, run, listing = "0x5c1d" + "00" * 28 + "9e02", "0x" + "12" * 32, "0x23bf" + "00" * 28 + "af44"
-            call._result = Result(ok=True, data={"run": run, "listing": listing, "tx": tx, "explorer": {
+            stamp, stamp_tx = "0x7e3a" + "00" * 28 + "01b2", "0x44d0" + "00" * 28 + "aa19"
+            call._result = Result(ok=True, data={"run": run, "listing": listing, "tx": tx, "stamp": stamp,
+                                                 "stamp_tx": stamp_tx, "explorer": {
                 "tx": "https://rabdi.explorer.arkiv.network/tx/" + tx,
                 "listing": "https://rabdi.explorer.arkiv.network/entity/" + listing,
-                "run": "https://evil.example/entity/" + run}})
+                "run": "https://evil.example/entity/" + run,
+                "stamp": "https://rabdi.explorer.arkiv.network/entity/" + stamp,
+                "stamp_tx": "https://rabdi.explorer.arkiv.network/tx/" + stamp_tx}})
         return call
 
     def chain_update(self):
@@ -1451,6 +1455,8 @@ def test_a_paid_ghost_shows_intent_payment_and_receipt_and_the_receipt_fills_in(
 
 
 def test_a_listing_shows_its_hcs_record_and_its_arkiv_rows(tmp_path):
+    """After "Listed": the HCS record, then the run and the listing on Arkiv, the transaction this console's own
+    wallet signed, and the checker's stamp linked to its transaction."""
     rig = Rig(tmp_path, sponsors=ChainSponsors, run_frames=6100)
     rig.flow._jti = "3f9c0a1b2c3d4e5f"
     rig.flow.start("ls_record")
@@ -1462,10 +1468,13 @@ def test_a_listing_shows_its_hcs_record_and_its_arkiv_rows(tmp_path):
     assert rig.flow.ctx["chain"] == [
         {"label": "Hedera LISTING #41", "value": "topic 0.0.11332437 · tx 0.0.6421420@1793929992",
          "url": "https://hashscan.io/testnet/transaction/0.0.6421420-1793929992-000000001"},
+        {"label": "Arkiv run", "value": "0x1212…1212", "url": None},          # a link off the explorer: not drawn
         {"label": "Arkiv listing", "value": "0x23bf…af44",
          "url": "https://rabdi.explorer.arkiv.network/entity/0x23bf" + "00" * 28 + "af44"},
-        {"label": "Arkiv tx", "value": "0x5c1d…9e02",
-         "url": "https://rabdi.explorer.arkiv.network/tx/0x5c1d" + "00" * 28 + "9e02"}]
+        {"label": "Signed by this console", "value": "tx 0x5c1d…9e02",
+         "url": "https://rabdi.explorer.arkiv.network/tx/0x5c1d" + "00" * 28 + "9e02"},
+        {"label": "Stamped by the checker", "value": "0x7e3a…01b2 · tx 0x44d0…aa19",
+         "url": "https://rabdi.explorer.arkiv.network/tx/0x44d0" + "00" * 28 + "aa19"}]
     rig.flow.start("ls_scan")
     assert rig.flow.ctx["chain"] == []
 
@@ -1476,8 +1485,9 @@ def test_only_explorer_links_on_the_allowed_origins_are_kept(tmp_path):
     rig = Rig(tmp_path, sponsors=Elsewhere, run_frames=6100)
     rig.flow.start("ls_arkiv")
     rig.wait(16)
-    assert [row["url"] for row in rig.flow.ctx["chain"]] == [None, None]
-    assert [row["label"] for row in rig.flow.ctx["chain"]] == ["Arkiv listing", "Arkiv tx"]
+    assert [row["url"] for row in rig.flow.ctx["chain"]] == [None, None, None, None]
+    assert [row["label"] for row in rig.flow.ctx["chain"]] == ["Arkiv run", "Arkiv listing", "Signed by this console",
+                                                                "Stamped by the checker"]
     rig = Rig(tmp_path / "links", sponsors=ChainSponsors)
     for url, ok in (("https://hashscan.io/testnet/transaction/x", True), ("https://hashscan.io/mainnet/x", False),
                     ("https://rabdi.explorer.arkiv.network/tx/0x1", True),
@@ -1648,7 +1658,8 @@ def test_a_listing_ends_with_the_checkers_replay(tmp_path):
     rig = _listed(tmp_path)
     assert rig.flow.ctx["chain"][-1] == {"label": "Replayed by the checker",
                                          "value": "1:42.83 = 6170 frames · end 225d59fd", "url": ARKIV_RUN}
-    assert [row["label"] for row in rig.flow.ctx["chain"]] == ["Hedera LISTING #41", "Arkiv listing", "Arkiv tx",
+    assert [row["label"] for row in rig.flow.ctx["chain"]] == ["Hedera LISTING #41", "Arkiv run", "Arkiv listing",
+                                                                "Signed by this console", "Stamped by the checker",
                                                                 "Replayed by the checker"]
 
     class Elsewhere(ReplaySponsors):

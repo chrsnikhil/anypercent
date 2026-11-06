@@ -59,7 +59,8 @@ def make_sponsors(cfg, replay=None, games=None):
     through the same bridge). Hedera asked for without both stays mocked, and the log says why. Neither: every sponsor
     mocked. replay(arcade_id, log_path) times a log with the game's replay tool; games are the arcade ids whose boards
     are read at start. World is told this console's id (handler/console_id.py: a random id kept beside the --state
-    file, so two windows with two --state directories are two consoles)."""
+    file, so two windows with two --state directories are two consoles) and, with Arkiv real, its own Arkiv wallet
+    (handler/arkiv_wallet.py: its key made beside the id, its address found by World's worker, never on the frame)."""
     def clock_ms():
         return int(time.monotonic() * 1000)
     if cfg.hedera and not (cfg.world_bridge and cfg.arkiv_checker):
@@ -70,7 +71,14 @@ def make_sponsors(cfg, replay=None, games=None):
         from .handler import console_id
         from .handler.world import WorldSponsors
         state_dir = os.path.dirname(cfg.state_path) or "."   # beside handler.json: the ledger and the console go together
-        world = WorldSponsors(cfg.world_bridge, clock_ms, console=console_id.load_or_create(state_dir))
+        wallet = None
+        if cfg.arkiv_checker:
+            from .handler import arkiv_wallet
+            from .handler.arkiv_sign import Signer
+
+            def wallet():
+                return arkiv_wallet.address(state_dir, Signer())
+        world = WorldSponsors(cfg.world_bridge, clock_ms, console=console_id.load_or_create(state_dir), wallet=wallet)
         if not cfg.arkiv_checker:
             return world
         from .handler.arkiv import ARCADE_GAMES, ArkivSponsors
