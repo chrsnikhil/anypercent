@@ -53,6 +53,8 @@ Written only after the checker replayed the run's log with the game's own replay
 | `seller` | str | yes | The seller's runner id |
 | `book` | str | yes | The seller's record book |
 | `human` | bool | yes | Copied |
+| `pay_to` | str, optional | yes | The seller's Hedera account, `0.0.N`, exactly as World App showed it in the approved listing text ("... for 0.10 USDC to 0.0.N on the public board"). Absent: not for sale |
+| `hcs` | str, optional | no | `<topic id>/<sequence number>` of the `LISTING` message on the Hedera market topic: the approved text, word for word, at consensus time. Absent when Hedera was off |
 
 - **Flags:** `readonly: true`, `permissionlessExtension: false`. A listing never outlives its week.
 - **Expiry:** 7 days (`ExpirationTime.fromDays(7)`), the console's "Ends in 7 days".
@@ -60,6 +62,15 @@ Written only after the checker replayed the run's log with the game's own replay
 
 The run and its listing are written in one transaction: `predictEntityKeys` gives the run's key before it exists, so
 the listing can carry it.
+
+**Who sets `pay_to` and `hcs`.** The owner registers a book's Hedera account once (`npm run hedera:payto`, which checks on
+the Hedera mirror node that the account can take USDC). From then on the console's listing text names it, so the seller
+sees it in World App when approving. The checker writes `pay_to` only when the approved text names exactly the book's
+registered account, and `hcs` when the record step put that text on the Hedera market topic. Both are optional: rows
+written before them still fit the schema, and are on the board but not for sale until relisted. A relist whose `pay_to`
+differs from the run's live listing writes the new listing and deletes the old one in the same transaction, so a run has
+one listing. A buyer's agent pays only the `pay_to` of a listing row the checker created, never an account named
+anywhere else (see the root README, Hedera).
 
 ## Who can do what
 
@@ -99,11 +110,11 @@ A board never selects `log` or `log_enc`; only a single ghost read does.
 | # | Query | Used by |
 |---|---|---|
 | Q1 | `arkiv.schema = str('anypercent.run') AND game = str('MDGP') AND season = i32(S) AND $creator = addr(C) ORDER BY frames:u64 ASC` | The console's board, the web board |
-| Q2 | `arkiv.schema = str('anypercent.listing') AND game = str('MDGP') AND season = i32(S) AND $creator = addr(C) ORDER BY frames:u64 ASC` | Which runs are listed, and their price |
+| Q2 | `arkiv.schema = str('anypercent.listing') AND game = str('MDGP') AND season = i32(S) AND $creator = addr(C) ORDER BY frames:u64 ASC` | Which runs are listed, their price and `pay_to` (for sale only with one) |
 | Q3 | `arkiv.schema = str('anypercent.listing') AND game = str('MDGP') AND season = i32(S) AND frames < u64(6290) AND $creator = addr(C) ORDER BY frames:u64 DESC` (limit 1) | The listed ghost just ahead of 1:44.83 |
 | Q4 | `arkiv.schema = str('anypercent.run') AND book = str('ANY-6PS') AND $creator = addr(C) ORDER BY frames:u64 ASC` | A record book's profile: its runs, times, HUMAN and credential |
 | Q5 | `arkiv.schema = str('anypercent.listing') AND book = str('ANY-6PS') AND $creator = addr(C) ORDER BY $expiresAt:u64 ASC` | The profile's listed ghosts, soonest to end first |
-| Q6 | `arkiv.schema = str('anypercent.listing') AND $key = key(0x...) AND $creator = addr(C)`, and the same on `anypercent.run` | The console's listing check before a purchase; an open-tier ghost (select `log`) |
+| Q6 | `arkiv.schema = str('anypercent.listing') AND $key = key(0x...) AND $creator = addr(C)`, and the same on `anypercent.run` | The console's listing check before a purchase (selects `pay_to`); the x402 paywall and PB's guards (select `pay_to` and `hcs`); an open-tier ghost (select `log`) |
 | Q7 | `arkiv.schema = str('anypercent.run') AND log_h = str('<64 hex>') AND $creator = addr(C)` (limit 1) | The checker's dedupe before a write |
 | Q8 | Q1 without `$creator` (select `creator`) | The look-alike demo |
 | Q9 | `arkiv.schema = str('anypercent.run') AND game = str('MDGP') AND season = i32(S) AND human = true AND $creator = addr(C) ORDER BY frames:u64 ASC` | The web board's "HUMAN only" filter |

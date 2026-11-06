@@ -17,6 +17,10 @@
 /arkiv/*
 !/arkiv/*.md
 !/arkiv/snapshot.json
+# The Hedera track's files: its notes only (transaction ids and links; never keys or .env values).
+!/hedera/
+/hedera/*
+!/hedera/*.md
 
 # 2. In the games and the arcade kit: source code and build files only (no art, sound, ROMs or generated frames).
 /arcade/**
