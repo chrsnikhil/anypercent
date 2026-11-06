@@ -1,0 +1,965 @@
+<title>Enclosure — STL Viewer</title>
+
+<style>
+  :root {
+    --mask: #0C1317; --mask-2: #121E24; --mask-3: #1A2A32;
+    --silk: #E9EBE6; --silk-dim: #8FA0A6;
+    --gold: #C79A3A; --gold-soft: #8A6C29;
+    --rule: #223138; --stage-bg: #0F191E;
+    --f-display: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --f-mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+    --step--1: 0.75rem; --step-0: 0.95rem; --step-2: clamp(1.5rem, 5.5vw, 2.3rem);
+    --gap: clamp(1rem, 4vw, 1.75rem); --max: 52rem;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --mask: #F2F1EC; --mask-2: #E7E7E1; --mask-3: #DADAD2;
+      --silk: #141F25; --silk-dim: #5A6A70;
+      --gold: #8A6614; --gold-soft: #B79544;
+      --rule: #D0D0C7; --stage-bg: #E4E4DD;
+    }
+  }
+  :root[data-theme="light"] {
+    --mask: #F2F1EC; --mask-2: #E7E7E1; --mask-3: #DADAD2;
+    --silk: #141F25; --silk-dim: #5A6A70;
+    --gold: #8A6614; --gold-soft: #B79544;
+    --rule: #D0D0C7; --stage-bg: #E4E4DD;
+  }
+  :root[data-theme="dark"] {
+    --mask: #0C1317; --mask-2: #121E24; --mask-3: #1A2A32;
+    --silk: #E9EBE6; --silk-dim: #8FA0A6;
+    --gold: #C79A3A; --gold-soft: #8A6C29;
+    --rule: #223138; --stage-bg: #0F191E;
+  }
+
+  body {
+    background: var(--mask); color: var(--silk);
+    font-family: var(--f-display); font-size: var(--step-0);
+    line-height: 1.6; -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: var(--max); margin: 0 auto;
+    padding: clamp(1.5rem, 6vw, 3rem) var(--gap) 4rem;
+    display: flex; flex-direction: column; gap: clamp(1.5rem, 5vw, 2.25rem);
+  }
+  .label {
+    font-family: var(--f-mono); font-size: var(--step--1);
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold);
+  }
+  header { display: flex; flex-direction: column; gap: 0.5rem; }
+  h1 { font-size: var(--step-2); line-height: 1.1; font-weight: 600; letter-spacing: -0.02em; margin: 0; text-wrap: balance; }
+  .sub { color: var(--silk-dim); max-width: 36rem; }
+
+  .stage {
+    position: relative; aspect-ratio: 4 / 3;
+    background: var(--stage-bg);
+    border: 1px solid var(--rule); border-radius: 3px;
+    overflow: hidden; touch-action: none; cursor: grab;
+  }
+  .stage:active { cursor: grabbing; }
+  .stage canvas { display: block; width: 100%; height: 100%; }
+
+  .hud {
+    position: absolute; left: 14px; bottom: 12px;
+    font-family: var(--f-mono); font-size: var(--step--1);
+    font-variant-numeric: tabular-nums; letter-spacing: 0.06em;
+    color: var(--silk-dim); pointer-events: none; line-height: 1.7;
+  }
+  .hud b { color: var(--gold); font-weight: 600; }
+  .hint {
+    position: absolute; right: 14px; bottom: 12px;
+    font-family: var(--f-mono); font-size: var(--step--1);
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--silk-dim);
+    pointer-events: none; transition: opacity 0.4s ease;
+  }
+  .hint.gone { opacity: 0; }
+  .msg {
+    position: absolute; inset: 0; display: grid; place-content: center;
+    gap: 0.6rem; text-align: center; padding: 2rem;
+    background: var(--stage-bg); color: var(--silk-dim);
+    font-family: var(--f-mono); font-size: var(--step--1);
+    letter-spacing: 0.1em; text-transform: uppercase;
+    transition: opacity 0.3s ease; z-index: 2;
+  }
+  .msg.gone { opacity: 0; pointer-events: none; }
+
+  .parts, .panelpick { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .parts button, .panelpick button {
+    padding: 0.55rem 0.85rem;
+    background: var(--mask-2); color: var(--silk-dim);
+    border: 1px solid var(--rule); border-radius: 3px;
+    font-family: var(--f-mono); font-size: var(--step--1);
+    letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer;
+    transition: color 0.2s, border-color 0.2s, background 0.2s;
+  }
+  .parts button:hover, .panelpick button:hover { color: var(--silk); }
+  .parts button[aria-pressed="true"], .panelpick button[aria-pressed="true"] {
+    color: var(--silk); border-color: var(--gold); background: var(--mask-3);
+  }
+  .parts button.assembly { border-color: var(--gold-soft); color: var(--silk); }
+
+  /* Rear panel switcher: assembled view only. Only one panel is ever fitted. */
+  .panelpick { display: none; align-items: center; }
+  .panelpick.on { display: flex; }
+  .panelpick .label { margin-right: 0.35rem; }
+  .panelpick button { display: flex; align-items: center; gap: 0.5rem; }
+  .panelpick .chip {
+    width: 14px; height: 14px; border-radius: 2px; flex: none;
+    background: var(--c); box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.45);
+  }
+
+  .tools { display: flex; gap: 1.25rem; flex-wrap: wrap; align-items: center; }
+  .tools label, .tools .btn {
+    display: flex; align-items: center; gap: 0.45rem;
+    font-family: var(--f-mono); font-size: var(--step--1);
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--silk-dim);
+    cursor: pointer; background: none; border: 0; padding: 0;
+  }
+  .tools .btn { color: var(--gold); }
+  .tools input[type="checkbox"] { accent-color: var(--gold); }
+  .tools input[type="range"] { accent-color: var(--gold); width: 8rem; }
+  #explodeWrap { display: none; }
+  #explodeWrap.on { display: flex; }
+  .tools input#explode { width: 14rem; }
+
+  /* Step-by-step assembly */
+  .steps { display: none; flex-direction: column; gap: 0.8rem; }
+  .steps.on { display: flex; }
+  .stephead { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+  .checksum { font-family: var(--f-mono); font-size: var(--step--1); letter-spacing: 0.06em; color: var(--silk-dim); }
+  .checksum b.ok { color: #5FB37A; } .checksum b.bad { color: #E4572E; }
+  .stepbar { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .stepbar button {
+    padding: 0.55rem 0.9rem; background: var(--mask-2); color: var(--silk);
+    border: 1px solid var(--rule); border-radius: 3px; cursor: pointer;
+    font-family: var(--f-mono); font-size: var(--step--1); letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .stepbar button:hover { border-color: var(--gold-soft); }
+  .stepbar button.primary { border-color: var(--gold); background: var(--mask-3); }
+  .stepbar button:disabled { opacity: 0.4; cursor: default; }
+  .stepcard {
+    border: 1px solid var(--rule); border-left: 3px solid var(--gold); border-radius: 3px;
+    padding: 0.9rem 1rem; background: var(--mask-2); display: none; flex-direction: column; gap: 0.45rem;
+  }
+  .stepcard.on { display: flex; }
+  .stepcard h2 { margin: 0; font-size: 1.1rem; font-weight: 600; letter-spacing: -0.01em; }
+  .stepcard h2 small { font-family: var(--f-mono); font-size: var(--step--1); color: var(--gold); letter-spacing: 0.1em; margin-right: 0.6rem; }
+  .stepcard p { margin: 0; }
+  .stepcard .hw { font-family: var(--f-mono); font-size: var(--step--1); color: var(--silk-dim); }
+  .stepcard .chk { font-family: var(--f-mono); font-size: var(--step--1); }
+  .stepcard .chk.ok { color: #5FB37A; } .stepcard .chk.bad { color: #E4572E; }
+  .stepcard .chk li { margin: 0.15rem 0; }
+  .steplist { margin: 0; padding-left: 1.6rem; display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 0.2rem 1.2rem; }
+  .steplist li { font-family: var(--f-mono); font-size: var(--step--1); color: var(--silk-dim); cursor: pointer; }
+  .steplist li:hover { color: var(--silk); }
+  .steplist li.cur { color: var(--gold); }
+  .steplist li.done { color: var(--silk); }
+  .steplist li .mk { margin-left: 0.4rem; }
+  .steplist li .mk.ok { color: #5FB37A; } .steplist li .mk.bad { color: #E4572E; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 0.35rem 1.1rem; }
+  .legend span {
+    display: flex; align-items: center; gap: 0.45rem;
+    font-family: var(--f-mono); font-size: var(--step--1);
+    letter-spacing: 0.06em; color: var(--silk-dim);
+  }
+  .legend i {
+    width: 10px; height: 10px; border-radius: 2px; background: var(--c); flex: none;
+    box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.45);
+  }
+
+  dl {
+    margin: 0; display: grid; grid-template-columns: auto 1fr;
+    gap: 0.35rem 1.25rem;
+    font-family: var(--f-mono); font-size: var(--step--1);
+    font-variant-numeric: tabular-nums;
+  }
+  dt { color: var(--silk-dim); letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+  dd { margin: 0; }
+  dd.warn { color: var(--gold); }
+
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 0; }
+  footer {
+    font-family: var(--f-mono); font-size: var(--step--1);
+    letter-spacing: 0.06em; color: var(--silk-dim); line-height: 1.8;
+  }
+  :focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+  @media (prefers-reduced-motion: reduce) { * { transition-duration: 0.01ms !important; } }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <span class="label">Printable enclosure</span>
+    <h1>STL viewer</h1>
+    <p class="sub">Every printed part straight from the exported geometry, and the assembled device with real models of every bought part. Step through the assembly in order, or explode it. Drag to orbit, scroll or pinch to zoom.</p>
+  </header>
+
+  <div class="stage" id="stage">
+    <canvas id="gl"></canvas>
+    <div class="hud" id="hud"></div>
+    <div class="hint" id="hint">Drag to orbit</div>
+    <div class="msg" id="msg">Loading geometry</div>
+  </div>
+
+  <div class="parts" id="parts" role="group" aria-label="Part"></div>
+
+  <div class="panelpick" id="panelPick" role="group" aria-label="Rear panel fitted">
+    <span class="label">Rear panel</span>
+  </div>
+
+  <div class="tools">
+    <label id="explodeWrap">Explode <input type="range" id="explode" min="0" max="100" value="0"></label>
+    <label><input type="checkbox" id="wire"> Wireframe</label>
+    <label><input type="checkbox" id="spin" checked> Auto-rotate</label>
+    <button type="button" class="btn" id="reset">Reset view</button>
+  </div>
+
+  <section class="steps" id="stepsBox" aria-label="Step-by-step assembly">
+    <div class="stephead">
+      <span class="label">Step-by-step assembly</span>
+      <span class="checksum" id="checkSum"></span>
+    </div>
+    <div class="stepbar">
+      <button type="button" id="stepStart" class="primary">Start assembly</button>
+      <button type="button" id="stepPrev">&larr; Prev</button>
+      <button type="button" id="stepPlay">Replay step</button>
+      <button type="button" id="stepNext">Next &rarr;</button>
+      <button type="button" id="stepExit">Show finished device</button>
+    </div>
+    <div class="stepcard" id="stepCard"></div>
+    <ol class="steplist" id="stepList"></ol>
+  </section>
+
+  <div class="legend" id="legend"></div>
+
+  <hr>
+
+  <section>
+    <span class="label">Part data</span>
+    <dl id="stats"></dl>
+  </section>
+
+  <hr>
+
+  <footer>
+    Geometry is the exported STL, not a render proxy. Dimensions in millimetres.<br>
+    Check the CAD readme for which dimensions are measured and which are assumed.
+  </footer>
+
+</div>
+
+<script>
+var PARTS = /*<!--PARTS_DATA-->*/ [];
+var STEPS = /*<!--STEPS_DATA-->*/ null;
+var REPORT = /*<!--REPORT_DATA-->*/ null;
+
+(function () {
+  var stage = document.getElementById('stage');
+  var canvas = document.getElementById('gl');
+  var msg = document.getElementById('msg');
+  var hud = document.getElementById('hud');
+  var hint = document.getElementById('hint');
+  var partsEl = document.getElementById('parts');
+  var panelPick = document.getElementById('panelPick');
+  var statsEl = document.getElementById('stats');
+  var legendEl = document.getElementById('legend');
+  var wireEl = document.getElementById('wire');
+  var spinEl = document.getElementById('spin');
+  var resetEl = document.getElementById('reset');
+  var explodeEl = document.getElementById('explode');
+  var explodeWrap = document.getElementById('explodeWrap');
+  var stepsBox = document.getElementById('stepsBox');
+  var stepCard = document.getElementById('stepCard');
+  var stepList = document.getElementById('stepList');
+  var checkSum = document.getElementById('checkSum');
+  var btnStart = document.getElementById('stepStart');
+  var btnPrev = document.getElementById('stepPrev');
+  var btnNext = document.getElementById('stepNext');
+  var btnPlay = document.getElementById('stepPlay');
+  var btnExit = document.getElementById('stepExit');
+
+  // Optional view settings in the URL hash, for sharing a specific view:
+  //   #part=Assembly&panel=arkiv&yaw=3.14&pitch=0.3&zoom=1&explode=40&spin=0&wire=0
+  // yaw 0 looks at the REAR of the device, yaw 3.14 at the front.
+  var opts = {};
+  location.hash.replace(/^#/, '').split('&').forEach(function (kv) {
+    var i = kv.indexOf('=');
+    if (i > 0) opts[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1));
+  });
+  if (opts.spin === '0') spinEl.checked = false;
+  if (opts.wire === '1') wireEl.checked = true;
+
+  if (!PARTS.length) { msg.textContent = 'No parts exported yet'; return; }
+
+  var gl = canvas.getContext('webgl', { antialias: true, alpha: false });
+  if (!gl) { msg.textContent = 'WebGL unavailable in this browser'; return; }
+
+  // ---------- tiny mat4 ----------
+  function ident() { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); }
+  function perspective(fovy, aspect, near, far) {
+    var f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
+    return new Float32Array([f/aspect,0,0,0, 0,f,0,0, 0,0,(far+near)*nf,-1, 0,0,2*far*near*nf,0]);
+  }
+  function sub(a,b){return [a[0]-b[0],a[1]-b[1],a[2]-b[2]];}
+  function norm(v){var l=Math.hypot(v[0],v[1],v[2])||1;return [v[0]/l,v[1]/l,v[2]/l];}
+  function cross(a,b){return [a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];}
+  function dot(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
+  function lookAt(eye, at, up) {
+    var z = norm(sub(eye, at)), x = norm(cross(up, z)), y = cross(z, x);
+    return {
+      m: new Float32Array([
+        x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0,
+        -dot(x,eye), -dot(y,eye), -dot(z,eye), 1
+      ]),
+      x: x, y: y, z: z
+    };
+  }
+
+  // ---------- shaders ----------
+  var VS = [
+    'attribute vec3 aPos; attribute vec3 aNor;',
+    'uniform mat4 uProj, uView, uModel;',
+    'varying vec3 vN; varying vec3 vP;',
+    'void main(){ vec4 wp = uModel * vec4(aPos,1.0);',
+    '  vN = mat3(uModel) * aNor; vP = wp.xyz;',
+    '  gl_Position = uProj * uView * wp; }'
+  ].join('\n');
+  // Lighting: the key light (uKey) follows the camera, above-left of it, so
+  // whichever side is being looked at is lit. It used to be fixed to the model
+  // from the upper REAR, which left the front face - buttons, and the smoke
+  // shell with the boards behind it - in the weak fill light only. The fill
+  // (l2) and the sky term stay fixed to the model, so turning it still reads.
+  //
+  // uAlpha is the opacity of ONE SURFACE; opaque meshes pass 1.0. Translucent
+  // meshes add two things real clear plastic has: reflectance that rises
+  // toward grazing angles (Fresnel) and a tight highlight from the key. Both
+  // raise the local opacity, so edges and curves of the shell stay readable
+  // while faces seen straight on stay see-through.
+  var FS = [
+    'precision mediump float;',
+    'varying vec3 vN; varying vec3 vP;',
+    'uniform vec3 uEye; uniform vec3 uBase; uniform float uFlat; uniform float uAlpha; uniform vec3 uKey; uniform float uDim;',
+    'void main(){',
+    '  vec3 n = normalize(vN); vec3 v = normalize(uEye - vP);',
+    '  if (dot(n, v) < 0.0) n = -n;',
+    '  vec3 l1 = uKey;',
+    '  vec3 l2 = normalize(vec3(-0.6, 0.15, -0.35));',
+    '  float d = max(dot(n, l1), 0.0) * 0.78 + max(dot(n, l2), 0.0) * 0.22;',
+    '  float hemi = 0.5 + 0.5 * n.y;',
+    '  float ndv = max(dot(n, v), 0.0);',
+    '  float rim = pow(1.0 - ndv, 3.0) * 0.28;',
+    '  vec3 c = uBase * (0.30 + 0.62 * d + 0.20 * hemi) + vec3(rim);',
+    '  float a = uAlpha;',
+    '  if (uAlpha < 0.999) {',
+    '    float fres = pow(1.0 - ndv, 4.0);',
+    '    float spec = pow(max(dot(n, normalize(uKey + v)), 0.0), 48.0);',
+    '    c += vec3(spec * 0.55);',
+    '    a = clamp(uAlpha + (1.0 - uAlpha) * (fres * 0.5 + spec * 0.45), 0.0, 1.0);',
+    '  }',
+    '  vec3 o = mix(c, uBase, uFlat);',
+    '  float g = dot(o, vec3(0.299, 0.587, 0.114));',
+    '  gl_FragColor = vec4(mix(o, vec3(g) * 0.8 + 0.08, uDim), a); }'
+  ].join('\n');
+
+  function compile(type, src) {
+    var s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  var prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { msg.textContent = 'Shader link failed'; return; }
+  gl.useProgram(prog);
+
+  var aPos = gl.getAttribLocation(prog, 'aPos');
+  var aNor = gl.getAttribLocation(prog, 'aNor');
+  var uProj = gl.getUniformLocation(prog, 'uProj');
+  var uView = gl.getUniformLocation(prog, 'uView');
+  var uModel = gl.getUniformLocation(prog, 'uModel');
+  var uEye = gl.getUniformLocation(prog, 'uEye');
+  var uBase = gl.getUniformLocation(prog, 'uBase');
+  var uFlat = gl.getUniformLocation(prog, 'uFlat');
+  var uAlpha = gl.getUniformLocation(prog, 'uAlpha');
+  var uKey = gl.getUniformLocation(prog, 'uKey');
+  var uDim = gl.getUniformLocation(prog, 'uDim');
+  gl.enable(gl.DEPTH_TEST);
+
+  // ---------- STL parsing ----------
+  // OpenSCAD writes ASCII STL by default; most other tools write binary.
+  // Detect by arithmetic, not by the leading "solid" keyword, because some
+  // binary writers put "solid" in the 80-byte header too.
+  function parseBinarySTL(buf) {
+    var dv = new DataView(buf);
+    var tris = dv.getUint32(80, true);
+    var pos = new Float32Array(tris * 9), nor = new Float32Array(tris * 9);
+    var o = 84, i, v, b;
+    var min = [Infinity,Infinity,Infinity], max = [-Infinity,-Infinity,-Infinity];
+    for (i = 0; i < tris; i++) {
+      var nx = dv.getFloat32(o, true), ny = dv.getFloat32(o+4, true), nz = dv.getFloat32(o+8, true);
+      o += 12;
+      var p = [];
+      for (v = 0; v < 3; v++) {
+        var x = dv.getFloat32(o, true), y = dv.getFloat32(o+4, true), z = dv.getFloat32(o+8, true);
+        o += 12; p.push(x, y, z);
+        if (x < min[0]) min[0] = x; if (x > max[0]) max[0] = x;
+        if (y < min[1]) min[1] = y; if (y > max[1]) max[1] = y;
+        if (z < min[2]) min[2] = z; if (z > max[2]) max[2] = z;
+      }
+      if (nx === 0 && ny === 0 && nz === 0) {
+        var ux=p[3]-p[0], uy=p[4]-p[1], uz=p[5]-p[2];
+        var wx=p[6]-p[0], wy=p[7]-p[1], wz=p[8]-p[2];
+        nx = uy*wz-uz*wy; ny = uz*wx-ux*wz; nz = ux*wy-uy*wx;
+        var L = Math.hypot(nx,ny,nz) || 1; nx/=L; ny/=L; nz/=L;
+      }
+      for (v = 0; v < 3; v++) {
+        b = i*9 + v*3;
+        pos[b]=p[v*3]; pos[b+1]=p[v*3+1]; pos[b+2]=p[v*3+2];
+        nor[b]=nx; nor[b+1]=ny; nor[b+2]=nz;
+      }
+      o += 2;
+    }
+    return { pos: pos, nor: nor, tris: tris, min: min, max: max };
+  }
+
+  function parseAsciiSTL(text) {
+    // Token walk rather than regex: a multi-megabyte ASCII STL makes
+    // backtracking patterns crawl, and the grammar is trivial to scan.
+    var t = text.split(/\s+/);
+    var px = [], nx = [], cn = [0,0,0];
+    var min = [Infinity,Infinity,Infinity], max = [-Infinity,-Infinity,-Infinity];
+    for (var i = 0; i < t.length; i++) {
+      if (t[i] === 'normal') { cn = [parseFloat(t[i+1]), parseFloat(t[i+2]), parseFloat(t[i+3])]; i += 3; }
+      else if (t[i] === 'vertex') {
+        var x = parseFloat(t[i+1]), y = parseFloat(t[i+2]), z = parseFloat(t[i+3]); i += 3;
+        px.push(x, y, z); nx.push(cn[0], cn[1], cn[2]);
+        if (x < min[0]) min[0] = x; if (x > max[0]) max[0] = x;
+        if (y < min[1]) min[1] = y; if (y > max[1]) max[1] = y;
+        if (z < min[2]) min[2] = z; if (z > max[2]) max[2] = z;
+      }
+    }
+    if (px.length < 9) throw new Error('no facets found');
+    var pos = new Float32Array(px), nor = new Float32Array(nx), tris = pos.length / 9;
+    for (var f = 0; f < tris; f++) {
+      var b = f * 9;
+      if (nor[b] === 0 && nor[b+1] === 0 && nor[b+2] === 0) {
+        var ux=pos[b+3]-pos[b], uy=pos[b+4]-pos[b+1], uz=pos[b+5]-pos[b+2];
+        var wx=pos[b+6]-pos[b], wy=pos[b+7]-pos[b+1], wz=pos[b+8]-pos[b+2];
+        var a=uy*wz-uz*wy, c=uz*wx-ux*wz, d=ux*wy-uy*wx;
+        var L = Math.hypot(a,c,d) || 1;
+        for (var v = 0; v < 3; v++) { nor[b+v*3]=a/L; nor[b+v*3+1]=c/L; nor[b+v*3+2]=d/L; }
+      }
+    }
+    return { pos: pos, nor: nor, tris: tris, min: min, max: max };
+  }
+
+  function parseSTL(buf) {
+    if (buf.byteLength >= 84) {
+      var tris = new DataView(buf).getUint32(80, true);
+      if (84 + tris * 50 === buf.byteLength) return parseBinarySTL(buf);
+    }
+    return parseAsciiSTL(new TextDecoder().decode(buf));
+  }
+
+  function b64ToBytes(b64) {
+    var bin = atob(b64), n = bin.length, out = new Uint8Array(n);
+    for (var i = 0; i < n; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  function gunzip(bytes) {
+    if (typeof DecompressionStream === 'undefined') return Promise.reject(new Error('DecompressionStream unsupported'));
+    return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+  }
+
+  // ---------- gpu upload ----------
+  function makeMesh(g, it) {
+    var alpha = (typeof it.alpha === 'number') ? Math.max(0, Math.min(1, it.alpha)) : 1;
+    var m = {
+      tris: g.tris, min: g.min, max: g.max, name: it.name, file: it.file,
+      colour: it.colour || [0.78,0.60,0.24], group: it.group || it.file,
+      alpha: alpha,
+      // The manifest alpha is the opacity of one WALL. Each wall has two
+      // surfaces and both are drawn, so each surface gets 1 - sqrt(1 - a):
+      // two of them stacked then give back exactly a.
+      surfAlpha: alpha < 1 ? 1 - Math.sqrt(1 - alpha) : 1
+    };
+    m.colourF32 = new Float32Array(m.colour);
+    m.pos = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.pos);
+    gl.bufferData(gl.ARRAY_BUFFER, g.pos, gl.STATIC_DRAW);
+    m.nor = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.nor);
+    gl.bufferData(gl.ARRAY_BUFFER, g.nor, gl.STATIC_DRAW);
+
+    // Real wireframe needs the three edges of each triangle as an index list.
+    // Drawing the triangle soup as LINES would connect v0-v1, v2-v3 ... which
+    // skips every third edge and reads as noise. Uint16 caps us at 65535
+    // vertices; above that, skip wireframe rather than draw it wrong.
+    if (g.tris * 3 <= 65535) {
+      var idx = new Uint16Array(g.tris * 6);
+      for (var t = 0, k = 0; t < g.tris; t++) {
+        var a = t*3, b2 = a+1, c = a+2;
+        idx[k++]=a; idx[k++]=b2; idx[k++]=b2; idx[k++]=c; idx[k++]=c; idx[k++]=a;
+      }
+      m.edge = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.edge);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+      m.edgeCount = idx.length;
+    } else { m.edge = null; m.edgeCount = 0; }
+
+    m.centre = [(g.min[0]+g.max[0])/2, (g.min[1]+g.max[1])/2, (g.min[2]+g.max[2])/2];
+    return m;
+  }
+
+  function disposeMeshes() {
+    meshes.forEach(function (m) {
+      gl.deleteBuffer(m.pos); gl.deleteBuffer(m.nor);
+      if (m.edge) gl.deleteBuffer(m.edge);
+    });
+    meshes = [];
+  }
+
+  // ---------- state ----------
+  var meshes = [], isGroup = false, current = null;
+  var panels = [], panel = null;       // rear panel alternatives in this view
+  var yaw = 0.6, pitch = 0.5, dist = 3, radius = 1, centre = [0,0,0];
+  var touched = false, cache = {}, firstLoad = true, viewShift = [0, 0, 0];
+
+  function fmt(n) { return (Math.round(n * 10) / 10).toFixed(1); }
+  function isPanelGroup(g) { return typeof g === 'string' && g.indexOf('panel:') === 0; }
+  function titleCase(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+  // Only ONE rear panel is ever fitted. The three alternatives share the same
+  // plate at the same depth, so drawing more than one z-fights into stripes.
+  function visibleMeshes() {
+    return meshes.filter(function (m) {
+      if (isPanelGroup(m.group) && m.group !== 'panel:' + panel) return false;
+      if (stepMode && m.step != null && m.step > stepIdx) return false;
+      return true;
+    });
+  }
+
+  // ---------- assembly steps ----------
+  // Each assembled mesh is tied to the step that installs it, with the
+  // direction it MOVES into place. The explode pulls every part back out
+  // along that direction, further for later steps, like an instruction
+  // manual; the step mode slides the current step's parts in along it.
+  var stepMode = false, stepIdx = 0, animT0 = 0;
+  var ALIAS = { asm_pi_board: 'asm_pi', asm_pi_parts: 'asm_pi' };
+  function tagSteps() {
+    if (!STEPS) return;
+    var base = STEPS.base || [];
+    meshes.forEach(function (m) {
+      var key = (m.file || '').replace(/\.stl$/, '');
+      key = ALIAS[key] || key;
+      m.step = null;
+      if (base.indexOf(key) >= 0) { m.step = -1; return; }
+      STEPS.steps.forEach(function (st, i) {
+        st.parts.forEach(function (pt, j) {
+          var files = pt.files || [pt.file];
+          var hit = files.indexOf(key) >= 0 ||
+                    (isPanelGroup(m.group) && files.some(function (f) { return f.indexOf('asm_panel_') === 0; }));
+          if (hit && m.step == null) { m.step = i; m.sub = j; m.dir = pt.dir; m.dist = pt.dist || 30; }
+        });
+      });
+    });
+  }
+  function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
+  // offset of one mesh, in mm: exploded (e 0..1) or animating into place
+  function offsetOf(m, e, now) {
+    if (m.step == null || m.step < 0 || !m.dir) {
+      return [m.push[0] * e * 2.2, m.push[1] * e * 2.2, m.push[2] * e * 2.2];
+    }
+    var k = 0;
+    if (stepMode) {
+      if (m.step === stepIdx) {
+        var t = Math.max(0, Math.min(1, (now - animT0 - m.sub * 450) / 1100));
+        k = Math.max(m.dist, 45) * (1 - easeOut(t));
+      }
+    } else {
+      k = (22 + 16 * m.step + 7 * m.sub) * e;
+    }
+    return [-m.dir[0] * k, -m.dir[1] * k, -m.dir[2] * k];
+  }
+
+  function frameMeshes() {
+    // Framed over EVERY mesh, shown or not, so switching panels never moves
+    // the camera or the explode.
+    var min = [Infinity,Infinity,Infinity], max = [-Infinity,-Infinity,-Infinity];
+    var groups = {};
+    meshes.forEach(function (m) {
+      var g = groups[m.group] || (groups[m.group] = { min: [Infinity,Infinity,Infinity], max: [-Infinity,-Infinity,-Infinity] });
+      for (var i = 0; i < 3; i++) {
+        if (m.min[i] < min[i]) min[i] = m.min[i];
+        if (m.max[i] > max[i]) max[i] = m.max[i];
+        if (m.min[i] < g.min[i]) g.min[i] = m.min[i];
+        if (m.max[i] > g.max[i]) g.max[i] = m.max[i];
+      }
+    });
+    centre = [(min[0]+max[0])/2, (min[1]+max[1])/2, (min[2]+max[2])/2];
+    radius = Math.max(Math.hypot(max[0]-min[0], max[1]-min[1], max[2]-min[2]) / 2, 1);
+    // Explode pushes each sub-assembly away from the assembly centroid along
+    // its own offset, so no per-part direction has to be hand-authored. The
+    // offset is per GROUP, not per mesh: a panel and its emblem, or the four
+    // face buttons, must travel together rather than fly apart.
+    meshes.forEach(function (m) {
+      var g = groups[m.group];
+      m.push = [(g.min[0]+g.max[0])/2 - centre[0], (g.min[1]+g.max[1])/2 - centre[1], (g.min[2]+g.max[2])/2 - centre[2]];
+    });
+    return { min: min, max: max };
+  }
+
+  function rgbCss(c, a) {
+    return 'rgba(' + c.map(function (v) { return Math.round(v*255); }).join(',') + ',' + (a == null ? 1 : a) + ')';
+  }
+
+  function setStats() {
+    var p = current, vis = visibleMeshes();
+    var min = [Infinity,Infinity,Infinity], max = [-Infinity,-Infinity,-Infinity];
+    vis.forEach(function (m) { for (var i = 0; i < 3; i++) { min[i] = Math.min(min[i], m.min[i]); max[i] = Math.max(max[i], m.max[i]); } });
+    var d = [max[0]-min[0], max[1]-min[1], max[2]-min[2]];
+    var fits = d[0] <= 220 && d[1] <= 220 && d[2] <= 250;
+    var tris = vis.reduce(function (a, m) { return a + m.tris; }, 0);
+    var rows =
+      '<dt>View</dt><dd>' + p.name + '</dd>' +
+      '<dt>Triangles</dt><dd>' + tris.toLocaleString() + '</dd>' +
+      '<dt>Size</dt><dd>' + fmt(d[0]) + ' &times; ' + fmt(d[1]) + ' &times; ' + fmt(d[2]) + ' mm</dd>';
+    if (isGroup) {
+      rows += '<dt>Components</dt><dd>' + vis.length + '</dd>';
+      if (panels.length) rows += '<dt>Rear panel</dt><dd>' + titleCase(panel) + ' (one fitted at a time)</dd>';
+      rows += '<dt>Note</dt><dd>Assembled positions, print colours; bought parts are real vendor or datasheet models. Print from the individual parts.</dd>';
+    } else {
+      rows += '<dt>File</dt><dd>' + p.file + '</dd>' +
+              '<dt>Bed fit</dt><dd class="' + (fits ? '' : 'warn') + '">' +
+              (fits ? 'Fits 220 &times; 220 &times; 250' : 'EXCEEDS 220 &times; 220 &times; 250') + '</dd>';
+    }
+    statsEl.innerHTML = rows;
+
+    legendEl.innerHTML = isGroup ? vis.map(function (m) {
+      return '<span><i style="--c:' + rgbCss(m.colour, m.alpha) + '"></i>' + m.name + '</span>';
+    }).join('') : '';
+  }
+
+  function buildPanelPick() {
+    Array.prototype.slice.call(panelPick.querySelectorAll('button')).forEach(function (b) { b.remove(); });
+    panelPick.classList.toggle('on', isGroup && panels.length > 1);
+    panels.forEach(function (k) {
+      var ms = meshes.filter(function (m) { return m.group === 'panel:' + k; });
+      // chip: panel colour with its emblem colour in the corner
+      var body = ms[0] ? rgbCss(ms[0].colour) : 'transparent';
+      var logo = ms[1] ? rgbCss(ms[1].colour) : body;
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.panel = k;
+      b.innerHTML = '<i class="chip" style="--c:linear-gradient(135deg,' + body + ' 0 58%,' + logo + ' 58% 100%)"></i>' + titleCase(k);
+      b.setAttribute('aria-pressed', String(k === panel));
+      b.addEventListener('click', function () { setPanel(k); });
+      panelPick.appendChild(b);
+    });
+  }
+
+  function setPanel(k) {
+    panel = k;
+    Array.prototype.forEach.call(panelPick.querySelectorAll('button'), function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.panel === k));
+    });
+    setStats();
+  }
+
+  function resetView() { yaw = 0.6; pitch = 0.5; dist = radius * 2.9; }
+
+  function load(p) {
+    msg.classList.remove('gone');
+    msg.textContent = 'Decoding ' + p.name;
+    var items = p.members || [{ file: p.file, gz: p.gz, colour: null, name: p.name }];
+    isGroup = !!p.members;
+    current = p;
+    explodeWrap.classList.toggle('on', isGroup);
+    if (!isGroup) explodeEl.value = 0;
+    if (!isGroup && stepMode) exitSteps();
+
+    Promise.all(items.map(function (it) {
+      if (cache[it.file]) return Promise.resolve(cache[it.file]);
+      return gunzip(b64ToBytes(it.gz)).then(function (ab) {
+        var g = parseSTL(ab); cache[it.file] = g; return g;
+      });
+    })).then(function (geoms) {
+      disposeMeshes();
+      meshes = geoms.map(function (g, i) { return makeMesh(g, items[i]); });
+      panels = [];
+      meshes.forEach(function (m) {
+        if (isPanelGroup(m.group) && panels.indexOf(m.group.slice(6)) < 0) panels.push(m.group.slice(6));
+      });
+      // Keep the viewer's panel choice across visits to single parts; only
+      // fall back to the build's default when the choice is not available.
+      if (panels.length && panels.indexOf(panel) < 0) panel = panels.indexOf(p.panel) >= 0 ? p.panel : panels[0];
+      frameMeshes();
+      tagSteps();
+      resetView();
+      if (firstLoad) {
+        if (panels.indexOf(opts.panel) >= 0) panel = opts.panel;
+        if (opts.yaw != null && isFinite(+opts.yaw)) yaw = +opts.yaw;
+        if (opts.pitch != null && isFinite(+opts.pitch)) pitch = Math.max(-1.5, Math.min(1.5, +opts.pitch));
+        if (opts.zoom != null && isFinite(+opts.zoom) && +opts.zoom > 0) dist = radius * 2.9 / +opts.zoom;
+        if (isGroup && opts.explode != null && isFinite(+opts.explode)) explodeEl.value = +opts.explode;
+        firstLoad = false;
+      }
+      buildPanelPick();
+      setupSteps();
+      setStats();
+      msg.classList.add('gone');
+    }).catch(function (e) {
+      msg.classList.remove('gone');
+      msg.textContent = 'Could not load ' + p.name + ' (' + e.message + ')';
+    });
+  }
+
+  // ---------- step UI ----------
+  function stepChecks(st) {
+    if (!REPORT || !REPORT.steps) return null;
+    return REPORT.steps[st.id] || { fail: 0, checks: 0, messages: [] };
+  }
+  function esc(t) { return String(t).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+  function setupSteps() {
+    var on = isGroup && STEPS && STEPS.steps && STEPS.steps.length;
+    stepsBox.classList.toggle('on', !!on);
+    if (!on) return;
+    if (REPORT) {
+      checkSum.innerHTML = 'check_assembly.py' + (REPORT.when ? ' (' + REPORT.when + ')' : '') + ': <b class="' +
+        (REPORT.fail ? 'bad' : 'ok') + '">' + REPORT.fail + ' FAIL</b>, ' + REPORT.warn + ' WARN in ' +
+        (REPORT.sections ? REPORT.sections.length : '') + ' check sections';
+    } else { checkSum.textContent = 'no check report embedded'; }
+    stepList.innerHTML = '';
+    STEPS.steps.forEach(function (st, i) {
+      var li = document.createElement('li');
+      var c = stepChecks(st);
+      li.innerHTML = esc(st.title) + (c ? (c.fail ? '<span class="mk bad">FAIL</span>' :
+        (c.checks ? '<span class="mk ok">OK</span>' : '')) : '');
+      li.addEventListener('click', function () { goStep(i); });
+      stepList.appendChild(li);
+    });
+    renderStep();
+  }
+  function renderStep() {
+    var n = STEPS.steps.length;
+    btnPrev.disabled = !stepMode || stepIdx === 0;
+    btnNext.disabled = stepMode && stepIdx === n - 1;
+    btnPlay.disabled = !stepMode;
+    btnExit.disabled = !stepMode;
+    btnStart.textContent = stepMode ? 'Restart' : 'Start assembly';
+    explodeWrap.classList.toggle('on', isGroup && !stepMode);
+    Array.prototype.forEach.call(stepList.children, function (li, i) {
+      li.classList.toggle('cur', stepMode && i === stepIdx);
+      li.classList.toggle('done', stepMode && i < stepIdx);
+    });
+    stepCard.classList.toggle('on', stepMode);
+    if (!stepMode) return;
+    var st = STEPS.steps[stepIdx], c = stepChecks(st);
+    var html = '<h2><small>STEP ' + (stepIdx + 1) + ' / ' + n + '</small>' + esc(st.title) + '</h2>' +
+               '<p>' + esc(st.text) + '</p>';
+    if (st.hardware) html += '<div class="hw">Hardware: ' + esc(st.hardware) + '</div>';
+    if (c) {
+      if (c.fail || (c.messages && c.messages.length)) {
+        html += '<div class="chk bad">Checks for this step:<ul>' + c.messages.map(function (m) {
+          return '<li>' + esc(m) + '</li>'; }).join('') + '</ul></div>';
+      } else if (c.checks) {
+        var K = c.kinds || {}, said = [];
+        var WORDS = { path: ['insertion path clear', 'part'], tool: ['tool reaches every fastener', 'fastener'],
+                      snap: ['snap engages', 'snap'], fastener: ['screws seat and engage', 'screw'],
+                      function: ['button travel and stops', 'check'] };
+        ['path', 'tool', 'fastener', 'snap', 'function'].forEach(function (k) {
+          if (K[k]) said.push(WORDS[k][0] + ' (' + K[k] + ' ' + WORDS[k][1] + (K[k] === 1 ? '' : 's') + ')');
+        });
+        html += '<div class="chk ok">Verified: ' + said.join('; ') + '.</div>';
+      } else {
+        html += '<div class="chk ok">Covered by the interference, fastener and controls checks.</div>';
+      }
+    }
+    stepCard.innerHTML = html;
+    setStats();
+  }
+  function goStep(i) {
+    if (!stepMode) { stepMode = true; spinEl.checked = false; yaw = 0.55; pitch = 0.62; dist = radius * 2.6; }
+    stepIdx = Math.max(0, Math.min(STEPS.steps.length - 1, i));
+    animT0 = performance.now();
+    renderStep();
+  }
+  function exitSteps() { stepMode = false; if (STEPS) renderStep(); setStats(); }
+  btnStart.addEventListener('click', function () { goStep(0); });
+  btnPrev.addEventListener('click', function () { goStep(stepIdx - 1); });
+  btnNext.addEventListener('click', function () { goStep(stepMode ? stepIdx + 1 : 0); });
+  btnPlay.addEventListener('click', function () { animT0 = performance.now(); });
+  btnExit.addEventListener('click', exitSteps);
+  document.addEventListener('keydown', function (e) {
+    if (!stepMode) return;
+    if (e.key === 'ArrowRight') { goStep(stepIdx + 1); e.preventDefault(); }
+    if (e.key === 'ArrowLeft') { goStep(stepIdx - 1); e.preventDefault(); }
+  });
+
+  // ---------- part buttons ----------
+  var start = 0;
+  PARTS.forEach(function (p, i) { if (opts.part && (p.name === opts.part || p.file === opts.part)) start = i; });
+  PARTS.forEach(function (p, i) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = p.name;
+    if (p.members) b.classList.add('assembly');
+    b.setAttribute('aria-pressed', String(i === start));
+    b.addEventListener('click', function () {
+      Array.prototype.forEach.call(partsEl.children, function (c) {
+        c.setAttribute('aria-pressed', String(c === b));
+      });
+      load(p);
+    });
+    partsEl.appendChild(b);
+  });
+
+  // ---------- interaction ----------
+  var dragging = false, lx = 0, ly = 0;
+  stage.addEventListener('pointerdown', function (e) {
+    dragging = true; lx = e.clientX; ly = e.clientY;
+    if (!touched) { touched = true; hint.classList.add('gone'); spinEl.checked = false; }
+    stage.setPointerCapture(e.pointerId);
+  });
+  stage.addEventListener('pointermove', function (e) {
+    if (!dragging) return;
+    yaw += (e.clientX - lx) * 0.01;
+    pitch = Math.max(-1.5, Math.min(1.5, pitch + (e.clientY - ly) * 0.01));
+    lx = e.clientX; ly = e.clientY;
+  });
+  function rel(e) { if (dragging) { dragging = false; try { stage.releasePointerCapture(e.pointerId); } catch (x) {} } }
+  stage.addEventListener('pointerup', rel);
+  stage.addEventListener('pointercancel', rel);
+  stage.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    dist = Math.max(radius * 0.6, Math.min(radius * 16, dist * (1 + Math.sign(e.deltaY) * 0.12)));
+  }, { passive: false });
+  resetEl.addEventListener('click', resetView);
+
+  // ---------- render ----------
+  function bindAndDraw(m, ex, now) {
+    var model = ident();
+    var o = m.off || [0, 0, 0];
+    model[12] = -centre[0] - viewShift[0] + o[0];
+    model[13] = -centre[1] - viewShift[1] + o[1];
+    model[14] = -centre[2] - viewShift[2] + o[2];
+    gl.uniformMatrix4fv(uModel, false, model);
+    gl.uniform3fv(uBase, m.colourF32);
+    gl.uniform1f(uAlpha, m.surfAlpha);
+    gl.uniform1f(uDim, (stepMode && m.step != null && m.step >= 0 && m.step < stepIdx) ? 0.55 : 0.0);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.pos);
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.nor);
+    gl.enableVertexAttribArray(aNor);
+    gl.vertexAttribPointer(aNor, 3, gl.FLOAT, false, 0, 0);
+
+    if (wireEl.checked && m.edge) {
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.edge);
+      gl.drawElements(gl.LINES, m.edgeCount, gl.UNSIGNED_SHORT, 0);
+    } else {
+      gl.drawArrays(gl.TRIANGLES, 0, m.tris * 3);
+    }
+  }
+
+  function frame() {
+    var w = stage.clientWidth, h = stage.clientHeight;
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    if (canvas.width !== (w*dpr|0) || canvas.height !== (h*dpr|0)) {
+      canvas.width = w*dpr|0; canvas.height = h*dpr|0;
+    }
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    var bg = getComputedStyle(document.body).backgroundColor.match(/\d+/g) || [12,19,23];
+    gl.clearColor(bg[0]/255, bg[1]/255, bg[2]/255, 1);
+    // depthMask must be true or clear() leaves the old depth buffer in place.
+    gl.depthMask(true);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    if (meshes.length) {
+      if (spinEl.checked && !dragging) yaw += 0.004;
+      var eye = [
+        Math.sin(yaw)*Math.cos(pitch)*dist,
+        Math.sin(pitch)*dist,
+        Math.cos(yaw)*Math.cos(pitch)*dist
+      ];
+      var view = lookAt(eye, [0,0,0], [0,1,0]);
+      gl.uniformMatrix4fv(uProj, false, perspective(0.9, w/h, radius*0.05, radius*40));
+      gl.uniformMatrix4fv(uView, false, view.m);
+      gl.uniform3fv(uEye, new Float32Array(eye));
+      // key light, above-left of the camera (diffuse + translucent highlights)
+      var key = norm([
+        -0.35*view.x[0] + 0.55*view.y[0] + 0.75*view.z[0],
+        -0.35*view.x[1] + 0.55*view.y[1] + 0.75*view.z[1],
+        -0.35*view.x[2] + 0.55*view.y[2] + 0.75*view.z[2]
+      ]);
+      gl.uniform3fv(uKey, new Float32Array(key));
+      gl.uniform1f(uFlat, wireEl.checked ? 1.0 : 0.0);
+
+      var ex = (isGroup && !stepMode) ? (parseFloat(explodeEl.value) || 0) / 100 : 0;
+      var now = performance.now();
+      var vis = visibleMeshes(), total = 0;
+      vis.forEach(function (m) { m.off = offsetOf(m, ex, now); });
+      // keep an exploded stack centred: follow half the largest pull-out
+      var far = [0, 0, 0];
+      vis.forEach(function (m) { for (var i = 0; i < 3; i++) if (Math.abs(m.off[i]) > Math.abs(far[i])) far[i] = m.off[i]; });
+      viewShift = [far[0] / 2, far[1] / 2, far[2] / 2];
+      var opaque = vis.filter(function (m) { return m.alpha >= 1; });
+      var clear  = vis.filter(function (m) { return m.alpha < 1; });
+
+      // PASS 1 - opaque meshes, depth writes ON. Everything solid is in the
+      // depth buffer before any translucent surface is drawn.
+      gl.disable(gl.BLEND);
+      gl.depthMask(true);
+      opaque.forEach(function (m) { bindAndDraw(m, ex, now); total += m.tris; });
+
+      // PASS 2 - translucent meshes, farthest first. Depth TEST stays on so
+      // opaque parts in front of a translucent surface still hide it; depth
+      // WRITES are off so a translucent surface never hides what is behind
+      // it. Drawing the shell first, or with depth writes on, would blank out
+      // every internal it covers.
+      if (clear.length) {
+        clear.forEach(function (m) {
+          var c = [m.centre[0] - centre[0] - viewShift[0] + m.off[0], m.centre[1] - centre[1] - viewShift[1] + m.off[1], m.centre[2] - centre[2] - viewShift[2] + m.off[2]];
+          m.sortDist = Math.hypot(eye[0]-c[0], eye[1]-c[1], eye[2]-c[2]);
+        });
+        clear.sort(function (a, b) { return b.sortDist - a.sortDist; });
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.depthMask(false);
+        clear.forEach(function (m) {
+          if (wireEl.checked) { bindAndDraw(m, ex, now); }
+          else {
+            // Within one mesh, back-facing surfaces (the far side of each
+            // wall) go down before front-facing ones, which is the correct
+            // order for a shell seen from outside. OpenSCAD writes outward,
+            // counter-clockwise winding. Every triangle is drawn exactly once
+            // either way, so a mesh with bad winding is mis-ordered, never
+            // missing.
+            gl.enable(gl.CULL_FACE);
+            gl.cullFace(gl.FRONT); bindAndDraw(m, ex, now);
+            gl.cullFace(gl.BACK);  bindAndDraw(m, ex, now);
+            gl.disable(gl.CULL_FACE);
+          }
+          total += m.tris;
+        });
+        gl.depthMask(true);
+        gl.disable(gl.BLEND);
+      }
+
+      hud.innerHTML = '<b>' + Math.round(((yaw*180/Math.PI)%360+360)%360) + '</b>&deg; &middot; ' +
+                      total.toLocaleString() + ' tris' +
+                      (isGroup ? ' &middot; ' + vis.length + ' parts' : '') +
+                      (isGroup && panel ? ' &middot; ' + titleCase(panel) + ' panel' : '') +
+                      (stepMode ? ' &middot; <b>step ' + (stepIdx + 1) + '/' + STEPS.steps.length + '</b>' : '');
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  load(PARTS[start]);
+})();
+</script>

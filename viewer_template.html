@@ -1,0 +1,419 @@
+<title>Handheld — 360 Viewer</title>
+
+<style>
+  :root {
+    --mask:      #0C1317;
+    --mask-2:    #121E24;
+    --mask-3:    #1A2A32;
+    --silk:      #E9EBE6;
+    --silk-dim:  #8FA0A6;
+    --gold:      #C79A3A;
+    --gold-soft: #8A6C29;
+    --rule:      #223138;
+    --stage-bg:  #0F191E;
+
+    --f-display: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --f-mono:    ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+
+    --step--1: 0.75rem;
+    --step-0:  0.95rem;
+    --step-2:  clamp(1.5rem, 5.5vw, 2.3rem);
+
+    --gap: clamp(1rem, 4vw, 1.75rem);
+    --max: 46rem;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      --mask: #F2F1EC; --mask-2: #E7E7E1; --mask-3: #DADAD2;
+      --silk: #141F25; --silk-dim: #5A6A70;
+      --gold: #8A6614; --gold-soft: #B79544;
+      --rule: #D0D0C7; --stage-bg: #E9E9E3;
+    }
+  }
+  :root[data-theme="light"] {
+    --mask: #F2F1EC; --mask-2: #E7E7E1; --mask-3: #DADAD2;
+    --silk: #141F25; --silk-dim: #5A6A70;
+    --gold: #8A6614; --gold-soft: #B79544;
+    --rule: #D0D0C7; --stage-bg: #E9E9E3;
+  }
+  :root[data-theme="dark"] {
+    --mask: #0C1317; --mask-2: #121E24; --mask-3: #1A2A32;
+    --silk: #E9EBE6; --silk-dim: #8FA0A6;
+    --gold: #C79A3A; --gold-soft: #8A6C29;
+    --rule: #223138; --stage-bg: #0F191E;
+  }
+
+  body {
+    background: var(--mask);
+    color: var(--silk);
+    font-family: var(--f-display);
+    font-size: var(--step-0);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: var(--max);
+    margin: 0 auto;
+    padding: clamp(1.5rem, 6vw, 3rem) var(--gap) 4rem;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(1.75rem, 6vw, 2.75rem);
+  }
+
+  .label {
+    font-family: var(--f-mono);
+    font-size: var(--step--1);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--gold);
+  }
+
+  header { display: flex; flex-direction: column; gap: 0.5rem; }
+  h1 {
+    font-size: var(--step-2); line-height: 1.1; font-weight: 600;
+    letter-spacing: -0.02em; text-wrap: balance; margin: 0;
+  }
+  .sub { color: var(--silk-dim); max-width: 34rem; }
+
+  /* ---- stage ---- */
+
+  .viewer { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .stage {
+    position: relative;
+    aspect-ratio: 1 / 1;
+    background: var(--stage-bg);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    overflow: hidden;
+    touch-action: none;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .stage:active { cursor: grabbing; }
+
+  .set { position: absolute; inset: 0; visibility: hidden; }
+  .set.on { visibility: visible; }
+
+  .set img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .set img.on { opacity: 1; }
+
+  .corner { position: absolute; width: 9px; height: 9px; border: 1px solid var(--gold-soft); opacity: 0.5; }
+  .corner.tl { top: 8px; left: 8px; border-right: 0; border-bottom: 0; }
+  .corner.tr { top: 8px; right: 8px; border-left: 0; border-bottom: 0; }
+  .corner.bl { bottom: 8px; left: 8px; border-right: 0; border-top: 0; }
+  .corner.br { bottom: 8px; right: 8px; border-left: 0; border-top: 0; }
+
+  .readout {
+    position: absolute; left: 14px; bottom: 12px;
+    font-family: var(--f-mono); font-size: var(--step--1);
+    font-variant-numeric: tabular-nums; letter-spacing: 0.08em;
+    color: var(--silk-dim);
+  }
+  .readout b { color: var(--gold); font-weight: 600; }
+
+  .hint {
+    position: absolute; right: 14px; bottom: 12px;
+    font-family: var(--f-mono); font-size: var(--step--1);
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--silk-dim); transition: opacity 0.4s ease;
+  }
+  .hint.gone { opacity: 0; }
+
+  .loader {
+    position: absolute; inset: 0;
+    display: grid; place-content: center; gap: 0.75rem;
+    background: var(--stage-bg);
+    font-family: var(--f-mono); font-size: var(--step--1);
+    letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--silk-dim);
+    transition: opacity 0.35s ease;
+    z-index: 2;
+  }
+  .loader.gone { opacity: 0; pointer-events: none; }
+  .bar { width: 160px; height: 2px; background: var(--rule); }
+  .bar i { display: block; height: 100%; width: 0%; background: var(--gold); transition: width 0.2s linear; }
+
+  /* ---- panel switcher ---- */
+
+  .switcher { display: flex; gap: 0.5rem; }
+
+  .switcher button {
+    flex: 1;
+    display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+    padding: 0.6rem 0.5rem;
+    background: var(--mask-2);
+    color: var(--silk-dim);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    font-family: var(--f-mono);
+    font-size: var(--step--1);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+  }
+  .switcher button:hover { color: var(--silk); }
+  .switcher button[aria-pressed="true"] {
+    color: var(--silk);
+    border-color: var(--gold);
+    background: var(--mask-3);
+  }
+  .switcher button i {
+    width: 11px; height: 11px; border-radius: 50%;
+    background: var(--c);
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+    flex: none;
+  }
+
+  /* ---- spec legend ---- */
+
+  .specs { display: flex; flex-direction: column; gap: 0.75rem; }
+  dl {
+    margin: 0;
+    display: grid; grid-template-columns: auto 1fr; gap: 0.4rem 1.25rem;
+    font-family: var(--f-mono); font-size: var(--step--1);
+    font-variant-numeric: tabular-nums;
+  }
+  dt { color: var(--silk-dim); letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+  dd { margin: 0; color: var(--silk); }
+  dd em { font-style: normal; color: var(--gold); }
+
+  .note { margin: 0; max-width: 34rem; font-size: var(--step--1); line-height: 1.7; color: var(--silk-dim); }
+
+  /* ---- stills ---- */
+
+  .stills { display: flex; flex-direction: column; gap: 0.75rem; }
+  .strip {
+    display: grid; grid-auto-flow: column; grid-auto-columns: 78%; gap: 0.75rem;
+    overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 0.5rem;
+  }
+  @media (min-width: 40rem) {
+    .strip { grid-auto-flow: row; grid-auto-columns: auto; grid-template-columns: 1fr 1fr; overflow-x: visible; }
+  }
+  .shot { scroll-snap-align: start; display: flex; flex-direction: column; gap: 0.4rem; margin: 0; }
+  .shot img { width: 100%; display: block; background: var(--stage-bg); border: 1px solid var(--rule); border-radius: 3px; }
+  .shot span {
+    font-family: var(--f-mono); font-size: var(--step--1);
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--silk-dim);
+  }
+
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 0; }
+
+  footer {
+    font-family: var(--f-mono); font-size: var(--step--1);
+    letter-spacing: 0.06em; color: var(--silk-dim); line-height: 1.8;
+  }
+
+  :focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition-duration: 0.01ms !important; } }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <span class="label">ETHGlobal Mumbai &middot; Nov 5&ndash;7 2026</span>
+    <h1>Verifiable-replay handheld</h1>
+    <p class="sub">Raspberry Pi 4 with a magnetic rear panel that swaps per sponsor. Drag to rotate, tap a panel to switch.</p>
+  </header>
+
+  <div class="viewer">
+    <div class="stage" id="stage" tabindex="0" aria-label="360 degree product viewer, drag to rotate">
+      <div class="set on" data-plate="world"><!--FRAMES_WORLD--></div>
+      <div class="set" data-plate="0g"><!--FRAMES_0G--></div>
+      <div class="set" data-plate="arkiv"><!--FRAMES_ARKIV--></div>
+      <span class="corner tl"></span><span class="corner tr"></span>
+      <span class="corner bl"></span><span class="corner br"></span>
+      <div class="readout"><b id="deg">000</b>&deg;</div>
+      <div class="hint" id="hint">Drag to spin</div>
+      <div class="loader" id="loader">
+        <span id="ltext">Loading frames</span>
+        <span class="bar"><i id="lbar"></i></span>
+      </div>
+    </div>
+
+    <div class="switcher" id="switcher" role="group" aria-label="Rear panel">
+      <button type="button" data-plate="world" aria-pressed="true"><i style="--c:#EFEDE8"></i>World</button>
+      <button type="button" data-plate="0g"    aria-pressed="false"><i style="--c:#9200E1"></i>0G</button>
+      <button type="button" data-plate="arkiv" aria-pressed="false"><i style="--c:#181EA9"></i>Arkiv</button>
+    </div>
+  </div>
+
+  <hr>
+
+  <section class="specs">
+    <span class="label">Specification</span>
+    <dl>
+      <dt>Board</dt>      <dd>Raspberry Pi 4 Model B, 2 GB</dd>
+      <dt>Overall</dt>    <dd>170.7 &times; 111.21 &times; 33.65 mm</dd>
+      <dt>Display</dt>    <dd>5&Prime; class IPS, active area 108 &times; 65 mm</dd>
+      <dt>Controls</dt>   <dd>Analog joystick, four-button diamond, two pill keys</dd>
+      <dt>Rear</dt>       <dd>Full-footprint magnetic panel, swappable per sponsor</dd>
+      <dt>Power</dt>      <dd>18650 cells, roughly 6 hours</dd>
+      <dt>Build cost</dt> <dd><em>&#8377;15,700</em></dd>
+    </dl>
+    <p class="note">Shown as a concept shell. The physical build is based on a Waveshare GamePi43 acrylic kit with a 4.3&Prime; panel, whose stock control layout differs.</p>
+  </section>
+
+  <hr>
+
+  <section class="stills">
+    <span class="label">Stills</span>
+    <div class="strip">
+      <!--STILL_SHOTS-->
+    </div>
+  </section>
+
+  <footer>
+    Body dimensions from Waveshare's official drawing; display size and control layout are design choices.<br>
+    Sponsor logos from official brand assets. Rendered in Blender, Cycles.
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  var stage    = document.getElementById('stage');
+  var switcher = document.getElementById('switcher');
+  var degEl    = document.getElementById('deg');
+  var hint     = document.getElementById('hint');
+  var loader   = document.getElementById('loader');
+  var lbar     = document.getElementById('lbar');
+  var ltext    = document.getElementById('ltext');
+
+  var sets = Array.prototype.slice.call(stage.querySelectorAll('.set'))
+    .filter(function (s) { return s.querySelectorAll('img').length > 0; });
+  if (!sets.length) return;
+
+  var frames = sets.map(function (s) {
+    return Array.prototype.slice.call(s.querySelectorAll('img'));
+  });
+
+  var n       = frames[0].length;
+  var step    = 360 / n;
+  var idx     = 0;
+  var active  = 0;
+  var touched = false;
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function paint() {
+    for (var s = 0; s < sets.length; s++) {
+      var isActive = (s === active);
+      sets[s].classList.toggle('on', isActive);
+      for (var i = 0; i < frames[s].length; i++) {
+        // keep every set parked on the current index so switching never flashes
+        frames[s][i].classList.toggle('on', i === idx);
+      }
+    }
+    degEl.textContent = String(Math.round(idx * step)).padStart(3, '0');
+  }
+
+  function show(i) {
+    idx = ((i % n) + n) % n;
+    paint();
+  }
+
+  // ---- decode everything, then reveal ----
+  var total = frames.reduce(function (a, f) { return a + f.length; }, 0);
+  var done  = 0;
+  function tick() {
+    done++;
+    lbar.style.width = Math.round((done / total) * 100) + '%';
+    if (done >= total) {
+      ltext.textContent = 'Ready';
+      loader.classList.add('gone');
+      show(0);
+      if (!reduced) autospin();
+    }
+  }
+  frames.forEach(function (set) {
+    set.forEach(function (img) {
+      var p = img.decode ? img.decode() : Promise.resolve();
+      p.then(tick, tick);
+    });
+  });
+
+  // ---- gentle autospin until first interaction ----
+  var raf = null, last = 0, acc = 0;
+  function autospin() {
+    function loop(t) {
+      if (touched) return;
+      if (!last) last = t;
+      acc += (t - last);
+      last = t;
+      if (acc > 90) { acc = 0; show(idx + 1); }
+      raf = requestAnimationFrame(loop);
+    }
+    raf = requestAnimationFrame(loop);
+  }
+
+  function stop() {
+    if (touched) return;
+    touched = true;
+    if (raf) cancelAnimationFrame(raf);
+    hint.classList.add('gone');
+  }
+
+  // ---- drag to rotate ----
+  var dragging = false, startX = 0, startIdx = 0;
+
+  stage.addEventListener('pointerdown', function (e) {
+    stop();
+    dragging = true;
+    startX = e.clientX;
+    startIdx = idx;
+    stage.setPointerCapture(e.pointerId);
+  });
+
+  stage.addEventListener('pointermove', function (e) {
+    if (!dragging) return;
+    var frac = (e.clientX - startX) / stage.clientWidth;
+    show(startIdx + Math.round(frac * n));
+  });
+
+  function release(e) {
+    if (!dragging) return;
+    dragging = false;
+    try { stage.releasePointerCapture(e.pointerId); } catch (err) {}
+  }
+  stage.addEventListener('pointerup', release);
+  stage.addEventListener('pointercancel', release);
+
+  stage.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowLeft')  { stop(); show(idx - 1); e.preventDefault(); }
+    if (e.key === 'ArrowRight') { stop(); show(idx + 1); e.preventDefault(); }
+  });
+
+  // ---- panel switcher ----
+  // Sequences are frame-aligned, so switching at the current index keeps
+  // the device at the same angle and only the rear panel changes.
+  var buttons = Array.prototype.slice.call(switcher.querySelectorAll('button'));
+
+  buttons.forEach(function (btn) {
+    var plate = btn.getAttribute('data-plate');
+    var target = -1;
+    for (var s = 0; s < sets.length; s++) {
+      if (sets[s].getAttribute('data-plate') === plate) { target = s; break; }
+    }
+    if (target < 0) { btn.disabled = true; btn.title = 'Not rendered'; return; }
+
+    btn.addEventListener('click', function () {
+      active = target;
+      buttons.forEach(function (b) {
+        b.setAttribute('aria-pressed', String(b === btn));
+      });
+      paint();
+    });
+  });
+})();
+</script>
