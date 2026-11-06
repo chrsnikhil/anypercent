@@ -12,9 +12,10 @@ Sponsors as on the laptop (laptop.sh): the same environment and flags; none give
 RPC is read through agent_rpc (the same request under a User-Agent of its own: see there), unless --console-rpc.
 
 It acts as the laptop console: once per run its state is copied from /opt/arca-sandbox (laptop-state.json and the
-files beside it that make it that console: console-id, handler.json, the sponsors' caches) and its runs folder into
-/opt/arca-sandbox/recorder/, and it runs on that copy only, with a run dir of its own. PB's day-start greeting and
-book offer are marked done in the copy (the first press would only move PB on), unless the script asks for them.
+files beside it that make it that console: console-id, its Arkiv wallet, handler.json, the sponsors' caches) and its
+runs folder into /opt/arca-sandbox/recorder/, and it runs on that copy only, with a run dir of its own. PB's day-start
+greeting and book offer are marked done in the copy (the first press would only move PB on), unless the script asks
+for them.
 
 Time: each frame advances the app by exactly 1/30 s and is never drawn ahead of the wall clock, so animations are
 smooth and a network step takes as long in the video as it did for real (the sidecar says how far the frames ever
@@ -78,10 +79,12 @@ LIBRARY = os.path.join(SANDBOX, "launcher-booth")             # laptop.sh's boot
 TESTLOGS = os.path.join(SANDBOX, "devicecheck")
 OUT = os.path.join(REPO, "video", "final", "rec")
 FFMPEG = os.environ.get("ARCA_FFMPEG", "/mnt/c/ProgramData/chocolatey/bin/ffmpeg.exe")
-# Beside the settings file, what makes the copy this console and shows what it showed: its id, the ledger, the
-# sponsors' last reads, the booth link and the crash log. Never handler-resume.json (a browser hand-off in flight) or
-# coach-voice.key (PB's voice is never asked from a recording).
-STATE_FILES = ("console-id", "handler.json", "hedera-payto.json", "arkiv-boards.json", "booth-url.txt", "crashes.log")
+# Beside the settings file, what makes the copy this console and shows what it showed: its id, its Arkiv wallet (the
+# key, copied with its 0600 mode on this same machine, and the address kept beside it), the ledger, the sponsors' last
+# reads, the booth link and the crash log. Never handler-resume.json (a browser hand-off in flight) or coach-voice.key
+# (PB's voice is never asked from a recording).
+STATE_FILES = ("console-id", "arkiv-key", "arkiv-address", "handler.json", "hedera-payto.json", "arkiv-boards.json",
+               "booth-url.txt", "crashes.log")
 PRESSES = {"up": Action.UP, "down": Action.DOWN, "left": Action.LEFT, "right": Action.RIGHT,
            "cross": Action.A, "circle": Action.B, "square": Action.X, "triangle": Action.Y,
            "l1": Action.L, "r1": Action.R, "options": Action.START, "create": Action.SELECT,

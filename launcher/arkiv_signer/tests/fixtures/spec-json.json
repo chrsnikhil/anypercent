@@ -1,0 +1,73 @@
+{
+  "valid": [
+    {
+      "name": "a person's run: a sealed ghost, lap splits, an atDate expiry",
+      "doc": {
+        "values": {
+          "game": "MDGP", "title": "MARINE DRIVE GP", "season": 1, "rules": 3, "frames": 5025,
+          "log_h": "4f1c0d2e9b8a7f6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c3b2a19087f6e",
+          "runner": "r_0123456789abcdef", "book": "ANY-6PS", "human": true, "credential": "orb",
+          "tool": "arcade_replay 1", "log_enc": {"$bytes": "AAECA/r/AQIDBAUGBwgJCgsMDQ4P"},
+          "s1": 1200, "s2": 1300, "s3": 1250, "s4": 1275, "split_kind": "lap"
+        },
+        "flags": {"readonly": true, "permissionlessExtension": true},
+        "expiry": {"kind": "atDate", "date": {"$date": "2027-01-30T00:00:00.000Z"}, "atLeastDays": 1}
+      }
+    },
+    {
+      "name": "its listing: seven days, a pay_to and the HCS record",
+      "doc": {
+        "values": {
+          "game": "MDGP", "season": 1, "frames": 5025,
+          "log_h": "4f1c0d2e9b8a7f6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c3b2a19087f6e",
+          "price": "0.1", "seller": "ANY-6PS", "book": "ANY-6PS", "human": true,
+          "pay_to": "0.0.12345", "hcs": "0.0.777/12"
+        },
+        "flags": {"readonly": true, "permissionlessExtension": false},
+        "expiry": {"kind": "days", "days": 7}
+      }
+    },
+    {
+      "name": "a house run: a plain log, a u64 past 2^53, an atBlock expiry",
+      "doc": {
+        "values": {"game": "SHIP", "label": "BOT-1", "human": false, "frames": {"$big": "18446744073709551615"},
+                   "log": {"$bytes": "QUNMMQ=="}, "gen": "seeded"},
+        "flags": {"readonly": true, "permissionlessExtension": true},
+        "expiry": {"kind": "atBlock", "block": {"$big": "123456789"}}
+      }
+    },
+    {
+      "name": "hours, empty bytes, a negative big, nested arrays and objects, nulls and falses",
+      "doc": {
+        "values": {"a": [1, "x", {"b": {"$bytes": ""}}, [true, null]], "n": null, "f": false, "z": {"$big": "-7"},
+                   "o": {"p": {"q": 0.5}}},
+        "flags": {"readonly": false, "permissionlessExtension": false},
+        "expiry": {"kind": "hours", "hours": 1}
+      }
+    },
+    {
+      "name": "the same, as JSON text",
+      "text": "{\"values\":{\"frames\":{\"$big\":\"42\"},\"log\":{\"$bytes\":\"AQID\"}},\"flags\":{\"readonly\":true,\"permissionlessExtension\":true},\"expiry\":{\"kind\":\"atDate\",\"date\":{\"$date\":\"2026-12-31T23:59:59.999Z\"},\"atLeastDays\":30}}"
+    }
+  ],
+  "invalid": [
+    {"name": "an unknown tag", "doc": {"values": {"x": {"$nope": "1"}}, "flags": {"readonly": true, "permissionlessExtension": true}, "expiry": {"kind": "days", "days": 7}}},
+    {"name": "a tag that does not stand alone", "doc": {"values": {"x": {"$big": "1", "y": 2}}, "flags": {"readonly": true, "permissionlessExtension": true}, "expiry": {"kind": "days", "days": 7}}},
+    {"name": "bytes that are not base64", "doc": {"values": {"x": {"$bytes": "abc"}}, "flags": {"readonly": true, "permissionlessExtension": true}, "expiry": {"kind": "days", "days": 7}}},
+    {"name": "bytes in base64url", "doc": {"values": {"x": {"$bytes": "-_-_"}}, "flags": {"readonly": true, "permissionlessExtension": true}, "expiry": {"kind": "days", "days": 7}}},
+    {"name": "a big with a leading zero", "doc": {"values": {"x": {"$big": "01"}}, "flags": {"readonly": true, "permissionlessExtension": true}, "expiry": {"kind": "days", "days": 7}}},
+    {"name": "a big that is a number", "doc": {"values": {"x": {"$big": 1}}, "flags": {"readonly": true, "permissionlessExtension": true}, "expiry": {"kind": "days", "days": 7}}},
+    {"name": "a date without milliseconds", "doc": {"values": {}, "flags": {"readonly": true, "permissionlessExtension": true}, "expiry": {"kind": "atDate", "date": {"$date": "2027-01-30T00:00:00Z"}, "atLeastDays": 1}}},
+    {"name": "a date that is no date", "doc": {"values": {}, "flags": {"readonly": true, "permissionlessExtension": true}, "expiry": {"kind": "atDate", "date": {"$date": "soon"}, "atLeastDays": 1}}},
+    {"name": "no values", "doc": {"flags": {"readonly": true, "permissionlessExtension": true}, "expiry": {"kind": "days", "days": 7}}},
+    {"name": "values that are an array", "doc": {"values": [1], "flags": {"readonly": true, "permissionlessExtension": true}, "expiry": {"kind": "days", "days": 7}}},
+    {"name": "values that are a tag", "doc": {"values": {"$bytes": "AQID"}, "flags": {"readonly": true, "permissionlessExtension": true}, "expiry": {"kind": "days", "days": 7}}},
+    {"name": "flags that are not booleans", "doc": {"values": {}, "flags": {"readonly": 1, "permissionlessExtension": true}, "expiry": {"kind": "days", "days": 7}}},
+    {"name": "a flag left out", "doc": {"values": {}, "flags": {"readonly": true}, "expiry": {"kind": "days", "days": 7}}},
+    {"name": "an unknown expiry kind", "doc": {"values": {}, "flags": {"readonly": true, "permissionlessExtension": true}, "expiry": {"kind": "weeks", "weeks": 1}}},
+    {"name": "no expiry", "doc": {"values": {}, "flags": {"readonly": true, "permissionlessExtension": true}}},
+    {"name": "a list, not a spec", "doc": [1, 2]},
+    {"name": "null", "doc": null},
+    {"name": "text that is not JSON", "text": "{\"values\": "}
+  ]
+}

@@ -3,6 +3,7 @@ console's state it runs on, and the guard on real sponsor writes."""
 import importlib.util
 import json
 import os
+import stat
 
 import pytest
 
@@ -237,6 +238,9 @@ def console(tmp_path):
                                                        "volume": 70}))
     (src / "console-id").write_text("8136575778911b0f5e7eba25d6e31821")
     (src / "handler.json").write_text('{"book": "ANY-6PS"}')
+    (src / "arkiv-key").write_text("ab" * 32 + "\n")
+    os.chmod(src / "arkiv-key", 0o600)
+    (src / "arkiv-address").write_text("0x" + "1a2b" * 10 + " 0123456789abcdef\n")
     (src / "coach-voice.key").write_text("secret")
     (src / "handler-resume.json").write_text("{}")
     return src
@@ -256,6 +260,10 @@ def test_the_copy_is_that_console_and_never_writes_it(tmp_path):
         "coach_greeted": "2026-11-06", "handler_offered": "2026-11-06", "volume": 70}
     assert (dest / "console-id").read_text() == "8136575778911b0f5e7eba25d6e31821"
     assert (dest / "handler.json").read_text() == '{"book": "ANY-6PS"}'
+    assert (dest / "arkiv-key").read_text() == "ab" * 32 + "\n"                  # the laptop console's own wallet
+    assert (dest / "arkiv-address").read_text() == (src / "arkiv-address").read_text()
+    if os.name == "posix":
+        assert stat.S_IMODE(os.stat(dest / "arkiv-key").st_mode) == 0o600
     assert not (dest / "coach-voice.key").exists() and not (dest / "handler-resume.json").exists()
     assert sorted(os.listdir(runs)) == ["best"] and (dest / "runs" / "best" / "MDGP.acl").read_bytes() == b"ACL1"
     assert {p: p.read_bytes() for p in src.rglob("*") if p.is_file()} == before
