@@ -1,0 +1,6 @@
+[
+ {"video": "out/title_open_raw.mov", "grade": "warm", "trim": null, "seconds": 2.5, "sound": "title_open_orig", "gain": 0, "overlay": null, "chapter": "Title"},
+ {"video": "out/flash_raw.mov", "grade": "cool", "trim": null, "seconds": 6.666667, "sound": "flash_orig", "gain": 0, "overlay": null, "chapter": "What Any% is"},
+ {"video": "out/sponsor_arkiv_raw.mov", "grade": "cool", "trim": null, "seconds": 74.333333, "sound": "sponsor_arkiv_orig", "gain": 0, "overlay": null, "chapter": "Any% x Arkiv"},
+ {"video": "out/title_end_raw.mov", "grade": "warm", "trim": null, "seconds": 4.0, "sound": "title_end_orig", "gain": 0, "overlay": null, "chapter": "End title"}
+]

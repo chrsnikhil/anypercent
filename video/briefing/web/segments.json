@@ -1,0 +1,350 @@
+{
+ "full": [
+  {
+   "comp": "ColdOpen",
+   "props": {},
+   "from": 0,
+   "frames": 1200,
+   "grade": "warm",
+   "overlay": null,
+   "chapter": "Cold open"
+  },
+  {
+   "comp": "ProofTeaser",
+   "props": {},
+   "from": 0,
+   "frames": 100,
+   "grade": "cool",
+   "overlay": null,
+   "chapter": "Flash-forward"
+  },
+  {
+   "comp": "TitleOpen",
+   "props": {},
+   "from": 0,
+   "frames": 150,
+   "grade": "warm",
+   "overlay": null,
+   "chapter": "Title"
+  },
+  {
+   "comp": "Primer",
+   "props": {},
+   "from": 0,
+   "frames": 720,
+   "grade": "warm",
+   "overlay": null,
+   "chapter": "What a speedrun is"
+  },
+  {
+   "comp": "Chapter",
+   "props": {
+    "part": "PART I",
+    "title": "THE CASE FILES"
+   },
+   "from": 0,
+   "frames": 50,
+   "grade": "warm",
+   "overlay": null,
+   "chapter": "Part I: The case files"
+  },
+  {
+   "comp": "Dossier",
+   "props": {},
+   "from": 0,
+   "frames": 3000,
+   "grade": "warm",
+   "overlay": null,
+   "chapter": null
+  },
+  {
+   "comp": "Breaks",
+   "props": {},
+   "from": 0,
+   "frames": 1675,
+   "grade": "warm",
+   "overlay": null,
+   "chapter": "Part II: How records break"
+  },
+  {
+   "comp": "Chapter",
+   "props": {
+    "part": "PART III",
+    "title": "THE MACHINE"
+   },
+   "from": 0,
+   "frames": 50,
+   "grade": "cool",
+   "overlay": null,
+   "chapter": "Part III: The machine"
+  },
+  {
+   "comp": "Briefing",
+   "props": {},
+   "from": 120,
+   "frames": 1890,
+   "grade": "asm",
+   "overlay": "MachineSubs",
+   "chapter": null
+  },
+  {
+   "comp": "GameReel",
+   "props": {},
+   "from": 0,
+   "frames": 2710,
+   "grade": "warm",
+   "overlay": null,
+   "chapter": "The games"
+  },
+  {
+   "comp": "Proof",
+   "props": {},
+   "from": 0,
+   "frames": 1968,
+   "grade": "cool",
+   "overlay": null,
+   "chapter": "Part IV: The proof"
+  },
+  {
+   "comp": "Check",
+   "props": {},
+   "from": 0,
+   "frames": 570,
+   "grade": "cool",
+   "overlay": null,
+   "chapter": "The check"
+  },
+  {
+   "comp": "Coach",
+   "props": {},
+   "from": 0,
+   "frames": 630,
+   "grade": "cool",
+   "overlay": null,
+   "chapter": "The coach"
+  },
+  {
+   "comp": "Proof",
+   "props": {},
+   "from": 1968,
+   "frames": 624,
+   "grade": "cool",
+   "overlay": null,
+   "chapter": "The seed"
+  },
+  {
+   "comp": "Objectives",
+   "props": {},
+   "from": 0,
+   "frames": 1510,
+   "grade": "cool",
+   "overlay": null,
+   "chapter": "Part V: Mumbai"
+  },
+  {
+   "comp": "Handler",
+   "props": {},
+   "from": 0,
+   "frames": 540,
+   "grade": "cool",
+   "overlay": null,
+   "chapter": "PB on the sponsor steps"
+  },
+  {
+   "comp": "Briefing",
+   "props": {},
+   "from": 2010,
+   "frames": 450,
+   "grade": "asm",
+   "overlay": null,
+   "chapter": "The plates"
+  },
+  {
+   "comp": "Coda",
+   "props": {},
+   "from": 0,
+   "frames": 480,
+   "grade": "warm",
+   "overlay": null,
+   "chapter": "Coda"
+  },
+  {
+   "comp": "TitleEnd",
+   "props": {},
+   "from": 0,
+   "frames": 240,
+   "grade": "warm",
+   "overlay": null,
+   "chapter": "End title"
+  }
+ ],
+ "sub": [
+  {
+   "comp": "ColdOpen",
+   "props": {},
+   "from": 0,
+   "frames": 1200,
+   "grade": "warm",
+   "overlay": null,
+   "chapter": "Cold open"
+  },
+  {
+   "comp": "ProofFlash",
+   "props": {},
+   "from": 0,
+   "frames": 400,
+   "grade": "cool",
+   "overlay": null,
+   "chapter": "Flash-forward"
+  },
+  {
+   "comp": "TitleOpen",
+   "props": {},
+   "from": 0,
+   "frames": 150,
+   "grade": "warm",
+   "overlay": null,
+   "chapter": "Title"
+  },
+  {
+   "comp": "Primer",
+   "props": {},
+   "from": 0,
+   "frames": 720,
+   "grade": "warm",
+   "overlay": null,
+   "chapter": "What a speedrun is"
+  },
+  {
+   "comp": "Breaks",
+   "props": {
+    "part": "PART I",
+    "slow": 1
+   },
+   "from": 0,
+   "frames": 1340,
+   "grade": "warm",
+   "overlay": null,
+   "chapter": "Part I: How records break"
+  },
+  {
+   "comp": "Chapter",
+   "props": {
+    "part": "PART II",
+    "title": "THE MACHINE"
+   },
+   "from": 0,
+   "frames": 50,
+   "grade": "cool",
+   "overlay": null,
+   "chapter": "Part II: The machine"
+  },
+  {
+   "comp": "Briefing",
+   "props": {},
+   "from": 120,
+   "frames": 1890,
+   "grade": "asm",
+   "overlay": "MachineSubs",
+   "chapter": null
+  },
+  {
+   "comp": "GameReel",
+   "props": {
+    "shot": 240
+   },
+   "from": 0,
+   "frames": 1510,
+   "grade": "warm",
+   "overlay": null,
+   "chapter": "The games"
+  },
+  {
+   "comp": "Proof",
+   "props": {
+    "part": "PART III"
+   },
+   "from": 0,
+   "frames": 1968,
+   "grade": "cool",
+   "overlay": null,
+   "chapter": "Part III: The proof"
+  },
+  {
+   "comp": "Check",
+   "props": {},
+   "from": 0,
+   "frames": 570,
+   "grade": "cool",
+   "overlay": null,
+   "chapter": "The check"
+  },
+  {
+   "comp": "Coach",
+   "props": {},
+   "from": 0,
+   "frames": 630,
+   "grade": "cool",
+   "overlay": null,
+   "chapter": "The coach"
+  },
+  {
+   "comp": "Proof",
+   "props": {
+    "part": "PART III"
+   },
+   "from": 1968,
+   "frames": 624,
+   "grade": "cool",
+   "overlay": null,
+   "chapter": "The seed"
+  },
+  {
+   "comp": "Objectives",
+   "props": {
+    "part": "PART IV"
+   },
+   "from": 0,
+   "frames": 1510,
+   "grade": "cool",
+   "overlay": null,
+   "chapter": "Part IV: Mumbai"
+  },
+  {
+   "comp": "Handler",
+   "props": {},
+   "from": 0,
+   "frames": 540,
+   "grade": "cool",
+   "overlay": null,
+   "chapter": "PB on the sponsor steps"
+  },
+  {
+   "comp": "Briefing",
+   "props": {},
+   "from": 2010,
+   "frames": 450,
+   "grade": "asm",
+   "overlay": null,
+   "chapter": "The plates"
+  },
+  {
+   "comp": "Coda",
+   "props": {},
+   "from": 0,
+   "frames": 480,
+   "grade": "warm",
+   "overlay": null,
+   "chapter": "Coda"
+  },
+  {
+   "comp": "TitleEnd",
+   "props": {},
+   "from": 0,
+   "frames": 240,
+   "grade": "warm",
+   "overlay": null,
+   "chapter": "End title"
+  }
+ ]
+}

@@ -1,0 +1,40 @@
+{
+ "_doc": "The Chainlink CRE demo's act (Act.tsx) and its sound (prep/sponsors/chainlink.py) both read this file, so picture and sound cues never drift. verdict_destination: where the workflow's verdict lands; still undecided (an EVM testnet contract, or a relay that writes it to Hedera's HCS), so it is one value here and every card reads it. shots: the act's shots in order, lengths in frames at 60 fps; 'field' is replaced by the CHAINLINK clips' total length once src/acts/built.json has any. lines: the on-screen narration, 'at' in frames from its shot's start, at most 2.8 words a second; 'built' is the wording used once built.json has chainlink: true.",
+ "verdict_destination": "EVM TESTNET",
+ "shots": [
+  { "id": "slate", "len": 50 },
+  { "id": "problem", "len": 210 },
+  { "id": "trust", "len": 230 },
+  { "id": "fix", "len": 310 },
+  { "id": "trigger", "len": 240 },
+  { "id": "hedera", "len": 250 },
+  { "id": "arkiv", "len": 240 },
+  { "id": "checks", "len": 250 },
+  { "id": "checker", "len": 260 },
+  { "id": "verdict", "len": 260 },
+  { "id": "pipeline", "len": 200 },
+  { "id": "tamper", "len": 290 },
+  { "id": "void", "len": 230 },
+  { "id": "outcomes", "len": 420 },
+  { "id": "field", "len": 360 },
+  { "id": "close", "len": 340 }
+ ],
+ "lines": [
+  { "shot": "problem", "at": 14, "len": 186, "text": "Soon, a record on Any% moves money." },
+  { "shot": "trust", "at": 12, "len": 200, "text": "Today, our server referees it, with our key." },
+  { "shot": "fix", "at": 16, "len": 236, "text": "Deployed on CRE, the referee is a network, not us." },
+  { "shot": "trigger", "at": 14, "len": 214, "text": "Anyone can trigger it, with a finished run's id." },
+  { "shot": "hedera", "at": 14, "len": 226, "text": "From Hedera's mirror node: the seed, the checkpoints, the finish." },
+  { "shot": "arkiv", "at": 14, "len": 216, "text": "From Arkiv: the record. Game, time, and the log's hash." },
+  { "shot": "checks", "at": 14, "len": 226, "text": "The workflow checks that record against Hedera. Hedera wins." },
+  { "shot": "checker", "at": 14, "len": 236, "text": "A checker replays the inputs. Ideally, two independent operators." },
+  { "shot": "verdict", "at": 12, "len": 240, "text": "The verdict goes onchain. The board and payouts act on it." },
+  { "shot": "pipeline", "at": 12, "len": 180, "text": "Four HTTP calls a run. CRE allows five." },
+  { "shot": "tamper", "at": 20, "len": 260, "text": "A slowed run still replays. Hedera's clock catches it." },
+  { "shot": "void", "at": 14, "len": 200, "text": "Void, because Hedera's evidence proves it." },
+  { "shot": "outcomes", "at": 14, "len": 190, "text": "Three outcomes. Only proof makes a run void." },
+  { "shot": "outcomes", "at": 214, "len": 196, "text": "Missing or expired is pending. Never a ban." },
+  { "shot": "field", "at": 14, "len": 330, "text": "We'll simulate it with the CRE CLI, at the event.", "built": "Simulated with the CRE CLI, at the event." },
+  { "shot": "close", "at": 20, "len": 300, "text": "The goal: anyone asks, and the verdict lands onchain.", "built": "Anyone asks, and the verdict lands onchain." }
+ ]
+}

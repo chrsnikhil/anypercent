@@ -1,0 +1,137 @@
+{
+ "fps": 60,
+ "scenes": [
+  {
+   "n": 1,
+   "len": 480,
+   "name": "A race, and a ghost",
+   "src": "RACE-1 window A (render 64.0-72.0 s) + tracked GHOST pointer"
+  },
+  {
+   "n": 2,
+   "len": 720,
+   "name": "What a speedrun is",
+   "src": "ACT Primer 0-720"
+  },
+  {
+   "n": 3,
+   "len": 1200,
+   "name": "Why a video is not proof",
+   "src": "ACT BreaksSub 50-400, 430-780, 810-1160, 1190-1340 + 2 editor cards"
+  },
+  {
+   "n": 4,
+   "len": 780,
+   "name": "Any%: check the run, not the video",
+   "src": "3D console, screen = record_book.mp4 Home (stand-in HAND-1); TERM-1 placeholder"
+  },
+  {
+   "n": 5,
+   "len": 600,
+   "name": "World: consoles exclusive to humans",
+   "src": "slate; 3D console, screen = record_book.mp4; record_book.mp4 punch-in (real book card); UI-4a placeholder"
+  },
+  {
+   "n": 6,
+   "len": 660,
+   "name": "World: one human, one book",
+   "src": "mock id_scan/id_dup (stand-in UI-4b) + PHONE-1 placeholder; humans_only.mp4 punch-in (real Humans only)"
+  },
+  {
+   "n": 7,
+   "len": 840,
+   "name": "World: every listing, approved",
+   "src": "PHONE-2 placeholder + HCS LISTING #14 approved text (real); UI-6 placeholder"
+  },
+  {
+   "n": 8,
+   "len": 480,
+   "name": "World: the link names the console's wallet",
+   "src": "TERM-6 + PHONE-3 placeholders; record_book.mp4 punch-in (UI-3b wallet line TODO)"
+  },
+  {
+   "n": 9,
+   "len": 660,
+   "name": "Arkiv: the console signs its own record",
+   "src": "slate; 3D console, screen = sample_board.mp4 on-chain card (pre-switch); WEB-6 placeholder + Arkiv diagram (sign)"
+  },
+  {
+   "n": 10,
+   "len": 660,
+   "name": "Arkiv: the server stamps it",
+   "src": "WEB-7 placeholder + Arkiv diagram (stamp); humans_only.mp4 board punch-in"
+  },
+  {
+   "n": 11,
+   "len": 540,
+   "name": "Arkiv: decides what counts, can't touch the record",
+   "src": "WEB-8 placeholder + Arkiv diagram (own) + WHY IT CAN'T card"
+  },
+  {
+   "n": 12,
+   "len": 540,
+   "name": "Arkiv: anyone can query",
+   "src": "public_board.png (pre-switch); TERM-2 placeholder + Arkiv diagram (query); WEB-10 placeholder"
+  },
+  {
+   "n": 13,
+   "len": 480,
+   "name": "Arkiv: look-alikes ignored; BOTs from the house",
+   "src": "TERM-3 placeholder + Arkiv diagram (look-alike); humans_only.mp4 BOT rows punch-in"
+  },
+  {
+   "n": 14,
+   "len": 720,
+   "name": "Hedera: the scout",
+   "src": "slate; 3D console, screen = scout_pick_try1.mp4; scouting + real pick card (model pick, stopped before buying)"
+  },
+  {
+   "n": 15,
+   "len": 660,
+   "name": "Hedera: the agent pays",
+   "src": "x402 pay diagram with real HCS #12/#13 values (earlier purchase)"
+  },
+  {
+   "n": 16,
+   "len": 600,
+   "name": "Hedera: on HashScan",
+   "src": "HCS #12 INTENT + #13 RECEIPT decoded (real, hcs_messages.json); hashscan_payment_bot.png (same tx)"
+  },
+  {
+   "n": 17,
+   "len": 480,
+   "name": "Hedera: the guards",
+   "src": "TERM-7, TERM-8, TERM-9, WEB-10 placeholders (WEB-10 ids real)"
+  },
+  {
+   "n": 18,
+   "len": 480,
+   "name": "What you get: a public board",
+   "src": "slate; public_board.png (pre-switch) + URL"
+  },
+  {
+   "n": 19,
+   "len": 480,
+   "name": "What you get: every record, one press away",
+   "src": "sample_board.mp4 on-chain card punch-in (stand-in HAND-3/UI-8)"
+  },
+  {
+   "n": 20,
+   "len": 480,
+   "name": "What you get: race a checked ghost; sales pay the runner",
+   "src": "UI-7 placeholder; RACE-1 window B (112.0-115.0 s); hashscan_payment_human.png (real sale)"
+  },
+  {
+   "n": 21,
+   "len": 1080,
+   "name": "The handheld: assembly and parts",
+   "src": "ACT Briefing 160-560, 1020-1490, 1800-2010 + MachineSubs lines at 44 px"
+  },
+  {
+   "n": 22,
+   "len": 660,
+   "name": "Close: three sponsors, one line each",
+   "src": "3D console, screen = humans_only.mp4 board (stand-in HAND-5) + 3 cards + URL; ACT TitleEnd 120-240"
+  }
+ ]
+}

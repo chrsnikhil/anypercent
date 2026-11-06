@@ -1,0 +1,40 @@
+{
+ "MDGP": {
+  "title": "MARINE DRIVE GP",
+  "ria_frames": 6076,
+  "ria_hash": "225D59FD",
+  "you_frames": 6095,
+  "you_hash": "B872DDD7",
+  "gap_frames": 19,
+  "hold": {
+   "at": 5989,
+   "frames": 20
+  },
+  "window": {
+   "first": 6010,
+   "count": 290,
+   "every": 2
+  },
+  "images": 145,
+  "ghost_bytes": 9712
+ },
+ "RUSH": {
+  "title": "RUSH HOUR",
+  "ria_frames": 4892,
+  "ria_hash": "94853AFC",
+  "you_frames": 4938,
+  "you_hash": "88E13062",
+  "gap_frames": 46,
+  "hold": {
+   "at": 4680,
+   "frames": 45
+  },
+  "window": {
+   "first": 4690,
+   "count": 300,
+   "every": 2
+  },
+  "images": 150,
+  "ghost_bytes": 7444
+ }
+}

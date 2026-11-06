@@ -1,0 +1,62 @@
+:root {
+  --bg: #000; --panel: rgba(8,10,12,0.86); --line: #2a2f34; --text: #e6e6e3; --dim: #8f918f; --faint: #5b5d5c;
+  --orange: #f08a24; --amber: #ffb23f; --blue: #7cc4ff; --green: #7bd389;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); }
+body { font: 15px/1.5 "Barlow", "Segoe UI", system-ui, sans-serif; }
+button { font: inherit; color: inherit; cursor: pointer; }
+
+/* the film is the whole window; the player letterboxes the 16:9 frame inside it */
+.stage { position: fixed; inset: 0; background: #000; }
+.stage.hide-cursor, .stage.hide-cursor * { cursor: none; }
+
+/* the start screen (and the end screen), over the film's PROVE IT. frame */
+.menu { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+  padding: 24px 16px; background: radial-gradient(ellipse at 50% 45%, rgba(0,0,0,0.5), rgba(0,0,0,0.9)); overflow-y: auto;
+  -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); }
+.brand { font-family: "Archivo Black", "Arial Black", Impact, sans-serif; font-size: clamp(64px, 12vw, 168px); line-height: 1; letter-spacing: 0.02em;
+  color: #e9e7e1; text-shadow: 0 10px 60px rgba(0,0,0,0.8); }
+.where { font-family: "Space Mono", ui-monospace, Consolas, monospace; font-size: clamp(11px, 1.1vw, 14px); letter-spacing: 0.3em; color: var(--orange);
+  text-align: center; }
+.cuts { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; margin-top: 18px; }
+.cut { display: grid; grid-template-columns: auto 1fr; column-gap: 16px; align-items: center; min-width: min(380px, 90vw); text-align: left;
+  background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--orange); padding: 16px 22px; }
+.cut .tri { grid-row: span 2; width: 0; height: 0; border-left: 22px solid var(--text); border-top: 13px solid transparent; border-bottom: 13px solid transparent; }
+.cut b { font-family: "Barlow Condensed", "Arial Narrow", sans-serif; font-size: 26px; letter-spacing: 0.16em; }
+.cut span:last-child { font-family: "Space Mono", ui-monospace, Consolas, monospace; font-size: 12px; color: var(--dim); letter-spacing: 0.06em; }
+.cut:hover { border-color: #3a3f44; border-left-color: var(--amber); background: rgba(20,22,25,0.92); }
+.cut:hover .tri { border-left-color: var(--amber); }
+.keys { font-family: "Space Mono", ui-monospace, Consolas, monospace; font-size: 11px; letter-spacing: 0.24em; color: var(--faint); text-align: center; }
+
+.real { max-width: min(980px, 92vw); margin-top: 6px; }
+.real summary { cursor: pointer; text-align: center; font-family: "Space Mono", ui-monospace, Consolas, monospace; font-size: 12px; letter-spacing: 0.3em;
+  color: var(--dim); list-style: none; }
+.real summary::-webkit-details-marker { display: none; }
+.real[open] summary { color: var(--orange); margin-bottom: 12px; }
+.real dl { margin: 0; display: grid; gap: 6px; background: var(--panel); border: 1px solid var(--line); padding: 14px 18px; }
+.real dl > div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 14px; align-items: baseline; }
+.real dt { font-family: "Space Mono", ui-monospace, Consolas, monospace; font-size: 12px; letter-spacing: 0.18em; font-weight: 700; }
+.real dd { margin: 0; font-size: 14px; }
+.real .r dt { color: var(--green); } .real .p dt { color: var(--blue); } .real .n dt { color: var(--amber); }
+
+/* paused: a small card in the middle, the frame still visible */
+.pause { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 16px;
+  background: var(--panel); border: 1px solid var(--line); border-top: 2px solid var(--orange); padding: 22px 26px; }
+.pause .label { font-family: "Space Mono", ui-monospace, Consolas, monospace; font-size: 13px; letter-spacing: 0.4em; color: var(--orange); }
+.pause .row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.pause button { background: transparent; border: 1px solid var(--line); padding: 8px 18px; font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
+  font-size: 20px; letter-spacing: 0.16em; }
+.pause button:hover { border-color: var(--orange); color: var(--orange); }
+
+/* a brief notice, top right */
+.note { position: absolute; right: 24px; top: 20px; font-family: "Space Mono", ui-monospace, Consolas, monospace; font-size: 12px; letter-spacing: 0.22em;
+  color: var(--amber); background: rgba(0,0,0,0.7); padding: 6px 12px; pointer-events: none; }
+
+#boot { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: #000; }
+.boot-op { font-family: "Arial Black", Impact, sans-serif; font-size: 48px; letter-spacing: 0.04em; }
+#boot-msg { font-family: ui-monospace, Consolas, monospace; font-size: 13px; letter-spacing: 0.3em; color: var(--amber); }
+.boot-bar { width: 260px; height: 3px; background: var(--line); overflow: hidden; }
+.boot-bar i { display: block; width: 40%; height: 100%; background: var(--orange); animation: scan 1.1s ease-in-out infinite; }
+@keyframes scan { from { transform: translateX(-100%); } to { transform: translateX(250%); } }

@@ -1,0 +1,7 @@
+{
+ "_doc": "Every value the Arkiv demo shows, and where it comes from. Nothing here is invented: no entity key, tx hash or address exists until the event, so none is shown. RIA = the shipped Marine Drive GP test log (WSL /opt/arca-sandbox/devicecheck/MDGP.acl, made by device/make_testlogs.py; header ACL1 MDGP, rules 4, seed 0, 6461 frames, hash 225D59FD); its SHA-256 by sha256sum on 2026-11-05. YOU = the real slower run prep/make_handler_run.py played and arcade_replay replayed (public/handler/run.json). The forged row's time is not a run: it is the look-alike row the demo writes from a stranger's wallet, labelled FORGED on screen.",
+ "ria": { "game": "MDGP", "title": "MARINE DRIVE GP", "rules": 4, "time_frames": 6076, "log_bytes": 2421,
+          "log_sha256": "207b80c8238f3bc93d42f9eaf8d9e95780a6a68276655e1244c0ecdac791f3ac", "replay_hash": "225D59FD" },
+ "you": { "time_frames": 6095, "replay_hash": "B872DDD7" },
+ "forged": { "time_frames": 5400 }
+}

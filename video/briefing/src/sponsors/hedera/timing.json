@@ -1,0 +1,37 @@
+{
+ "_doc": "The Hedera act's timeline at 60 fps, read by Act.tsx (pictures) and prep/sponsors/hedera.py (sound). Each shot: at, len, and its events as offsets from the shot's start: cards (a card spawning), chirps, hits (stamps), glitch (an inner cut or a screen coming up), typing ([from, to, every]). Lines: the subtitles (at, len, and text variants: todo = before built.hedera, done = after). A line marked slot belongs to the HashScan slot and gives way to the field-report clips.",
+ "len": 4090,
+ "shots": [
+  { "id": "slate", "at": 0, "len": 45 },
+  { "id": "plate", "at": 45, "len": 245, "cards": [18, 30] },
+  { "id": "brief", "at": 290, "len": 240, "cards": [10, 19, 28] },
+  { "id": "start", "at": 530, "len": 240, "cards": [8, 18, 28], "chirps": [92, 150] },
+  { "id": "seed", "at": 770, "len": 250, "cards": [10, 22], "chirps": [70] },
+  { "id": "topic", "at": 1020, "len": 255, "cards": [8, 14, 18, 22, 26, 30], "chirps": [36, 156] },
+  { "id": "envelope", "at": 1275, "len": 280, "cards": [10, 24], "chirps": [62], "hits": [196] },
+  { "id": "slowed", "at": 1555, "len": 310, "cards": [8], "hits": [84] },
+  { "id": "pay", "at": 1865, "len": 275, "cards": [18, 30], "glitch": [4], "chirps": [96, 170], "typing": [[26, 200, 6]] },
+  { "id": "pay2", "at": 2140, "len": 290, "cards": [10, 18, 26, 34], "chirps": [170] },
+  { "id": "x402", "at": 2430, "len": 290, "cards": [10, 22, 34, 110], "chirps": [200], "typing": [[50, 201, 30]] },
+  { "id": "native", "at": 2720, "len": 510, "cards": [12, 24], "glitch": [240] },
+  { "id": "hashscan", "at": 3230, "len": 310, "cards": [30, 40], "glitch": [4] },
+  { "id": "loop", "at": 3540, "len": 280, "cards": [10, 32, 54, 76, 98], "chirps": [168] },
+  { "id": "end", "at": 3820, "len": 270, "cards": [24] }
+ ],
+ "lines": [
+  { "at": 60, "len": 310, "todo": "At Mumbai, Hedera makes Any% runs live, and pays the runner ahead of you.", "done": "Hedera makes Any% runs live, and pays the runner ahead of you." },
+  { "at": 548, "len": 205, "todo": "The seed comes from Hedera's running hash at START." },
+  { "at": 780, "len": 240, "todo": "Nobody, including the console, can know it before START reaches consensus." },
+  { "at": 1035, "len": 240, "todo": "Every 2 seconds of play, a checkpoint goes to an HCS topic." },
+  { "at": 1290, "len": 258, "todo": "Inputs must be committed within 15 s plus 3% of real time." },
+  { "at": 1563, "len": 302, "todo": "On a 90 s run, that caps pauses and slow motion at about 18 s." },
+  { "at": 1880, "len": 258, "todo": "PB, your coach agent, buys the ghost of the runner just ahead." },
+  { "at": 2150, "len": 280, "todo": "It pays her over x402, in USDC on Hedera, straight to her account." },
+  { "at": 2450, "len": 262, "todo": "No human approves the payment: PB stays under the caps you set." },
+  { "at": 2735, "len": 215, "todo": "No Solidity: two native services, through the Hedera SDK." },
+  { "at": 2975, "len": 245, "todo": "HCS keeps the clock and the receipts. HTS moves the USDC." },
+  { "at": 3245, "len": 280, "slot": true, "todo": "The payment shows on HashScan. We film this slot at the event.", "done": "The payment shows on HashScan, from PB straight to the runner." },
+  { "at": 3555, "len": 250, "todo": "Replay proves what happened. Hedera proves when, and at what pace." },
+  { "at": 3832, "len": 240, "todo": "The goal: the console that pays the human just ahead of you.", "done": "The console that pays the human just ahead of you." }
+ ]
+}
