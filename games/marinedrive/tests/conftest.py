@@ -105,6 +105,13 @@ def leave_results():
 
 # ---- this game's own -------------------------------------------------------------------------------------------
 
+@pytest.fixture(scope="session")
+def splits_tool():
+    """out/arcade_splits: arcade_replay's replay, then the player's lap times (make -f tools.mk splits)."""
+    sh("make", "-f", "tools.mk", "splits")
+    return os.path.join(GAME_DIR, "out", "arcade_splits")
+
+
 class Kart(ctypes.Structure):
     """md_kart (rules/game.h)."""
     _fields_ = [("x", ctypes.c_int32), ("y", ctypes.c_int32), ("vx", ctypes.c_int32), ("vy", ctypes.c_int32),
