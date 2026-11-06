@@ -1895,7 +1895,7 @@ def test_triangle_on_a_board_row_shows_that_runs_records_on_chain(tmp_path):
     assert flow.ctx["chain"] == [
         {"label": "Arkiv run", "value": "0xb0a2…b0a2", "url": ENTITY + BOT_KEY},
         {"label": "Arkiv listing", "value": "0x1a2b…1a2b", "url": ENTITY + BOT_LISTING},
-        {"label": "Hedera LISTING #41", "value": "topic 0.0.11332437",
+        {"label": "Hedera HOUSE #41", "value": "topic 0.0.11332437",          # a BOT run: its batch's HOUSE message
          "url": "https://hashscan.io/testnet/topic/0.0.11332437"},
         {"label": "Replayed by the checker", "value": "1:43.93 = 6236 frames", "url": ENTITY + BOT_KEY},
         {"label": "Pays 0.0.7700001", "value": "the house account",

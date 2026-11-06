@@ -686,7 +686,7 @@ class Flow:
     def _run_rows(self, row):
         """A board run's records, each only when the row has it: its run and its listing on Arkiv (their explorer
         pages, built by the Arkiv adapter from /arkiv/config: entity_link), the listing's LISTING message on Hedera
-        (hcs "<topic>/<seq>": the topic on HashScan), the checker's replay (the run's time is the one it gave before
+        (hcs "<topic>/<seq>": the topic on HashScan; a BOT run's is its batch's HOUSE message), the checker's replay (the run's time is the one it gave before
         it wrote the row: linked to the run) and the account the listing pays (on HashScan)."""
         names = self.sponsors.names
         link = getattr(self.sponsors, "entity_link", None) or (lambda key: None)
@@ -697,7 +697,8 @@ class Flow:
         message = HCS_MSG.fullmatch(row.hcs) if isinstance(row.hcs, str) else None
         if message is not None:
             topic, seq = message.groups()
-            rows.append(self._row(f"{names.third} LISTING #{int(seq)}", f"topic {topic}", f"{HASHSCAN}topic/{topic}"))
+            kind = "HOUSE" if row.tier == "bot" else "LISTING"     # a BOT run's message is its batch's HOUSE approval
+            rows.append(self._row(f"{names.third} {kind} #{int(seq)}", f"topic {topic}", f"{HASHSCAN}topic/{topic}"))
         rows.append(self._row(REPLAYED_CHECKER, f"{coach.fmt_time(row.frames)} = {row.frames} frames", run))
         if isinstance(row.pay_to, str) and PAY_TO.fullmatch(row.pay_to):
             whose = "the house account" if row.tier == "bot" else f"{row.owner or row.name}'s account"

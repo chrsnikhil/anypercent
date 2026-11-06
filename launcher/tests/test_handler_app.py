@@ -1624,7 +1624,7 @@ def test_up_down_and_triangle_on_the_real_board_open_a_runs_records_and_its_link
     assert flow.board_row.name == "BOT-A2"
     app.frame(16, [A.Y])
     assert flow.state.name == "run_links" and hw.opened == [] and flow.ctx["links_run"] == "BOT-A2's 1:43.93 run"
-    assert [row["label"] for row in flow.ctx["chain"]] == ["Arkiv run", "Arkiv listing", "Hedera LISTING #41",
+    assert [row["label"] for row in flow.ctx["chain"]] == ["Arkiv run", "Arkiv listing", "Hedera HOUSE #41",
                                                            "Replayed by the checker", "Pays 0.0.7700001"]
     app.frame(16, [A.Y])                                         # its first row: the run on the explorer
     assert hw.opened == [ENTITY + BOT_KEY] and app.nav.notice == "Opened in a window"
