@@ -11,6 +11,9 @@ export type WorldEnvironment = "production" | "staging" | "sandbox";
 export interface Config {
   port: number;
   host: string;
+  /** EXTRA_HOSTS: more addresses to listen on as well (comma list), e.g. the laptop's Tailscale address for a
+   * console away from the laptop's network. HOST stays the one that names the bridge (its paywall URL). */
+  extraHosts: string[];
   dataDir: string;
   world: {
     appId: string;
@@ -193,6 +196,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, baseDir = proce
   return {
     port: Number.isInteger(port) && port > 0 && port < 65536 ? port : 8787,
     host: str(env, "HOST", "127.0.0.1"),
+    extraHosts: [...new Set(str(env, "EXTRA_HOSTS").split(",").map((h) => h.trim()))].filter(
+      (h) => h !== "" && h !== str(env, "HOST", "127.0.0.1"),
+    ),
     dataDir: resolve(baseDir, str(env, "DATA_DIR", "data")),
     world: {
       appId: str(env, "WORLD_APP_ID"),

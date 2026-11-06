@@ -62,3 +62,14 @@ describe("World settings", () => {
     assert.equal(loadConfig({ WORLD_SIGNUP_SESSION: "bogus" }, ".").world.signupSession, "combined");
   });
 });
+
+describe("EXTRA_HOSTS: more addresses the bridge also listens on", () => {
+  it("none by default", () => {
+    assert.deepEqual(loadConfig({}, ".").extraHosts, []);
+  });
+
+  it("a comma list, trimmed, without blanks, repeats or HOST itself", () => {
+    const cfg = loadConfig({ HOST: "172.18.96.1", EXTRA_HOSTS: " 100.71.192.6, ,172.18.96.1,100.71.192.6 " }, ".");
+    assert.deepEqual(cfg.extraHosts, ["100.71.192.6"]);
+  });
+});

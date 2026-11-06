@@ -17,6 +17,7 @@
  * World approval (src/arkiv/house.ts). /health adds "console", "splits", "scout" and "house".
  */
 import { existsSync } from "node:fs";
+import { createServer, type RequestListener } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AgentPass } from "./agentpass.js";
@@ -373,6 +374,14 @@ server.on("error", (err: NodeJS.ErrnoException) => {
   else log(`server error: ${err.code ?? err.message}`);
   process.exit(1);
 });
+// The same bridge (one set of jobs, one store) on each extra address too. One that is not up right now (Tailscale
+// off) is logged and skipped: HOST still serves.
+const onRequest = server.listeners("request")[0] as RequestListener;
+for (const extraHost of cfg.extraHosts) {
+  const extra = createServer(onRequest);
+  extra.on("error", (err: NodeJS.ErrnoException) => log(`not also on ${extraHost}:${cfg.port}: ${err.code ?? err.message}`));
+  extra.listen(cfg.port, extraHost, () => log(`world-bridge also on http://${extraHost}:${cfg.port}`));
+}
 server.listen(cfg.port, cfg.host, () => {
   log(
     `world-bridge on http://${cfg.host}:${cfg.port} ` +
