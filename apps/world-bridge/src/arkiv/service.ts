@@ -185,7 +185,7 @@ export class ArkivService {
     let plain: Uint8Array | null;
     if (row.log_enc) {
       if (!GHOST_SECRET_RE.test(this.opts.ghostSecret)) throw new RouteError(503, { error: "arkiv_not_configured", failure: GHOST_FAILURE });
-      if (!this.opts.payments.accept(receipt, row.key)) throw new RouteError(402, { error: "payment_required", failure: GHOST_FAILURE });
+      if (!(await this.opts.payments.accept(receipt, row.key))) throw new RouteError(402, { error: "payment_required", failure: GHOST_FAILURE });
       plain = decryptGhost(this.opts.ghostSecret, row.log_h, row.log_enc);
     } else {
       plain = row.log ?? null;

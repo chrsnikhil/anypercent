@@ -2,7 +2,7 @@
   "name": "world-bridge",
   "version": "0.1.0",
   "private": true,
-  "description": "Any% World bridge: IDKit record book + listing approvals, and the Arkiv board (checked run rows, listings, the web board).",
+  "description": "Any% World bridge: IDKit record book + listing approvals, the Arkiv board (checked run rows, listings, the web board), and Hedera (PB pays over x402, receipts on HCS).",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -17,11 +17,20 @@
     "arkiv:open-run": "tsx scripts/arkiv-open-run.ts",
     "arkiv:lookalike": "tsx scripts/arkiv-lookalike.ts",
     "arkiv:extend": "tsx scripts/arkiv-extend.ts",
-    "arkiv:snapshot": "tsx scripts/arkiv-snapshot.ts"
+    "arkiv:snapshot": "tsx scripts/arkiv-snapshot.ts",
+    "hedera:setup": "tsx scripts/hedera-setup.ts",
+    "hedera:payto": "tsx scripts/hedera-payto.ts",
+    "hedera:smoke": "tsx scripts/hedera-smoke.ts",
+    "hedera:agent": "tsx scripts/hedera-agent.ts",
+    "hedera:evil402": "tsx scripts/hedera-evil402.ts",
+    "hedera:verify": "tsx scripts/hedera-verify.ts"
   },
   "dependencies": {
     "@arkiv-network/sdk": "1.0.1",
+    "@hiero-ledger/sdk": "2.90.1",
     "@worldcoin/idkit-core": "4.6.0",
+    "@x402/core": "2.30.0",
+    "@x402/hedera": "2.30.0",
     "jose": "6.2.15",
     "oauth4webapi": "3.8.8",
     "viem": "2.57.16"

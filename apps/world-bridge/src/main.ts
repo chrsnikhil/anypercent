@@ -5,6 +5,11 @@
  *
  * Arkiv (src/arkiv/*): the checker's key lives only in this .env. A probe every 30 s checks
  * eth_chainId against ARKIV_CHAIN_ID and the checker's balance, so /health never waits on Arkiv.
+ *
+ * Hedera (src/hedera/*): the operator and agent keys live only in this .env. A probe every 30 s
+ * reads the mirror (HEDERA_USDC once, the agent's USDC, the operator's HBAR) and the
+ * facilitators' /supported, so /health never waits on Hedera. With Hedera payments configured,
+ * /arkiv/ghost takes only receipts the paywall settled; mock receipts are refused.
  */
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -13,7 +18,7 @@ import { AgentPass } from "./agentpass.js";
 import type { ApprovalProvider } from "./approvals.js";
 import { RealChecker } from "./arkiv/checker.js";
 import { SdkArkiv } from "./arkiv/client.js";
-import { MockPayments } from "./arkiv/payments.js";
+import { MockPayments, type PaymentCheck } from "./arkiv/payments.js";
 import { Publisher } from "./arkiv/publish.js";
 import { checksum } from "./arkiv/queries.js";
 import { ArkivService } from "./arkiv/service.js";
@@ -21,12 +26,23 @@ import {
   arkivProblems,
   arkivRpcUrl,
   chooseApprovals,
+  HEDERA_NETWORK_CAIP2,
+  hederaPayProblems,
+  hederaRecordProblems,
   idkitReady,
   loadConfig,
   PRIVATE_KEY_RE,
   runExpiry,
   secretReady,
 } from "./config.js";
+import { createClientHederaSigner } from "@x402/hedera";
+import { Agent } from "./hedera/agent.js";
+import { parseDerKey, RestMirror, SdkHedera } from "./hedera/net.js";
+import { HederaPayments } from "./hedera/payments.js";
+import { Recorder } from "./hedera/record.js";
+import { ArkivOffers, ResourceServer } from "./hedera/resource.js";
+import { HederaService } from "./hedera/service.js";
+import { Facilitators, HttpFacilitator, PaymentBuilder } from "./hedera/x402.js";
 import { IdkitSessions, realIdkitDeps } from "./idkit.js";
 import { IdkitApprovals } from "./idkit-approvals.js";
 import { WorldIdp } from "./oidc.js";
@@ -146,6 +162,99 @@ const publisher: Publisher | null =
         log,
       })
     : null;
+// ---- Hedera: the LISTING record, PB's purchases (agent key, here only) and the x402 paywall ----
+const hc = cfg.hedera;
+const payProblems = hederaPayProblems(cfg);
+const recordProblems = hederaRecordProblems(cfg);
+let mirror: RestMirror | null = null;
+try {
+  mirror = new RestMirror(hc.mirror);
+} catch {
+  log("hedera off (HEDERA_MIRROR is not usable)");
+}
+let hcs: SdkHedera | null = null;
+if (recordProblems.length === 0 && mirror) {
+  try {
+    hcs = new SdkHedera({ operatorId: hc.operatorId, operatorKey: hc.operatorKey, mirror });
+  } catch {
+    log("hedera: HEDERA_OPERATOR_KEY does not parse as a DER private key; record and payments off");
+  }
+}
+const facilitators = new Facilitators(
+  [hc.facilitator, hc.facilitatorFallback].filter((u) => u !== "").map((u) => new HttpFacilitator(u)),
+  HEDERA_NETWORK_CAIP2,
+  log,
+);
+let builder: PaymentBuilder | null = null;
+if (payProblems.length === 0) {
+  try {
+    builder = new PaymentBuilder(createClientHederaSigner(hc.agentId, parseDerKey(hc.agentKey), { network: HEDERA_NETWORK_CAIP2 }), HEDERA_NETWORK_CAIP2, hc.usdc);
+  } catch {
+    log("hedera: HEDERA_AGENT_KEY does not parse as a DER private key; payments off");
+  }
+}
+const payOn = store !== null && arkivPort !== null && arkivPort.checker !== null && mirror !== null && hcs !== null && builder !== null;
+const recorder =
+  store && hcs
+    ? new Recorder({ store, hedera: hcs, topic: hc.topicId, priceC: ak.priceC, gate: () => hedera.recordGate(), log })
+    : null;
+const resource =
+  payOn && store && arkivPort && mirror
+    ? new ResourceServer({
+        source: new ArkivOffers(arkivPort, ak.ghostSecret),
+        facilitators,
+        store,
+        mirror,
+        network: HEDERA_NETWORK_CAIP2,
+        asset: hc.usdc,
+        base: hc.resourceBase,
+        gate: () => hedera.paywallGate(),
+        log,
+      })
+    : null;
+const agent =
+  payOn && store && arkivPort && mirror && hcs && builder
+    ? new Agent({
+        store,
+        arkiv: arkivPort,
+        mirror,
+        hedera: hcs,
+        facilitators,
+        builder,
+        topic: hc.topicId,
+        usdc: hc.usdc,
+        network: HEDERA_NETWORK_CAIP2,
+        agentId: hc.agentId,
+        resourceBase: hc.resourceBase,
+        priceC: ak.priceC,
+        maxPriceC: hc.maxPriceC,
+        bookDayC: hc.bookDayC,
+        agentDayC: hc.agentDayC,
+        feePayersPin: hc.feePayers,
+        gate: () => hedera.payGate(),
+        log,
+      })
+    : null;
+const hedera: HederaService = new HederaService({
+  cfg: hc,
+  priceC: ak.priceC,
+  payProblems: payOn ? payProblems : payProblems.length ? payProblems : ["HEDERA_OPERATOR_KEY or HEDERA_AGENT_KEY (unparsable)"],
+  recordProblems: hcs ? recordProblems : recordProblems.length ? recordProblems : ["HEDERA_OPERATOR_KEY (unparsable)"],
+  store,
+  mirror,
+  hedera: hcs,
+  facilitators,
+  agent,
+  recorder,
+  resource,
+  log,
+});
+// With Hedera payments on, a ghost's key is released only for a sale the paywall settled.
+const payments: PaymentCheck = resource && store ? new HederaPayments(store, resource, log) : new MockPayments(ak.mockPayments, store ?? { claimReceipt: () => false });
+void hedera.probe();
+const hederaTimer = setInterval(() => void hedera.probe(), 30_000);
+hederaTimer.unref();
+
 const arkiv: ArkivService = new ArkivService({
   publicRpc: ak.rpc,
   chainId: ak.chainId,
@@ -154,7 +263,7 @@ const arkiv: ArkivService = new ArkivService({
   checker: checkerAddress,
   arkiv: arkivPort,
   publisher,
-  payments: new MockPayments(ak.mockPayments, store ?? { claimReceipt: () => false }),
+  payments,
   ghostSecret: ak.ghostSecret,
   problems: arkivIssues,
   boardFile: join(appDir, "public", "board.html"),
@@ -165,9 +274,9 @@ void arkiv.probe();
 const arkivTimer = setInterval(() => void arkiv.probe(), 30_000);
 arkivTimer.unref();
 
-const health = () => ({ ...makeHealth(idkit, approvals, reachable), ...arkiv.health() });
+const health = () => ({ ...makeHealth(idkit, approvals, reachable), ...arkiv.health(), ...hedera.health() });
 
-const server = buildServer({ health, idkit, approvals, arkiv, log });
+const server = buildServer({ health, idkit, approvals, arkiv, hedera, log });
 server.on("error", (err: NodeJS.ErrnoException) => {
   if (err.code === "EADDRINUSE") log(`port ${cfg.port} is already in use (another bridge running?)`);
   else if (err.code === "EADDRNOTAVAIL") log(`HOST ${cfg.host} is not an address of this machine right now (hotspot off?)`);
@@ -183,13 +292,19 @@ server.listen(cfg.port, cfg.host, () => {
   log(
     `arkiv: checker ${checkerAddress ?? "none"}, season ${ak.season}, ` +
       (arkivIssues.length === 0 ? "writes configured" : `writes off until set: ${arkivIssues.join(", ")}`) +
-      `, mock payments ${ak.mockPayments ? "on" : "off"}`,
+      `, mock payments ${resource ? "refused (Hedera pays)" : ak.mockPayments ? "on" : "off"}`,
+  );
+  log(
+    `hedera: ${hc.network}, agent ${hc.agentId || "none"}, topic ${hc.topicId || "none"}, paywall ${hc.resourceBase}/x402/ghost/{listing}, ` +
+      `payments ${resource ? "configured" : `off until set: ${payProblems.join(", ") || "a parsable key"}`}, ` +
+      `record ${recorder ? "configured" : `off until set: ${recordProblems.join(", ") || "a parsable key"}`}`,
   );
 });
 
 function shutdown(): void {
   idkit?.stopAll();
   approvals?.stopAll();
+  hcs?.close();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1000).unref();
 }

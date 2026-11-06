@@ -34,7 +34,55 @@ export interface Config {
   approvals: string;
   serverSecret: string;
   arkiv: ArkivConfig;
+  hedera: HederaConfig;
 }
+
+/**
+ * The Hedera module (src/hedera/*). Testnet only. Missing or malformed values never stop the
+ * bridge: /health says hedera_pay: false / hedera_record: false and the routes answer 503. The
+ * operator and agent keys are never logged, returned or written anywhere but this .env.
+ */
+export interface HederaConfig {
+  /** HEDERA_NETWORK as written: "testnet" is the only value accepted in this build. */
+  network: string;
+  /** HEDERA_MIRROR: the mirror node's base URL, without /api/v1. */
+  mirror: string;
+  /** HEDERA_OPERATOR_ID (0.0.N): pays HCS, holds the market topic's submit key. */
+  operatorId: string;
+  /** HEDERA_OPERATOR_KEY: DER hex, as the portal shows it. */
+  operatorKey: string;
+  /** HEDERA_AGENT_ID / HEDERA_AGENT_KEY: PB's wallet, the x402 client (hedera:setup fills both). */
+  agentId: string;
+  agentKey: string;
+  /** HEDERA_TOPIC_ID: the market topic (hedera:setup creates it, with no admin key). */
+  topicId: string;
+  /** HEDERA_USDC: testnet USDC, 6 decimals. */
+  usdc: string;
+  /** X402_FACILITATOR and X402_FACILITATOR_FALLBACK (no trailing slash). */
+  facilitator: string;
+  facilitatorFallback: string;
+  /** X402_FEE_PAYERS: an optional pin, the only fee payers the agent accepts. */
+  feePayers: string[];
+  /** HEDERA_RESOURCE_BASE: where the agent reaches /x402/* (empty: http://<HOST>:<PORT>). */
+  resourceBase: string;
+  /** Caps in cents. NaN when malformed. */
+  maxPriceC: number;
+  bookDayC: number;
+  agentDayC: number;
+  /** HEDERA_LIVE_TOPIC_ID: the Live-run stretch only (not built). */
+  liveTopicId: string;
+}
+
+export const HEDERA_NETWORK_CAIP2 = "hedera:testnet";
+export const HEDERA_DEFAULT_MIRROR = "https://testnet.mirrornode.hedera.com";
+export const HEDERA_TESTNET_USDC = "0.0.429274";
+export const HASHSCAN = "https://hashscan.io/testnet";
+export const X402_DEFAULT_FACILITATOR = "https://x402.org/facilitator";
+export const X402_DEFAULT_FALLBACK = "https://api.testnet.blocky402.com";
+/** A plain Hedera account or token id (no EVM alias). */
+export const ACCOUNT_RE = /^0\.0\.[0-9]{1,10}$/;
+/** A DER-encoded private key in hex (ECDSA secp256k1 or ED25519), as the portal shows it. */
+export const DER_KEY_RE = /^(0x)?30[0-9a-fA-F]{90,200}$/;
 
 /**
  * The Arkiv module (src/arkiv/*). Missing or malformed values never stop the bridge: /health says
@@ -113,6 +161,33 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, baseDir = proce
     approvals: str(env, "APPROVALS").toLowerCase(),
     serverSecret: str(env, "SERVER_SECRET"),
     arkiv: loadArkiv(env),
+    hedera: loadHedera(env, Number.isInteger(port) && port > 0 && port < 65536 ? port : 8787, str(env, "HOST", "127.0.0.1")),
+  };
+}
+
+function loadHedera(env: NodeJS.ProcessEnv, port: number, host: string): HederaConfig {
+  const loopback = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
+  const hostPart = loopback.includes(":") ? `[${loopback}]` : loopback;
+  return {
+    network: str(env, "HEDERA_NETWORK", "testnet").toLowerCase(),
+    mirror: str(env, "HEDERA_MIRROR", HEDERA_DEFAULT_MIRROR).replace(/\/+$/, "").replace(/\/api\/v1$/, ""),
+    operatorId: str(env, "HEDERA_OPERATOR_ID"),
+    operatorKey: str(env, "HEDERA_OPERATOR_KEY"),
+    agentId: str(env, "HEDERA_AGENT_ID"),
+    agentKey: str(env, "HEDERA_AGENT_KEY"),
+    topicId: str(env, "HEDERA_TOPIC_ID"),
+    usdc: str(env, "HEDERA_USDC", HEDERA_TESTNET_USDC),
+    facilitator: str(env, "X402_FACILITATOR", X402_DEFAULT_FACILITATOR).replace(/\/+$/, ""),
+    facilitatorFallback: str(env, "X402_FACILITATOR_FALLBACK", X402_DEFAULT_FALLBACK).replace(/\/+$/, ""),
+    feePayers: str(env, "X402_FEE_PAYERS")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+    resourceBase: str(env, "HEDERA_RESOURCE_BASE", `http://${hostPart}:${port}`).replace(/\/+$/, ""),
+    maxPriceC: intOrNaN(str(env, "HEDERA_MAX_PRICE_C", "10")),
+    bookDayC: intOrNaN(str(env, "HEDERA_BOOK_DAY_C", "100")),
+    agentDayC: intOrNaN(str(env, "HEDERA_AGENT_DAY_C", "500")),
+    liveTopicId: str(env, "HEDERA_LIVE_TOPIC_ID"),
   };
 }
 
@@ -237,4 +312,61 @@ export function chooseApprovals(c: Config): { kind: "idkit" | "agentpass"; avail
         ? "idkit"
         : "agentpass";
   return { kind, available: kind === "idkit" ? idkitReady(c) : agentpassReady(c) };
+}
+
+function httpUrl(text: string, httpsOnly = false): boolean {
+  try {
+    const u = new URL(text);
+    return httpsOnly ? u.protocol === "https:" : /^https?:$/.test(u.protocol);
+  } catch {
+    return false;
+  }
+}
+
+const capOk = (n: number) => Number.isInteger(n) && n >= 0 && n <= 1_000_000;
+
+/**
+ * What keeps the LISTING record (HCS) off, by .env name: testnet, a mirror URL, the operator's id
+ * and DER key, the market topic. Empty: /hedera/record can run.
+ */
+export function hederaRecordProblems(c: Config): string[] {
+  const h = c.hedera;
+  const out: string[] = [];
+  if (h.network !== "testnet") out.push("HEDERA_NETWORK");
+  if (!httpUrl(h.mirror)) out.push("HEDERA_MIRROR");
+  if (!ACCOUNT_RE.test(h.operatorId)) out.push("HEDERA_OPERATOR_ID");
+  if (!DER_KEY_RE.test(h.operatorKey)) out.push("HEDERA_OPERATOR_KEY");
+  if (!ACCOUNT_RE.test(h.topicId)) out.push("HEDERA_TOPIC_ID");
+  return out;
+}
+
+/**
+ * What keeps Hedera payments off, by .env name: everything the record needs (INTENT and RECEIPT go
+ * to the same topic), the agent's id and DER key, USDC, the facilitators, the resource base, the
+ * caps, and the Arkiv values the paywall reads with (the checker, the ghost secret, SERVER_SECRET).
+ * Empty: PB can pay, /x402/ghost sells, and /arkiv/ghost takes only settled receipts.
+ */
+export function hederaPayProblems(c: Config): string[] {
+  const h = c.hedera;
+  const out = hederaRecordProblems(c);
+  if (!ACCOUNT_RE.test(h.agentId)) out.push("HEDERA_AGENT_ID");
+  if (!DER_KEY_RE.test(h.agentKey)) out.push("HEDERA_AGENT_KEY");
+  if (!ACCOUNT_RE.test(h.usdc)) out.push("HEDERA_USDC");
+  if (!httpUrl(h.facilitator, true)) out.push("X402_FACILITATOR");
+  if (h.facilitatorFallback !== "" && !httpUrl(h.facilitatorFallback, true)) out.push("X402_FACILITATOR_FALLBACK");
+  if (!h.feePayers.every((f) => ACCOUNT_RE.test(f))) out.push("X402_FEE_PAYERS");
+  if (!httpUrl(h.resourceBase)) out.push("HEDERA_RESOURCE_BASE");
+  if (!capOk(h.maxPriceC)) out.push("HEDERA_MAX_PRICE_C");
+  if (!capOk(h.bookDayC)) out.push("HEDERA_BOOK_DAY_C");
+  if (!capOk(h.agentDayC)) out.push("HEDERA_AGENT_DAY_C");
+  if (!secretReady(c)) out.push("SERVER_SECRET");
+  if (!PRIVATE_KEY_RE.test(c.arkiv.checkerKey)) out.push("ARKIV_CHECKER_KEY");
+  if (!GHOST_SECRET_RE.test(c.arkiv.ghostSecret)) out.push("ARKIV_GHOST_SECRET");
+  if (!capOk(c.arkiv.priceC)) out.push("ARKIV_GHOST_PRICE_C");
+  return [...new Set(out)];
+}
+
+/** Every Hedera name that is missing or malformed (the startup log names them; never a value). */
+export function hederaProblems(c: Config): string[] {
+  return hederaPayProblems(c);
 }

@@ -90,7 +90,8 @@ a { color: var(--blue); }
       <tbody id="rows"></tbody>
     </table>
     <p class="legend"><span class="badge human">HUMAN</span>record book opened with World ID (<span id="credLegend">Orb</span>).
-      <span class="badge listed">LISTED</span>its ghost is for sale.</p>
+      <span class="badge listed">LISTED</span>its ghost is for sale; "pays 0.0.N" is the runner's own Hedera account (testnet USDC),
+      "approved on Hedera" the listing's message on the market topic.</p>
     <p class="note" id="dropped" hidden></p>
   </div>
   <div id="profile-view" hidden>
@@ -130,6 +131,7 @@ const CHECKER = "0x3d3260425Cb52F0c6716212274a883337aFa3f63"; // the checker's a
 const SEASON = 1;
 const GAMES = [["MDGP", "MARINE DRIVE GP"], ["SHIP", "SHIP IT!"], ["RUSH", "RUSH HOUR"], ["SEGF", "SEGFAULT"], ["ZIPG", "ZIP"]];
 const EXPLORER = "https://rabdi.explorer.arkiv.network";
+const HASHSCAN = "https://hashscan.io/testnet"; // a listing's Hedera payout account and its LISTING message
 // ------------------------------------------------------------------------------------------
 
 // The queries, word for word as the console and the service send them.
@@ -144,11 +146,15 @@ const Q = {
 };
 
 const RUN_ATTRS = ["game", "title", "frames", "runner", "book", "label", "human", "credential", "log_h", "rules"];
-const LISTING_ATTRS = ["run", "game", "season", "frames", "log_h", "price", "seller", "book", "human"];
+const LISTING_ATTRS = ["run", "game", "season", "frames", "log_h", "price", "seller", "book", "human", "pay_to", "hcs"];
 const RUN_TYPES = { game: "str", title: "str", frames: "u64", runner: "str", book: "str", label: "str", human: "bool", credential: "str", log_h: "str", rules: "u64" };
 const RUN_REQUIRED = ["game", "title", "frames", "runner", "human", "log_h", "rules"];
-const LISTING_TYPES = { run: "key", game: "str", season: "i32", frames: "u64", log_h: "str", price: "dec", seller: "str", book: "str", human: "bool" };
-const LISTING_REQUIRED = LISTING_ATTRS;
+// pay_to (the seller's Hedera account, as World App showed it) and hcs ("<topic>/<seq>" of the LISTING
+// message) are optional: listings written before payouts have neither and are not for sale.
+const LISTING_TYPES = { run: "key", game: "str", season: "i32", frames: "u64", log_h: "str", price: "dec", seller: "str", book: "str", human: "bool", pay_to: "str", hcs: "str" };
+const LISTING_REQUIRED = ["run", "game", "season", "frames", "log_h", "price", "seller", "book", "human"];
+const ACCOUNT_RE = /^0\.0\.\d{1,10}$/;
+const HCS_RE = /^(0\.0\.\d{1,10})\/\d{1,20}$/;
 const BOOK_RE = /^ANY-[A-Z0-9]{3,8}$/;
 
 const $ = (id) => document.getElementById(id);
@@ -313,8 +319,23 @@ function runnerCell(r) {
   if (r.human === true) meta.append(el("span", "badge human", "HUMAN"));
   else if (!r.book) meta.append(el("span", "badge open", "OPEN"));
   if (r.listing) meta.append(el("span", "badge listed", "LISTED"), `${r.listing.price} USDC`);
+  if (r.listing) hederaLinks(meta, r.listing);
   if (meta.childNodes.length) td.append(meta);
   return td;
+}
+
+/** "pays 0.0.N" (its HashScan account) and "approved on Hedera" (the market topic) when the row has them. */
+function hederaLinks(parent, l) {
+  if (typeof l.pay_to === "string" && ACCOUNT_RE.test(l.pay_to)) {
+    const a = el("a", "", `pays ${l.pay_to}`); a.href = `${HASHSCAN}/account/${l.pay_to}`; a.rel = "noopener"; a.target = "_blank";
+    parent.append(" ", a);
+  }
+  const m = typeof l.hcs === "string" ? HCS_RE.exec(l.hcs) : null;
+  if (m) {
+    const a = el("a", "", "approved on Hedera"); a.href = `${HASHSCAN}/topic/${m[1]}`; a.rel = "noopener"; a.target = "_blank";
+    a.title = `LISTING message #${l.hcs.split("/")[1]} on topic ${m[1]}`;
+    parent.append(" ", a);
+  }
 }
 
 async function showBoard(game) {
@@ -420,7 +441,9 @@ async function showProfile(book) {
   for (const l of listings) {
     const tr = el("tr");
     const days = daysLeft(l.expiresAt);
-    tr.append(el("td", "", title(l.game)), el("td", "time", fmt(l.frames)), el("td", "", `${l.price} USDC`), el("td", "", days === null ? "?" : `in ${days} day${days === 1 ? "" : "s"}`));
+    const price = el("td", "", `${l.price} USDC`);
+    hederaLinks(price, l);
+    tr.append(el("td", "", title(l.game)), el("td", "time", fmt(l.frames)), price, el("td", "", days === null ? "?" : `in ${days} day${days === 1 ? "" : "s"}`));
     listBody.append(tr);
   }
   if (!listings.length) listBody.append(rowMsg("No listed ghosts.", 4));

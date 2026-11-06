@@ -21,7 +21,8 @@ export const Q1_TEMPLATE =
 
 /** What a run board selects: never `log` or `log_enc` (only one ghost at a time selects those). */
 export const RUN_BOARD_ATTRS = ["game", "title", "frames", "runner", "book", "label", "human", "credential", "log_h", "rules"] as const;
-export const LISTING_ATTRS = ["run", "game", "season", "frames", "log_h", "price", "seller", "book", "human"] as const;
+/** What a listing read selects; `pay_to` and `hcs` are optional (rows before the Hedera module have neither). */
+export const LISTING_ATTRS = ["run", "game", "season", "frames", "log_h", "price", "seller", "book", "human", "pay_to", "hcs"] as const;
 export const RUN_ALL_ATTRS = [...RUN_BOARD_ATTRS, "season", "tool"] as const;
 export const SCHEMA_ATTR = "arkiv.schema";
 /** A page holds at most this many rows (the node's maximum). */

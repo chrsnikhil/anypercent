@@ -18,9 +18,17 @@
  * A failed write keeps the approval bound to its log, so the console's retry with the same jti goes
  * through; a retry after success answers the same keys. Logged: book, game, time, keys, tx and the
  * failure's reason. Never the jti, the log, a key or a secret.
+ *
+ * Hedera (optional): the body may carry `pay_to`, the seller's Hedera account. It must equal the
+ * book's registered account (`npm run hedera:payto`; both absent is fine) and the approved text then
+ * reads "... USDC to <pay_to> on the public board". The listing row carries `pay_to` and, when the
+ * record step put a LISTING on HCS for this approval, `hcs` = "<topic>/<seq>". Publish never needs
+ * a LISTING. A relist whose `pay_to` differs from the run's live listing writes a new listing and
+ * deletes the old one in the same batch, so a run listed before payouts existed can be put up for sale.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { BOOK_RE } from "../approvals.js";
+import { ACCOUNT_RE } from "../config.js";
 import type { Store } from "../store.js";
 import { ArkivError, type ArkivPort, type CreateSpec, type ListingValues, type RunValues } from "./client.js";
 import { CheckerError, LOG_MAX, LOG_MIN, parseHeader, verdict, type CheckerPort } from "./checker.js";
@@ -80,6 +88,8 @@ interface Body {
   title: string;
   frames: number;
   price_c: number;
+  /** The seller's Hedera account, when the book has one. */
+  pay_to?: string;
   log: Uint8Array;
   logH: string;
   rules: number;
@@ -115,8 +125,9 @@ export function priceDec(cents: number): string {
 }
 
 /** What World App showed for the listing: the only text an approval allows. */
-export function actionText(title: string, frames: number, priceC: number): string {
-  return `List ${title} ${fmtTime(frames)} ghost for ${priceText(priceC)} USDC on the public board`;
+export function actionText(title: string, frames: number, priceC: number, payTo?: string | null): string {
+  const to = payTo ? ` to ${payTo}` : "";
+  return `List ${title} ${fmtTime(frames)} ghost for ${priceText(priceC)} USDC${to} on the public board`;
 }
 
 const CONTROL = /[\u0000-\u001f\u007f]/;
@@ -128,7 +139,7 @@ function bad(): PublishRefused {
 
 /** The body's shape (step 1). Anything off: 400 bad_body. */
 export function parseBody(raw: Record<string, unknown>): Body {
-  const { book, jti, action, game, title, frames, price_c, log } = raw;
+  const { book, jti, action, game, title, frames, price_c, log, pay_to } = raw;
   if (typeof book !== "string" || !BOOK_RE.test(book)) throw bad();
   if (typeof jti !== "string" || !/^[\x21-\x7e]{1,256}$/.test(jti)) throw bad();
   if (typeof action !== "string" || action === "" || action.length > 160 || CONTROL.test(action)) throw bad();
@@ -136,6 +147,7 @@ export function parseBody(raw: Record<string, unknown>): Body {
   if (typeof title !== "string" || title.trim() === "" || Buffer.byteLength(title) > 64 || CONTROL.test(title)) throw bad();
   if (typeof frames !== "number" || !Number.isInteger(frames) || frames < 1 || frames > 0xffffffff) throw bad();
   if (typeof price_c !== "number" || !Number.isInteger(price_c) || price_c < 0 || price_c > 1_000_000) throw bad();
+  if (pay_to !== undefined && pay_to !== null && (typeof pay_to !== "string" || !ACCOUNT_RE.test(pay_to))) throw bad();
   if (typeof log !== "string" || !B64.test(log) || log.length % 4 !== 0) throw bad();
   const bytes = Uint8Array.from(Buffer.from(log, "base64"));
   if (bytes.length < LOG_MIN || bytes.length > LOG_MAX) throw bad();
@@ -149,6 +161,7 @@ export function parseBody(raw: Record<string, unknown>): Body {
     title,
     frames,
     price_c,
+    ...(typeof pay_to === "string" ? { pay_to } : {}),
     log: bytes,
     logH: sha256Hex(bytes),
     rules: header.rules,
@@ -274,7 +287,8 @@ export class Publisher {
 
     // 6. The approved text must be this run's: title, replayed time and price.
     if (b.price_c !== this.opts.priceC) return this.fail(job, "ls_mismatch", "price differs from ARKIV_GHOST_PRICE_C");
-    if (b.action !== actionText(b.title, frames, this.opts.priceC)) {
+    if ((b.pay_to ?? null) !== (store.paytoFor(b.book) ?? null)) return this.fail(job, "ls_mismatch", "pay_to is not the book's registered account");
+    if (b.action !== actionText(b.title, frames, this.opts.priceC, b.pay_to)) {
       return this.fail(job, "ls_mismatch", "approved text does not match the replayed run");
     }
     let tool: string;
@@ -312,6 +326,8 @@ export class Publisher {
         seller: book.runner_id,
         book: b.book,
         human: true,
+        ...(b.pay_to ? { pay_to: b.pay_to } : {}),
+        ...hcsRef(store, b.jti),
       },
       flags: { ...LISTING_FLAGS },
       expiry: { kind: "days", days: LISTING_DAYS },
@@ -335,15 +351,17 @@ export class Publisher {
       if (spent === "other") return this.fail(job, "ls_reused", "approval already used for another run");
       job.view = { stage: "write", ok: null, failure: null, data: {} };
 
-      if (existing && live) {
+      if (existing && live && (live.pay_to ?? null) === (b.pay_to ?? null)) {
         const result = { run: existing.key, listing: live.key, tx: store.resultForLog(b.logH)?.tx ?? null };
         store.setApprovalResult(b.jti, result);
         return this.done(job, result, " (already on the board)");
       }
 
-      // 9. Write: one batch (or the listing alone for a run already on the board).
+      // 9. Write: one batch (or the listing alone for a run already on the board; a live listing
+      //    with another pay_to is replaced in the same batch).
+      const replaces = existing && live ? live.key : undefined;
       const write: Promise<{ run: string; listing: string; tx: string }> = existing
-        ? arkiv.writeListing(existing.key, listing).then((w) => ({ run: existing.key, listing: w.listing, tx: w.tx }))
+        ? arkiv.writeListing(existing.key, listing, replaces).then((w) => ({ run: existing.key, listing: w.listing, tx: w.tx }))
         : arkiv.writeRunAndListing(run, listing);
       let timer: NodeJS.Timeout | undefined;
       const timedOut = new Promise<"timeout">((ok) => {
@@ -380,4 +398,10 @@ export class Publisher {
       }
     }
   }
+}
+
+/** The listing's `hcs` column: "<topic>/<seq>" of the LISTING message for this approval, if it landed. */
+function hcsRef(store: Store, jti: string): { hcs?: string } {
+  const rec = store.hcsListingFor(jti);
+  return rec?.seq ? { hcs: `${rec.topic}/${rec.seq}` } : {};
 }

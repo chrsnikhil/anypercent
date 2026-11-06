@@ -89,12 +89,43 @@ export class FakeArkiv implements ArkivPort {
     return r ? this.runRow(r, false) : null;
   }
 
+  private listingRow(l: StoredListing): ListingRow {
+    const v = l.spec.values;
+    return {
+      key: l.key,
+      creator: l.creator,
+      expiresAt: 500n,
+      run: l.run,
+      game: v.game,
+      season: v.season,
+      frames: BigInt(v.frames),
+      log_h: v.log_h,
+      price: v.price,
+      seller: v.seller,
+      book: v.book,
+      human: v.human,
+      ...(v.pay_to !== undefined ? { pay_to: v.pay_to } : {}),
+      ...(v.hcs !== undefined ? { hcs: v.hcs } : {}),
+    };
+  }
+
   async liveListingFor(runKey: string): Promise<ListingRow | null> {
     if (this.readsDown) throw new ArkivError("down");
     const l = this.listings.find((x) => x.live && x.creator === CHECKER && x.run === runKey);
-    if (!l) return null;
-    const v = l.spec.values;
-    return { key: l.key, creator: l.creator, expiresAt: 500n, run: l.run, game: v.game, season: v.season, frames: BigInt(v.frames), log_h: v.log_h, price: v.price, seller: v.seller, book: v.book, human: v.human };
+    return l ? this.listingRow(l) : null;
+  }
+
+  async getListing(listingKey: string): Promise<ListingRow | null> {
+    if (this.readsDown) throw new ArkivError("down");
+    const l = this.listings.find((x) => x.live && x.creator === CHECKER && x.key === listingKey.toLowerCase());
+    return l ? this.listingRow(l) : null;
+  }
+
+  /** A listing as any wallet might write it, for a run already here. */
+  addListing(run: string, values: ListingValues, creator = CHECKER): string {
+    const key = newKey();
+    this.listings.push({ key, creator, run, live: true, spec: { values, flags: { readonly: true, permissionlessExtension: false }, expiry: { kind: "days", days: 7 } } });
+    return key;
   }
 
   async getRun(runKey: string, withLog: boolean): Promise<RunRow | null> {
@@ -122,8 +153,12 @@ export class FakeArkiv implements ArkivPort {
     return { run: runKey, listing: listingKey, tx };
   }
 
-  async writeListing(runKey: string, listing: CreateSpec<ListingValues>) {
+  async writeListing(runKey: string, listing: CreateSpec<ListingValues>, replaces?: string) {
     await this.gate();
+    if (replaces) {
+      const old = this.listings.find((x) => x.key === replaces);
+      if (old) old.live = false;
+    }
     const listingKey = newKey();
     this.listings.push({ key: listingKey, creator: CHECKER, run: runKey, spec: listing, live: true });
     const tx = newKey();

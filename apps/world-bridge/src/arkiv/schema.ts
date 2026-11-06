@@ -3,7 +3,10 @@
  * an indexed `arkiv.schema` str, and every reader filters on it (spec: Entities).
  *
  * - anypercent.run: one checked run (the checker replayed its log before writing it).
- * - anypercent.listing: a World-approved offer of one run's ghost.
+ * - anypercent.listing: a World-approved offer of one run's ghost. Two optional columns came with
+ *   the Hedera module: `pay_to` (the seller's Hedera account, exactly as World App showed it in the
+ *   approved text; absent: not for sale) and `hcs` (`<topic>/<sequence number>` of the LISTING
+ *   message; absent when Hedera was off). Rows written before them still fit the schema.
  *
  * The anypercent.smoke.* twins have the same columns; only `npm run arkiv:smoke` writes them, with a
  * one-hour expiry, and deletes them again.
@@ -60,6 +63,8 @@ function listingColumns() {
     seller: str().indexed(),
     book: str().indexed(),
     human: bool().indexed(),
+    pay_to: str().indexed().optional(),
+    hcs: str().optional(),
   };
 }
 
@@ -106,6 +111,8 @@ export const LISTING_TYPES: Record<string, { type: string; required: boolean }> 
   seller: { type: "str", required: true },
   book: { type: "str", required: true },
   human: { type: "bool", required: true },
+  pay_to: { type: "str", required: false },
+  hcs: { type: "str", required: false },
 };
 
 /** Flags and expiry, by entity (spec: Entities). */

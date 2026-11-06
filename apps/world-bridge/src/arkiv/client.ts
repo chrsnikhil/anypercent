@@ -21,7 +21,7 @@ import { rabdi } from "@arkiv-network/sdk/chains";
 import { bool, bytes, dec, i32, key as keyValue, str, u64 } from "@arkiv-network/sdk/schema";
 import { http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { queryParams, qListingForRun, q6Run, q7RunByLogHash, LISTING_ATTRS, RUN_ALL_ATTRS, selectOf, type RpcSelect } from "./queries.js";
+import { queryParams, qListingForRun, q6Listing, q6Run, q7RunByLogHash, LISTING_ATTRS, RUN_ALL_ATTRS, selectOf, type RpcSelect } from "./queries.js";
 import { decodePage, type DecodedRow } from "./rows.js";
 import { LISTING_TYPES, Listing, REAL, Run, RUN_TYPES, SmokeListing, SmokeRun, type SchemaNames } from "./schema.js";
 
@@ -58,6 +58,10 @@ export interface ListingRow {
   seller: string;
   book: string;
   human: boolean;
+  /** The seller's Hedera account; absent: not for sale. */
+  pay_to?: string;
+  /** `<topic>/<seq>` of the LISTING message on HCS. */
+  hcs?: string;
 }
 
 /** What a run row is written with (spec: Entities). Exactly one of log and log_enc. */
@@ -89,6 +93,8 @@ export interface ListingValues {
   seller: string;
   book: string;
   human: boolean;
+  pay_to?: string;
+  hcs?: string;
 }
 
 export type ExpirySpec =
@@ -125,10 +131,15 @@ export interface ArkivPort {
   liveListingFor(runKey: string): Promise<ListingRow | null>;
   /** Q6 on runs: one live run the checker wrote, with its ghost bytes when `withLog`. */
   getRun(runKey: string, withLog: boolean): Promise<RunRow | null>;
+  /** Q6 on listings: one live listing the checker wrote, with `pay_to` and `hcs`. */
+  getListing(listingKey: string): Promise<ListingRow | null>;
   /** One batch: the run, then its listing (run = the run's predicted key). */
   writeRunAndListing(run: CreateSpec<RunValues>, listing: CreateSpec<ListingValues>): Promise<Written>;
-  /** A listing for a run already on Arkiv. */
-  writeListing(runKey: string, listing: CreateSpec<ListingValues>): Promise<{ listing: string; tx: string }>;
+  /**
+   * A listing for a run already on Arkiv. With `replaces`, the same batch deletes that (older) live
+   * listing of the run, so a relist leaves one listing per run.
+   */
+  writeListing(runKey: string, listing: CreateSpec<ListingValues>, replaces?: string): Promise<{ listing: string; tx: string }>;
   /** A run alone (the open tier). */
   writeRun(run: CreateSpec<RunValues>): Promise<{ run: string; tx: string }>;
 }
@@ -184,6 +195,8 @@ export function listingFromRow(r: DecodedRow): ListingRow {
     seller: v.seller as string,
     book: v.book as string,
     human: v.human as boolean,
+    ...(typeof v.pay_to === "string" ? { pay_to: v.pay_to } : {}),
+    ...(typeof v.hcs === "string" ? { hcs: v.hcs } : {}),
   };
 }
 
@@ -345,6 +358,13 @@ export class SdkArkiv implements ArkivPort {
     return page.rows[0] ? runFromRow(page.rows[0]) : null;
   }
 
+  async getListing(listingKey: string): Promise<ListingRow | null> {
+    const asked = [...LISTING_ATTRS];
+    const res = await this.query(q6Listing(listingKey, this.pinned(), this.names), selectOf(asked), 1);
+    const page = decodePage(res.data, LISTING_TYPES, asked, this.names.listing, this.pinned());
+    return page.rows[0] ? listingFromRow(page.rows[0]) : null;
+  }
+
   /** Writes run one at a time: one wallet, one entity nonce. */
   private serial<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.queue.then(fn, fn);
@@ -397,7 +417,7 @@ export class SdkArkiv implements ArkivPort {
     });
   }
 
-  writeListing(runKey: string, listing: CreateSpec<ListingValues>): Promise<{ listing: string; tx: string }> {
+  writeListing(runKey: string, listing: CreateSpec<ListingValues>, replaces?: string): Promise<{ listing: string; tx: string }> {
     return this.serial(async () => {
       const wallet = this.needWallet();
       try {
@@ -410,6 +430,7 @@ export class SdkArkiv implements ArkivPort {
               flags: listing.flags,
             },
           ],
+          ...(replaces ? { deletes: [{ entityKey: replaces as Hex }] } : {}),
         } as never);
         return { listing: res.createdEntities[0].toLowerCase(), tx: res.txHash };
       } catch (err) {

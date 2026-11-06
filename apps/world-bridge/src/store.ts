@@ -9,14 +9,22 @@
  * - approvals: sha256(jti) -> each listing approval this bridge granted (book, sha256 of the text
  *             World App showed, when) and, once spent, the one log it allows on Arkiv and what the
  *             write answered. The jti itself is never stored or logged;
- * - receipts: payment receipt -> the one run whose ghost it paid for.
+ * - receipts: payment receipt -> the one run whose ghost it paid for (the launcher mock's);
+ * - hcsListings: sha256(jti) -> the LISTING message the record step put on HCS for that approval;
+ * - purchases: (buyer book, game, seller, run) -> PB's purchase of that ghost: reserved, settled
+ *             or released, with the day it counts against the caps;
+ * - sales:    settled payment transaction id -> the ghost it bought (run, listing, seller, pay_to,
+ *             amount, payer, a counter n);
+ * - payto:    book -> the Hedera account its ghosts pay. Kept in its own file, data/payto.json,
+ *             written only by `npm run hedera:payto` and re-read here when it changes, so the CLI
+ *             never writes state.json under a running service.
  *
  * Every operation is synchronous read-modify-write inside one event-loop turn, so two requests can
  * never interleave inside a claim: the check and the write are one atomic step for this process.
  * Writes go to a temp file and are renamed over the old one.
  */
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { bookCandidate } from "./hmac.js";
 
@@ -44,6 +52,56 @@ export interface ApprovalRecord {
 
 export type SpendResult = "spent" | "same" | "other" | "unknown";
 
+/** The LISTING message for one approval: the transaction once a node accepted it, then its place. */
+export interface HcsListingRecord {
+  topic: string;
+  tx: string;
+  /** The topic sequence number (a decimal string), once the receipt came back. */
+  seq?: string;
+}
+
+export type PurchaseState = "reserved" | "settled" | "released";
+
+/** One of PB's purchases. Reserved and settled ones count against the caps on their day. */
+export interface PurchaseRecord {
+  id: string;
+  buyer: string;
+  game: string;
+  seller: string;
+  run: string;
+  listing: string;
+  pay_to: string;
+  price_c: number;
+  /** The service's local day (YYYY-MM-DD) the money counts on. */
+  day: string;
+  state: PurchaseState;
+  /** The payment's transaction id, once PB built it (before it is sent). */
+  tx?: string;
+  /** Set when settled: the transaction id the console gets as its receipt. */
+  receipt?: string;
+  late?: boolean;
+  at: number;
+}
+
+/** A settled sale of a listed ghost through the paywall, keyed by its transaction id. */
+export interface SaleRecord {
+  n: number;
+  run: string;
+  listing: string;
+  /** The seller's book. */
+  seller: string;
+  game: string;
+  pay_to: string;
+  /** Atomic units of the asset. */
+  amount: string;
+  asset: string;
+  /** The paying account. */
+  payer: string;
+  /** The buyer's book when PB bought it, else null (any other x402 client). */
+  buyer: string | null;
+  at: number;
+}
+
 interface StateFile {
   version: 1;
   books: Record<string, BookRecord>;
@@ -51,7 +109,37 @@ interface StateFile {
   jtis: Record<string, number>;
   approvals: Record<string, ApprovalRecord>;
   receipts: Record<string, string>;
+  hcsListings: Record<string, HcsListingRecord>;
+  purchases: Record<string, PurchaseRecord>;
+  sales: Record<string, SaleRecord>;
+  saleSeq: number;
 }
+
+/** The caps a reservation must fit (cents, per local day). */
+export interface PurchaseCaps {
+  bookDayC: number;
+  agentDayC: number;
+}
+
+export type ReserveResult = { ok: true } | { ok: false; why: "book_cap" | "agent_cap" } | { ok: false; why: "settled"; record: PurchaseRecord } | { ok: false; why: "in_flight"; record: PurchaseRecord };
+
+/** The purchase key: (buyer book, game, seller, run). All public already. */
+export function purchaseKey(buyer: string, game: string, seller: string, run: string): string {
+  return `${buyer}|${game}|${seller}|${run.toLowerCase()}`;
+}
+
+const EMPTY = (): StateFile => ({
+  version: 1,
+  books: {},
+  bindings: {},
+  jtis: {},
+  approvals: {},
+  receipts: {},
+  hcsListings: {},
+  purchases: {},
+  sales: {},
+  saleSeq: 0,
+});
 
 /** The store key for an approval: sha256(jti), so the jti never lands on disk. */
 export function approvalKey(jti: string): string {
@@ -62,11 +150,15 @@ export type BindResult = "bound" | "match" | "mismatch";
 
 export class Store {
   private readonly file: string;
+  private readonly paytoFile: string;
   private state: StateFile;
+  private payto: Record<string, { account: string; at: number }> = {};
+  private paytoStamp = "";
 
   constructor(private readonly dir: string, private readonly secret: string) {
     mkdirSync(dir, { recursive: true });
     this.file = join(dir, "state.json");
+    this.paytoFile = join(dir, "payto.json");
     this.state = this.read();
   }
 
@@ -80,11 +172,13 @@ export class Store {
         jtis: parsed.jtis ?? {},
         approvals: parsed.approvals ?? {},
         receipts: parsed.receipts ?? {},
+        hcsListings: parsed.hcsListings ?? {},
+        purchases: parsed.purchases ?? {},
+        sales: parsed.sales ?? {},
+        saleSeq: typeof parsed.saleSeq === "number" ? parsed.saleSeq : 0,
       };
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return { version: 1, books: {}, bindings: {}, jtis: {}, approvals: {}, receipts: {} };
-      }
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return EMPTY();
       throw new Error(`state file ${this.file} is unreadable; refusing to start over it`);
     }
   }
@@ -220,5 +314,165 @@ export class Store {
     this.state.receipts[receipt] = run.toLowerCase();
     this.write();
     return true;
+  }
+
+  // ---- Hedera: payout accounts (data/payto.json) -------------------------------------------
+
+  private loadPayto(): void {
+    let stamp = "";
+    try {
+      const st = statSync(this.paytoFile);
+      stamp = `${st.mtimeMs}:${st.size}`;
+    } catch {
+      stamp = "none";
+    }
+    if (stamp === this.paytoStamp) return;
+    this.paytoStamp = stamp;
+    if (stamp === "none") {
+      this.payto = {};
+      return;
+    }
+    try {
+      const parsed = JSON.parse(readFileSync(this.paytoFile, "utf8")) as Record<string, { account: string; at: number }>;
+      this.payto = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      // A half-written file: keep the last good copy and read it again next time.
+      this.paytoStamp = "";
+    }
+  }
+
+  /** The Hedera account registered for this book's sales, if any. Re-reads payto.json when it changed. */
+  paytoFor(book: string): string | undefined {
+    this.loadPayto();
+    const rec = this.payto[book];
+    return rec && typeof rec.account === "string" ? rec.account : undefined;
+  }
+
+  /** Register (or with null, remove) a book's payout account. Only `npm run hedera:payto` calls this. */
+  setPayto(book: string, account: string | null, nowS: number): void {
+    this.paytoStamp = "";
+    this.loadPayto();
+    const next = { ...this.payto };
+    if (account === null) delete next[book];
+    else next[book] = { account, at: nowS };
+    const tmp = `${this.paytoFile}.tmp`;
+    writeFileSync(tmp, JSON.stringify(next, null, 1));
+    renameSync(tmp, this.paytoFile);
+    this.payto = next;
+    this.paytoStamp = "";
+  }
+
+  // ---- Hedera: LISTING messages ------------------------------------------------------------
+
+  hcsListingFor(jti: string): HcsListingRecord | undefined {
+    return this.state.hcsListings[approvalKey(jti)];
+  }
+
+  /** Remember the LISTING's transaction once a node accepted it, and later its sequence number. */
+  setHcsListing(jti: string, rec: HcsListingRecord): void {
+    this.state.hcsListings[approvalKey(jti)] = { ...rec };
+    this.write();
+  }
+
+  // ---- Hedera: PB's purchases --------------------------------------------------------------
+
+  purchaseFor(key: string): PurchaseRecord | undefined {
+    return this.state.purchases[key];
+  }
+
+  purchaseById(id: string): { key: string; record: PurchaseRecord } | undefined {
+    for (const [key, record] of Object.entries(this.state.purchases)) if (record.id === id) return { key, record };
+    return undefined;
+  }
+
+  /** Cents reserved or settled on `day`, by one buyer book or (no buyer) across all books. */
+  spentOn(day: string, buyer?: string): number {
+    let sum = 0;
+    for (const p of Object.values(this.state.purchases)) {
+      if (p.day !== day || p.state === "released") continue;
+      if (buyer !== undefined && p.buyer !== buyer) continue;
+      sum += p.price_c;
+    }
+    return sum;
+  }
+
+  /** Cents reserved (not yet settled) across all books, on any day: money that may still leave. */
+  inFlightC(exceptKey?: string): number {
+    let sum = 0;
+    for (const [k, p] of Object.entries(this.state.purchases)) if (p.state === "reserved" && k !== exceptKey) sum += p.price_c;
+    return sum;
+  }
+
+  /**
+   * The caps check and the reservation in one synchronous step, so two consoles can never overspend
+   * together. A key already settled answers its record; one still reserved answers it as in flight.
+   */
+  reservePurchase(key: string, rec: PurchaseRecord, caps: PurchaseCaps): ReserveResult {
+    const held = this.state.purchases[key];
+    if (held?.state === "settled") return { ok: false, why: "settled", record: held };
+    if (held?.state === "reserved") return { ok: false, why: "in_flight", record: held };
+    if (this.spentOn(rec.day, rec.buyer) + rec.price_c > caps.bookDayC) return { ok: false, why: "book_cap" };
+    if (this.spentOn(rec.day) + rec.price_c > caps.agentDayC) return { ok: false, why: "agent_cap" };
+    this.state.purchases[key] = { ...rec, state: "reserved" };
+    this.write();
+    return { ok: true };
+  }
+
+  /** The payment's transaction id, recorded before the payment is sent. */
+  notePurchaseTx(key: string, tx: string): void {
+    const p = this.state.purchases[key];
+    if (!p) return;
+    p.tx = tx;
+    this.write();
+  }
+
+  settlePurchase(key: string, receipt: string, late: boolean): void {
+    const p = this.state.purchases[key];
+    if (!p) return;
+    p.state = "settled";
+    p.receipt = receipt;
+    p.late = late;
+    this.write();
+  }
+
+  /** Nothing was paid: the reservation stops counting against the caps. */
+  releasePurchase(key: string): void {
+    const p = this.state.purchases[key];
+    if (!p || p.state !== "reserved") return;
+    p.state = "released";
+    this.write();
+  }
+
+  // ---- Hedera: sales through the paywall ---------------------------------------------------
+
+  saleFor(tx: string): SaleRecord | undefined {
+    return this.state.sales[tx];
+  }
+
+  /** Record a settled sale once; a second call for the same transaction keeps the first. */
+  recordSale(tx: string, sale: Omit<SaleRecord, "n">): SaleRecord {
+    const held = this.state.sales[tx];
+    if (held) return held;
+    this.state.saleSeq += 1;
+    const rec: SaleRecord = { ...sale, run: sale.run.toLowerCase(), listing: sale.listing.toLowerCase(), n: this.state.saleSeq };
+    this.state.sales[tx] = rec;
+    this.write();
+    return rec;
+  }
+
+  /** PB names the buyer's book on a sale it paid for. */
+  noteSaleBuyer(tx: string, buyer: string): void {
+    const s = this.state.sales[tx];
+    if (!s || s.buyer === buyer) return;
+    s.buyer = buyer;
+    this.write();
+  }
+
+  /** One seller's sales after counter `after`, oldest first. */
+  salesFor(seller: string, after = 0): Array<SaleRecord & { tx: string }> {
+    return Object.entries(this.state.sales)
+      .filter(([, s]) => s.seller === seller && s.n > after)
+      .map(([tx, s]) => ({ ...s, tx }))
+      .sort((a, b) => a.n - b.n);
   }
 }
