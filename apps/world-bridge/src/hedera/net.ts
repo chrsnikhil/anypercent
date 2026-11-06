@@ -329,7 +329,9 @@ export class RestMirror implements MirrorPort {
 
   async topicMessages(topic: string, opts: { afterSeq?: string; limit?: number } = {}): Promise<MirrorMessage[]> {
     const q = new URLSearchParams({ limit: String(opts.limit ?? 100), order: "asc" });
-    if (opts.afterSeq !== undefined) q.set("sequencenumber", `gt:${opts.afterSeq}`);
+    // gte:N+1, not gt:N: the mirror refuses gt:0 ("Invalid parameter: sequencenumber"; numbers start at 1), which
+    // made every read after a topic's start come back empty.
+    if (opts.afterSeq !== undefined) q.set("sequencenumber", `gte:${BigInt(opts.afterSeq) + 1n}`);
     const raw = await this.get<{ messages?: Array<Record<string, unknown>> }>(`/topics/${encodeURIComponent(topic)}/messages?${q}`);
     return (raw?.messages ?? []).map(toMessage);
   }
