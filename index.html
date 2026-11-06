@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Any% Board</title>
-<meta name="description" content="The Any% speedrun board, read straight from Arkiv: every time was replayed by our checker before it was written.">
+<meta name="description" content="The Any% speedrun board, read straight from Arkiv: every run was written by its own console and stamped by our checker after it replayed the log.">
 <style>
 :root {
   --bg: #0e1013; --panel: #161a20; --line: #262c35; --text: #e9e7e2; --dim: #9aa3ad;
@@ -47,7 +47,7 @@ td.time .meta { font: 12px var(--sans); }
 .badge { display: inline-block; font: 800 11px var(--sans); letter-spacing: .8px; border-radius: 4px; padding: 2px 6px; margin: 0 6px 0 0; vertical-align: 1px; }
 .human { background: var(--lime); color: #111; }
 .listed { background: var(--amber); color: #111; }
-.open { background: var(--line); color: var(--text); }
+.owner { font: 12px var(--mono); }
 .bot { background: var(--amber); color: #111; cursor: help; }
 .tiers { color: var(--text); font-size: 14px; margin: 0 0 10px; }
 .laps { font: 12px var(--mono); color: var(--dim); }
@@ -78,12 +78,12 @@ a { color: var(--blue); }
 <body>
 <main>
   <h1>Any<b>%</b> board</h1>
-  <p class="sub">Speedruns from the Any% handheld. Every time here was replayed by our checker before it was written to Arkiv.</p>
+  <p class="sub">Speedruns from the Any% handheld. Each run here was written to Arkiv by its own console's wallet, and our checker stamped it after replaying the log.</p>
   <div id="source" class="source">Reading Arkiv...</div>
   <nav id="tabs" aria-label="Games"></nav>
   <div id="board-view">
     <div class="controls">
-      <label><input type="checkbox" id="anyWallet"> show rows from any wallet</label>
+      <label><input type="checkbox" id="anyWallet"> show rows nobody stamped</label>
       <label><input type="checkbox" id="humanOnly"> HUMAN only</label>
     </div>
     <p class="tiers" id="tiers"></p>
@@ -99,12 +99,13 @@ a { color: var(--blue); }
     </table>
     <p class="legend"><span class="badge human">HUMAN</span>record book opened with World ID (<span id="credLegend">Orb</span>).
       <span class="badge listed">LISTED</span>its ghost is for sale; "pays 0.0.N" is the runner's own Hedera account (testnet USDC),
-      "approved on Hedera" the listing's message on the market topic.
+      "approved on Hedera" the listing's message on the market topic. "owner" is the console wallet that wrote the run;
+      "on Arkiv" opens that run, "stamp" our checker's stamp of it.
       <span id="botLegend" hidden><span class="badge bot">BOT</span>made by a program: the route bot slowed down on purpose
-      (dev/ghostgen.py), replayed by the same checker, sold by the house account, never HUMAN.</span></p>
+      (dev/ghostgen.py), written by the house wallet, replayed and stamped by the same checker, never HUMAN.</span></p>
     <p class="note" id="dropped" hidden></p>
     <div class="leaders" id="leaders" hidden>
-      <h3>Lap leaders (one indexed split per query, Q10)</h3>
+      <h3>Lap leaders (one indexed split per query on the stamps, Q10)</h3>
       <ol id="leaderList"></ol>
     </div>
   </div>
@@ -123,16 +124,20 @@ a { color: var(--blue); }
     </table>
   </div>
   <details id="yourself">
-    <summary>Run this query yourself</summary>
-    <p>This is the exact query this page sends to Arkiv for the board above. Only rows our checker's wallet created count:</p>
+    <summary>Run these queries yourself</summary>
+    <p>A board is read in two steps. First the stamps our checker's wallet created (the checker's word that a run was replayed and is real):</p>
     <pre id="q1Text"></pre>
     <p>With curl (no key needed):</p>
     <pre id="curlText"></pre>
     <button class="copy" id="copyCurl" type="button">Copy curl</button>
+    <p>Then, for each console wallet a stamp names (its <code>console</code>), that wallet's own runs. A run counts only when a stamp names it,
+      its creator is the stamp's console and the columns the stamp copied agree:</p>
+    <pre id="q1Runs"></pre>
   </details>
   <footer>
-    <p>Anyone can write a row that looks like ours; this board ignores every row our checker did not create (tick "show rows from any wallet" to see them struck out).
-      A run row cannot be edited, not even by our checker. Our checker could delete one; anyone can keep one alive longer.
+    <p>Anyone can write a row that looks like ours; this board counts only runs our checker stamped, and only from the console wallet
+      the stamp names (tick "show rows nobody stamped" to see the others struck out). A run is written and owned by its console:
+      nobody can edit it, not even our checker, which can only withhold a stamp. Anyone can keep a run and its stamp alive longer.
       Listings end after 7 days. Ghosts are paid in testnet USDC on Hedera (x402).</p>
     <p>Profiles: add <code>#book=ANY-XXX</code> to this page's address.</p>
   </footer>
@@ -148,33 +153,40 @@ const EXPLORER = "https://rabdi.explorer.arkiv.network";
 const HASHSCAN = "https://hashscan.io/testnet"; // a listing's Hedera payout account and its LISTING message
 // ------------------------------------------------------------------------------------------
 
-// The queries, word for word as the console and the service send them.
+// The queries, word for word as the console and the service send them. The stamps are pinned to the
+// checker; the runs and listings to the console wallet a stamp names (its EIP-55 form).
 const Q = {
-  q1: (game, season, checker) => `arkiv.schema = str('anypercent.run') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${checker}) ORDER BY frames:u64 ASC`,
-  q2: (game, season, checker) => `arkiv.schema = str('anypercent.listing') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${checker}) ORDER BY frames:u64 ASC`,
-  q3: (game, season, frames, checker) => `arkiv.schema = str('anypercent.listing') AND game = str('${game}') AND season = i32(${season}) AND frames < u64(${frames}) AND $creator = addr(${checker}) ORDER BY frames:u64 DESC`,
-  q4: (book, checker) => `arkiv.schema = str('anypercent.run') AND book = str('${book}') AND $creator = addr(${checker}) ORDER BY frames:u64 ASC`,
-  q5: (book, checker) => `arkiv.schema = str('anypercent.listing') AND book = str('${book}') AND $creator = addr(${checker}) ORDER BY $expiresAt:u64 ASC`,
+  stamps: (game, season, checker) => `arkiv.schema = str('anypercent.stamp') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${checker}) ORDER BY frames:u64 ASC`,
+  q1: (game, season, creator) => `arkiv.schema = str('anypercent.run') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${creator}) ORDER BY frames:u64 ASC`,
+  q2: (game, season, creator) => `arkiv.schema = str('anypercent.listing') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${creator}) ORDER BY frames:u64 ASC`,
+  bookStamps: (book, checker) => `arkiv.schema = str('anypercent.stamp') AND book = str('${book}') AND $creator = addr(${checker}) ORDER BY frames:u64 ASC`,
+  q4: (book, creator) => `arkiv.schema = str('anypercent.run') AND book = str('${book}') AND $creator = addr(${creator}) ORDER BY frames:u64 ASC`,
+  q5: (book, creator) => `arkiv.schema = str('anypercent.listing') AND book = str('${book}') AND $creator = addr(${creator}) ORDER BY $expiresAt:u64 ASC`,
   q8: (game, season) => `arkiv.schema = str('anypercent.run') AND game = str('${game}') AND season = i32(${season}) ORDER BY frames:u64 ASC`,
-  q9: (game, season, checker) => `arkiv.schema = str('anypercent.run') AND game = str('${game}') AND season = i32(${season}) AND human = true AND $creator = addr(${checker}) ORDER BY frames:u64 ASC`,
-  q10: (game, season, checker, lap) => `arkiv.schema = str('anypercent.run') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${checker}) ORDER BY s${lap}:u64 ASC`,
+  q10: (game, season, checker, lap) => `arkiv.schema = str('anypercent.stamp') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${checker}) ORDER BY s${lap}:u64 ASC`,
 };
 
 // s1..s4 and split_kind are a run's lap splits (optional: rows before them have none).
-const RUN_ATTRS = ["game", "title", "frames", "runner", "book", "label", "human", "credential", "log_h", "rules", "s1", "s2", "s3", "s4", "split_kind"];
+const RUN_ATTRS = ["game", "title", "season", "frames", "runner", "book", "label", "human", "credential", "log_h", "rules", "s1", "s2", "s3", "s4", "split_kind"];
 const LISTING_ATTRS = ["run", "game", "season", "frames", "log_h", "price", "seller", "book", "label", "human", "pay_to", "hcs"];
-const RUN_TYPES = { game: "str", title: "str", frames: "u64", runner: "str", book: "str", label: "str", human: "bool", credential: "str", log_h: "str", rules: "u64",
+const STAMP_ATTRS = ["run", "console", "game", "season", "frames", "log_h", "book", "label", "human", "s1", "s2", "s3", "s4", "split_kind", "final_hash", "tool"];
+const RUN_TYPES = { game: "str", title: "str", season: "i32", frames: "u64", runner: "str", book: "str", label: "str", human: "bool", credential: "str", log_h: "str", rules: "u64",
   s1: "u64", s2: "u64", s3: "u64", s4: "u64", split_kind: "str" };
-const RUN_REQUIRED = ["game", "title", "frames", "runner", "human", "log_h", "rules"];
+const RUN_REQUIRED = ["game", "title", "season", "frames", "runner", "human", "log_h", "rules"];
 // pay_to (the seller's Hedera account, as World App showed it) and hcs ("<topic>/<seq>" of the LISTING
 // message) are optional: listings written before payouts have neither and are not for sale. A listing
 // names exactly one of book (a person's) and label (the house's BOT ghosts).
 const LISTING_TYPES = { run: "key", game: "str", season: "i32", frames: "u64", log_h: "str", price: "dec", seller: "str", book: "str", label: "str", human: "bool", pay_to: "str", hcs: "str" };
 const LISTING_REQUIRED = ["run", "game", "season", "frames", "log_h", "price", "seller", "human"];
+// A stamp: the run it names, the console wallet that wrote it, and the run's columns copied.
+const STAMP_TYPES = { run: "key", console: "str", game: "str", season: "i32", frames: "u64", log_h: "str", book: "str", label: "str", human: "bool",
+  s1: "u64", s2: "u64", s3: "u64", s4: "u64", split_kind: "str", final_hash: "u64", tool: "str" };
+const STAMP_REQUIRED = ["run", "console", "game", "season", "frames", "log_h", "human", "tool"];
 const ACCOUNT_RE = /^0\.0\.\d{1,10}$/;
 const HCS_RE = /^(0\.0\.\d{1,10})\/\d{1,20}$/;
 const BOOK_RE = /^ANY-[A-Z0-9]{3,8}$/;
 const KEY_RE = /^0x[0-9a-f]{64}$/;
+const WALLET_RE = /^0x[0-9a-f]{40}$/;
 /** A row's page on the Arkiv explorer (its entity key, lower case as decode() keeps it), as the service's explorer_entity builds it; null for anything else. */
 const entityUrl = (key) => (typeof key === "string" && KEY_RE.test(key) ? `${EXPLORER}/entity/${key}` : null);
 
@@ -194,6 +206,59 @@ function parseTime(text) {
   return Math.round(cs * 0.6);
 }
 
+// ---- EIP-55: a console wallet goes into a query in its checksummed form (keccak-256, no library). ----
+const M64 = (1n << 64n) - 1n;
+const RC = [0x1n, 0x8082n, 0x800000000000808an, 0x8000000080008000n, 0x808bn, 0x80000001n, 0x8000000080008081n, 0x8000000000008009n,
+  0x8an, 0x88n, 0x80008009n, 0x8000000an, 0x8000808bn, 0x800000000000008bn, 0x8000000000008089n, 0x8000000000008003n,
+  0x8000000000008002n, 0x8000000000000080n, 0x800an, 0x800000008000000an, 0x8000000080008081n, 0x8000000000008080n, 0x80000001n, 0x8000000080008008n];
+// Rotation of lane (x, y), at index x + 5y.
+const RHO = [0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14];
+const rotl = (v, n) => (n === 0 ? v : ((v << BigInt(n)) | (v >> BigInt(64 - n))) & M64);
+function keccakF(s) {
+  for (let round = 0; round < 24; round++) {
+    const C = [0, 1, 2, 3, 4].map((x) => s[x] ^ s[x + 5] ^ s[x + 10] ^ s[x + 15] ^ s[x + 20]);
+    for (let x = 0; x < 5; x++) {
+      const D = C[(x + 4) % 5] ^ rotl(C[(x + 1) % 5], 1);
+      for (let y = 0; y < 25; y += 5) s[x + y] ^= D;
+    }
+    const B = new Array(25);
+    for (let x = 0; x < 5; x++) for (let y = 0; y < 5; y++) B[y + 5 * ((2 * x + 3 * y) % 5)] = rotl(s[x + 5 * y], RHO[x + 5 * y]);
+    for (let x = 0; x < 5; x++) for (let y = 0; y < 5; y++) s[x + 5 * y] = B[x + 5 * y] ^ (~B[((x + 1) % 5) + 5 * y] & M64 & B[((x + 2) % 5) + 5 * y]);
+    s[0] ^= RC[round];
+  }
+}
+/** keccak-256 (Ethereum's, padding 0x01): bytes in, 32 bytes out. */
+function keccak256(bytes) {
+  const rate = 136;
+  const msg = new Uint8Array(bytes.length + rate - (bytes.length % rate));
+  msg.set(bytes);
+  msg[bytes.length] ^= 0x01;
+  msg[msg.length - 1] ^= 0x80;
+  const s = new Array(25).fill(0n);
+  for (let off = 0; off < msg.length; off += rate) {
+    for (let i = 0; i < rate / 8; i++) {
+      let lane = 0n;
+      for (let b = 7; b >= 0; b--) lane = (lane << 8n) | BigInt(msg[off + i * 8 + b]);
+      s[i] ^= lane;
+    }
+    keccakF(s);
+  }
+  const out = new Uint8Array(32);
+  for (let i = 0; i < 4; i++) { let lane = s[i]; for (let b = 0; b < 8; b++) { out[i * 8 + b] = Number(lane & 0xffn); lane >>= 8n; } }
+  return out;
+}
+/** An address in its EIP-55 form, as the node wants it in addr(...). */
+function eip55(address) {
+  const hex = address.slice(2).toLowerCase();
+  const hash = keccak256(new TextEncoder().encode(hex));
+  let out = "0x";
+  for (let i = 0; i < 40; i++) {
+    const nibble = (hash[i >> 1] >> (i % 2 ? 0 : 4)) & 0xf;
+    out += nibble >= 8 ? hex[i].toUpperCase() : hex[i];
+  }
+  return out;
+}
+
 // ---- Arkiv JSON-RPC, straight from the browser: no key, no backend of ours. ----------------
 async function rpc(method, params) {
   const res = await fetch(RPC, {
@@ -210,7 +275,7 @@ async function rpc(method, params) {
 function select(attrs) {
   const attributes = { "arkiv.schema": true };
   for (const a of attrs) attributes[a] = true;
-  return { key: true, creator: true, expiresAt: true, attributes };
+  return { key: true, owner: true, creator: true, expiresAt: true, attributes };
 }
 async function query(q, attrs, limit = 100) {
   return rpc("arkiv_query", [q, { select: select(attrs), limit: "0x" + limit.toString(16) }]);
@@ -242,10 +307,12 @@ function decode(raw, types, required, schema, pin) {
   }
   if (tag !== undefined && tag !== schema) return null;
   for (const r of required) if (v[r] === undefined) return null;
-  // A listing names exactly one of book and label; both or neither is not ours to show.
-  if (/listing$/.test(schema) && (v.book === undefined) === (v.label === undefined)) return null;
+  // A listing or a stamp names exactly one of book and label; both or neither is not ours to show.
+  if (/(listing|stamp)$/.test(schema) && (v.book === undefined) === (v.label === undefined)) return null;
+  if (/stamp$/.test(schema)) v.console = v.console.toLowerCase();
   const expiresAt = typeof raw.expiresAt === "string" && /^0x[0-9a-fA-F]+$/.test(raw.expiresAt) ? Number(BigInt(raw.expiresAt)) : null;
-  return { key: raw.key.toLowerCase(), creator, expiresAt, ...v };
+  const owner = typeof raw.owner === "string" ? raw.owner.toLowerCase() : null;
+  return { key: raw.key.toLowerCase(), creator, owner, expiresAt, ...v };
 }
 function decodeAll(data, types, required, schema, pin) {
   const rows = []; let dropped = 0;
@@ -265,10 +332,79 @@ function splitsOf(r) {
 }
 const isBot = (r) => typeof r.label === "string" && r.label.startsWith("BOT-") && r.human !== true && !r.book;
 
+// ---- The rule, as the service's board.ts writes it: a run counts only when a checker stamp names it, ----
+// its creator and its current owner are the wallet the stamp names, and the columns the stamp copied agree
+// with the run's. A listing counts only when its creator and owner are that wallet too and it names that run
+// with the run's columns.
+const sameSplits = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
+function runMismatch(st, r) {
+  if (!WALLET_RE.test(st.console)) return "the stamp names no wallet";
+  if (r.key !== st.run) return "another run";
+  if ((r.creator || "") !== st.console) return "created by another wallet than the stamp names";
+  if ((r.owner || "") !== st.console) return "owned by another wallet than the stamp names";
+  if (r.game !== st.game) return "game";
+  if (r.season !== st.season) return "season";
+  if (r.frames !== st.frames) return "frames";
+  if (r.log_h !== st.log_h) return "log_h";
+  if ((r.book ?? null) !== (st.book ?? null)) return "book";
+  if ((r.label ?? null) !== (st.label ?? null)) return "label";
+  if (r.human !== st.human) return "human";
+  if (!sameSplits(splitsOf(r), splitsOf(st))) return "splits";
+  return null;
+}
+function listingMismatch(st, l) {
+  if (l.run !== st.run) return "another run";
+  if ((l.creator || "") !== st.console) return "created by another wallet than the run's";
+  if ((l.owner || "") !== st.console) return "owned by another wallet than the run's";
+  if (l.game !== st.game) return "game";
+  if (l.season !== st.season) return "season";
+  if (l.frames !== st.frames) return "frames";
+  if (l.log_h !== st.log_h) return "log_h";
+  if ((l.book ?? null) !== (st.book ?? null)) return "book";
+  if ((l.label ?? null) !== (st.label ?? null)) return "label";
+  if (l.human !== st.human) return "human";
+  return null;
+}
+/** Every stamp joined to its run (fastest first, one per log), then every listing to its stamped run. */
+function joinBoard(stamps, runs, listings) {
+  const byKey = new Map(runs.map((r) => [r.key, r]));
+  const out = [], why = [], stampOf = new Map(), seenLog = new Set();
+  for (const st of stamps) {
+    if (seenLog.has(st.log_h) || stampOf.has(st.run)) { why.push(`stamp ${st.key}: another stamp of the same log counts`); continue; }
+    const r = byKey.get(st.run);
+    const off = r ? runMismatch(st, r) : "its run is not on Arkiv";
+    if (off !== null) { why.push(`stamp ${st.key}: ${off}`); continue; }
+    seenLog.add(st.log_h);
+    stampOf.set(st.run, st);
+    out.push({ ...r, owner: st.console, stamp: st.key });
+  }
+  const kept = [];
+  for (const l of listings) {
+    const st = stampOf.get(l.run);
+    const off = st ? listingMismatch(st, l) : "its run is not a stamped run";
+    if (off !== null) { why.push(`listing ${l.key}: ${off}`); continue; }
+    kept.push(l);
+  }
+  return { runs: out, listings: kept, dropped: why.length, why };
+}
+/** Raw pages (as the node answers, or as the snapshot keeps them) to the board: what counts, what was dropped. */
+function boardFrom(stampsRaw, runsRaw, listingsRaw) {
+  const s = decodeAll(stampsRaw, STAMP_TYPES, STAMP_REQUIRED, "anypercent.stamp", CHECKER);
+  const r = decodeAll(runsRaw, RUN_TYPES, RUN_REQUIRED, "anypercent.run", null);
+  const l = decodeAll(listingsRaw, LISTING_TYPES, LISTING_REQUIRED, "anypercent.listing", null);
+  const j = joinBoard(s.rows, r.rows, l.rows);
+  return { runs: j.runs, listings: j.listings, dropped: s.dropped + r.dropped + l.dropped, unstamped: j.dropped };
+}
+/** The console wallets a stamp page names (checker's stamps only), each once. */
+function walletsOf(stampsRaw) {
+  return [...new Set(decodeAll(stampsRaw, STAMP_TYPES, STAMP_REQUIRED, "anypercent.stamp", CHECKER).rows.map((s) => s.console))].filter((w) => WALLET_RE.test(w));
+}
+
 // ---- State ---------------------------------------------------------------------------------
 let timing = null;       // {block, time, duration}: turns $expiresAt into a date
 let snapshot = null;     // the fallback, when the RPC does not answer
 let current = GAMES[0][0];
+let lastBoard = null;    // {game, board}: the board on screen ("who is just ahead" reads it)
 
 async function loadTiming() {
   const t = await rpc("arkiv_getBlockTiming", []);
@@ -306,43 +442,41 @@ function setSource(block, fromSnapshot, extra) {
   const s = $("source");
   s.textContent = "";
   s.className = fromSnapshot ? "source snap" : "source";
-  s.append(fromSnapshot ? `Arkiv did not answer: showing the snapshot at block ${block}, rows created by ` : `Read from Arkiv Rabdi at block ${block}, rows created by `);
+  s.append(fromSnapshot ? `Arkiv did not answer: showing the snapshot at block ${block}, runs stamped by ` : `Read from Arkiv Rabdi at block ${block}, runs stamped by `);
   const a = el("a", "", short(CHECKER)); a.href = `${EXPLORER}/address/${CHECKER}`; a.target = "_blank"; a.rel = "noopener"; a.title = CHECKER;
   s.append(a, extra ? `. ${extra}` : ".");
 }
 
-// ---- The board: Q1 + Q2, merged as the console does ----------------------------------------
+// ---- The board: the stamps, then each stamped console's runs and listings, joined ----------------
 async function readBoard(game) {
-  const any = $("anyWallet").checked, human = $("humanOnly").checked;
   try {
-    const runQ = any ? Q.q8(game, SEASON) : human ? Q.q9(game, SEASON, CHECKER) : Q.q1(game, SEASON, CHECKER);
-    const [runs, listings] = await Promise.all([query(runQ, RUN_ATTRS), query(Q.q2(game, SEASON, CHECKER), LISTING_ATTRS), timing ? null : loadTiming()]);
-    const r = decodeAll(runs.data, RUN_TYPES, RUN_REQUIRED, "anypercent.run", any ? null : CHECKER);
-    const l = decodeAll(listings.data, LISTING_TYPES, LISTING_REQUIRED, "anypercent.listing", CHECKER);
-    const shown = any && human ? r.rows.filter((x) => x.human === true) : r.rows;
-    return { block: Number(BigInt(runs.blockNumber)), runs: shown, listings: l.rows, dropped: r.dropped + l.dropped, snap: false };
+    const [st] = await Promise.all([query(Q.stamps(game, SEASON, CHECKER), STAMP_ATTRS), timing ? null : loadTiming()]);
+    const wallets = walletsOf(st.data);
+    const pages = await Promise.all(wallets.map((w) => Promise.all([query(Q.q1(game, SEASON, eip55(w)), RUN_ATTRS), query(Q.q2(game, SEASON, eip55(w)), LISTING_ATTRS)])));
+    const b = boardFrom(st.data, pages.flatMap((p) => p[0].data || []), pages.flatMap((p) => p[1].data || []));
+    let others = [];
+    if ($("anyWallet").checked) {
+      const any = await query(Q.q8(game, SEASON), RUN_ATTRS);
+      const counted = new Set(b.runs.map((r) => r.key));
+      others = decodeAll(any.data, RUN_TYPES, RUN_REQUIRED, "anypercent.run", null).rows.filter((r) => !counted.has(r.key));
+    }
+    return { ...b, others, wallets, block: Number(BigInt(st.blockNumber)), snap: false };
   } catch (err) {
     const s = await loadSnapshot();
-    const g = (s.games || {})[game] || { runs: [], listings: [] };
-    const r = decodeAll(g.runs, RUN_TYPES, RUN_REQUIRED, "anypercent.run", CHECKER);
-    const l = decodeAll(g.listings, LISTING_TYPES, LISTING_REQUIRED, "anypercent.listing", CHECKER);
-    const runs = human ? r.rows.filter((x) => x.human === true) : r.rows;
-    return { block: s.block, runs, listings: l.rows, dropped: r.dropped + l.dropped, snap: true };
+    const g = (s.games || {})[game] || {};
+    return { ...boardFrom(g.stamps || [], g.runs || [], g.listings || []), others: [], wallets: walletsOf(g.stamps || []), block: s.block, snap: true };
   }
 }
 
 function merge(runs, listings) {
   const listingFor = new Map();
-  for (const l of listings) listingFor.set(l.run, l);
+  for (const l of listings) if (!listingFor.has(l.run)) listingFor.set(l.run, l);
   const out = [], seen = new Set();
   for (const r of runs) {
-    const ours = r.creator === CHECKER.toLowerCase();
-    if (!ours) { out.push({ ...r, ignored: true }); continue; }
     const who = r.book || (r.label ? `label:${r.label}` : `runner:${r.runner}`);
     if (seen.has(who)) continue;           // one row per runner: the first is the fastest
     seen.add(who);
-    const l = listingFor.get(r.key);
-    out.push({ ...r, listing: l && l.log_h === r.log_h && l.game === r.game ? l : null });
+    out.push({ ...r, listing: listingFor.get(r.key) || null });
   }
   return out;
 }
@@ -357,21 +491,30 @@ function runnerCell(r) {
   else if (isBot(r)) {
     const b = el("span", "badge bot", "BOT");
     const house = r.listing && typeof r.listing.pay_to === "string" && ACCOUNT_RE.test(r.listing.pay_to) ? r.listing.pay_to : "0.0.N";
-    b.title = `generated by a program (dev/ghostgen.py), sold by the house account ${house}`;
+    b.title = `generated by a program (dev/ghostgen.py), written by the house wallet, sold by the house account ${house}`;
     meta.append(b);
-  } else if (!r.book) meta.append(el("span", "badge open", "OPEN"));
+  }
   if (r.listing) meta.append(el("span", "badge listed", "LISTED"), `${r.listing.price} USDC`);
   if (r.listing) hederaLinks(meta, r.listing);
-  arkivLinks(meta, r);
+  if (!r.ignored) arkivLinks(meta, r);
   if (meta.childNodes.length) td.append(meta);
   return td;
 }
 
-/** "on Arkiv" (the run's entity page on the explorer) and, for a listed run, "listing" (its listing's page). */
+/** "owner" (the console wallet that wrote the run), "on Arkiv" (the run itself), "stamp" (the checker's) and, when listed, "listing". */
 function arkivLinks(parent, r) {
+  if (typeof r.owner === "string" && WALLET_RE.test(r.owner)) {
+    const a = el("a", "owner", `owner ${short(r.owner)}`); a.href = `${EXPLORER}/address/${r.owner}`; a.rel = "noopener"; a.target = "_blank"; a.title = `console wallet ${r.owner}`;
+    parent.append(" ", a);
+  }
   const run = entityUrl(r.key);
   if (run) {
-    const a = el("a", "", "on Arkiv"); a.href = run; a.rel = "noopener"; a.target = "_blank"; a.title = `run ${r.key}`;
+    const a = el("a", "", "on Arkiv"); a.href = run; a.rel = "noopener"; a.target = "_blank"; a.title = `run ${r.key}, written by its console`;
+    parent.append(" ", a);
+  }
+  const stamp = entityUrl(r.stamp);
+  if (stamp) {
+    const a = el("a", "", "stamp"); a.href = stamp; a.rel = "noopener"; a.target = "_blank"; a.title = `our checker's stamp ${r.stamp}`;
     parent.append(" ", a);
   }
   const listing = r.listing ? entityUrl(r.listing.key) : null;
@@ -404,58 +547,63 @@ async function showBoard(game) {
   const b = await readBoard(game).catch(() => null);
   body.textContent = "";
   if (!b) { setSource("?", true, "No snapshot either"); body.append(rowMsg("Arkiv did not answer and there is no snapshot.", 4)); return; }
-  const rows = merge(b.runs, b.listings);
-  setSource(b.block, b.snap, b.snap && $("anyWallet").checked ? "The snapshot holds only our checker's rows" : "");
+  lastBoard = { game, board: b };
+  const human = $("humanOnly").checked;
+  const rows = merge(human ? b.runs.filter((r) => r.human === true) : b.runs, b.listings);
+  const ignored = (human ? b.others.filter((r) => r.human === true) : b.others).map((r) => ({ ...r, ignored: true }));
+  setSource(b.block, b.snap, b.snap && $("anyWallet").checked ? "The snapshot holds only stamped consoles' rows" : "");
   let rank = 0;
   const creds = new Set();
-  for (const r of rows) {
+  for (const r of [...rows, ...ignored]) {
     const tr = el("tr", r.ignored ? "ignored" : "");
     tr.append(el("td", "rank", r.ignored ? "-" : String(++rank)));
     const who = runnerCell(r);
-    if (r.ignored) who.append(el("span", "why", `not written by our checker: ignored (${short(r.creator)})`));
+    if (r.ignored) who.append(el("span", "why", `no stamp of our checker names it: ignored (written by ${short(r.creator)})`));
     tr.append(who, timeCell(r), el("td", "until", untilDate(r.expiresAt)));
-    if (r.human && r.credential) creds.add(r.credential);
+    if (!r.ignored && r.human && r.credential) creds.add(r.credential);
     body.append(tr);
   }
-  if (!rows.length) body.append(rowMsg("No runs on the board yet.", 4));
+  if (!rows.length && !ignored.length) body.append(rowMsg("No runs on the board yet.", 4));
   $("credLegend").textContent = creds.size ? [...creds].join(" or ") : "Orb";
   // How many humans are on this board: one record book is one person, however many runs it has.
-  const ours = rows.filter((r) => !r.ignored);
-  const books = new Set(ours.filter((r) => r.human === true && r.book).map((r) => r.book));
-  const bots = ours.filter(isBot).length;
-  const open = ours.filter((r) => r.human !== true && !isBot(r)).length;
-  $("tiers").textContent = `Humans on this board: ${books.size} record book${books.size === 1 ? "" : "s"}` +
-    ($("humanOnly").checked ? " (HUMAN only)" : ` · BOT: ${bots}${open ? ` · OPEN: ${open}` : ""}`);
+  const books = new Set(rows.filter((r) => r.human === true && r.book).map((r) => r.book));
+  const bots = rows.filter(isBot).length;
+  $("tiers").textContent = `Humans on this board: ${books.size} record book${books.size === 1 ? "" : "s"}` + (human ? " (HUMAN only)" : ` · BOT: ${bots}`);
   $("botLegend").hidden = !bots;
-  showLeaders(game, b.snap ? b.runs : null);
+  showLeaders(game, b);
   const d = $("dropped");
-  d.hidden = !b.dropped;
-  d.textContent = b.dropped ? `${b.dropped} row${b.dropped > 1 ? "s" : ""} did not fit the schema and ${b.dropped > 1 ? "were" : "was"} dropped.` : "";
-  showQuery(game);
+  const notes = [];
+  if (b.dropped) notes.push(`${b.dropped} row${b.dropped > 1 ? "s" : ""} did not fit the schema and ${b.dropped > 1 ? "were" : "was"} dropped`);
+  if (b.unstamped) notes.push(`${b.unstamped} stamp${b.unstamped > 1 ? "s or listings" : " or listing"} did not match the run${b.unstamped > 1 ? "s" : ""} they name and ${b.unstamped > 1 ? "were" : "was"} dropped`);
+  d.hidden = !notes.length;
+  d.textContent = notes.length ? `${notes.join("; ")}.` : "";
+  showQuery(game, b.wallets);
 }
 
-// ---- Q10: the lap leaders, the fastest of each lap (one indexed split, one query) ---------------
-async function showLeaders(game, snapRuns) {
+// ---- Q10 on the stamps: the lap leaders, the fastest of each lap (one indexed split, one query) ----
+async function showLeaders(game, b) {
   const box = $("leaders"), list = $("leaderList");
   list.textContent = "";
+  const counted = new Map(b.runs.map((r) => [r.key, r]));
   const leaders = [];
   for (const lap of [1, 2, 3]) {
-    let rows;
+    let order;
     try {
-      if (snapRuns) throw new Error("snapshot");
-      const res = await query(Q.q10(game, SEASON, CHECKER, lap), RUN_ATTRS, 20);
-      rows = decodeAll(res.data, RUN_TYPES, RUN_REQUIRED, "anypercent.run", CHECKER).rows;
+      if (b.snap) throw new Error("snapshot");
+      const res = await query(Q.q10(game, SEASON, CHECKER, lap), STAMP_ATTRS, 20);
+      order = decodeAll(res.data, STAMP_TYPES, STAMP_REQUIRED, "anypercent.stamp", CHECKER).rows.map((s) => counted.get(s.run)).filter(Boolean);
     } catch {
-      rows = (snapRuns || []).slice().sort((a, b) => (a[`s${lap}`] ?? Infinity) - (b[`s${lap}`] ?? Infinity));
+      order = b.runs.slice().sort((x, y) => (x[`s${lap}`] ?? Infinity) - (y[`s${lap}`] ?? Infinity));
     }
-    // Rows without splits (or with splits that do not check out) never lead a lap, wherever they sort.
-    const best = rows.find((r) => { const s = splitsOf(r); return s && s.length >= lap; });
+    // Only runs that count, and only splits that check out, ever lead a lap, wherever they sort.
+    const best = order.find((r) => { const s = splitsOf(r); return s && s.length >= lap; });
     if (best) leaders.push({ lap, r: best, f: splitsOf(best)[lap - 1] });
   }
   box.hidden = !leaders.length;
   for (const { lap, r, f } of leaders) {
     const li = el("li", "", `Lap ${lap}: ${(Math.round(f * 100 / 60) / 100).toFixed(2)} s by ${r.book || r.label || r.runner} `);
-    li.append(el("span", `badge ${r.human === true ? "human" : isBot(r) ? "bot" : "open"} meta`, r.human === true ? "HUMAN" : isBot(r) ? "BOT" : "OPEN"));
+    if (r.human === true) li.append(el("span", "badge human meta", "HUMAN"));
+    else if (isBot(r)) li.append(el("span", "badge bot meta", "BOT"));
     list.append(li);
   }
 }
@@ -464,36 +612,29 @@ function rowMsg(text, span) {
   const tr = el("tr"); const td = el("td", "empty", text); td.colSpan = span; tr.append(td); return tr;
 }
 
-function showQuery(game) {
-  const q = Q.q1(game, SEASON, CHECKER);
+function showQuery(game, wallets) {
+  const q = Q.stamps(game, SEASON, CHECKER);
   $("q1Text").textContent = q;
-  const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "arkiv_query", params: [q, { select: select(RUN_ATTRS), limit: "0x64" }] });
+  const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "arkiv_query", params: [q, { select: select(STAMP_ATTRS), limit: "0x64" }] });
   $("curlText").textContent = `curl -s ${RPC} -H 'content-type: application/json' --data @- <<'EOF'\n${body}\nEOF`;
+  $("q1Runs").textContent = wallets && wallets.length ? Q.q1(game, SEASON, eip55(wallets[0])) : Q.q1(game, SEASON, "<the stamp's console>");
 }
 
-// ---- Q3: who is just ahead --------------------------------------------------------------
+// ---- Who is just ahead: the listed ghost with the largest time below yours, on the board as joined ----
 async function justAhead(ev) {
   ev.preventDefault();
   const out = $("aheadOut");
   const frames = parseTime($("aheadTime").value);
   if (frames === null) { out.textContent = "write it as m:ss.cc"; return; }
   out.textContent = "...";
-  let l = null;
-  try {
-    const res = await query(Q.q3(current, SEASON, frames, CHECKER), LISTING_ATTRS, 1);
-    l = decodeAll(res.data, LISTING_TYPES, LISTING_REQUIRED, "anypercent.listing", CHECKER).rows[0] || null;
-  } catch {
-    const s = await loadSnapshot().catch(() => null);
-    const g = s && (s.games || {})[current];
-    const all = g ? decodeAll(g.listings, LISTING_TYPES, LISTING_REQUIRED, "anypercent.listing", CHECKER).rows : [];
-    l = all.filter((x) => x.frames < frames).sort((a, b) => b.frames - a.frames)[0] || null;
-  }
+  const b = lastBoard && lastBoard.game === current ? lastBoard.board : await readBoard(current).catch(() => null);
+  const l = (b ? b.listings : []).filter((x) => x.frames < frames).sort((x, y) => y.frames - x.frames)[0] || null;
   if (!l) { out.textContent = `nobody listed is ahead of ${fmt(frames)}`; return; }
   const days = daysLeft(l.expiresAt);
   out.textContent = `${l.book || l.label} at ${fmt(l.frames)}, ${l.price} USDC${days !== null ? `, listing ends in ${days} day${days === 1 ? "" : "s"}` : ""}`;
 }
 
-// ---- Profile: Q4 + Q5 ---------------------------------------------------------------------
+// ---- Profile: one book's stamps, then its consoles' runs and listings, joined ----------------------
 async function showProfile(book) {
   $("board-view").hidden = true; $("profile-view").hidden = false; $("tabs").hidden = true;
   $("profileTitle").textContent = book;
@@ -501,20 +642,22 @@ async function showProfile(book) {
   runsBody.textContent = ""; listBody.textContent = "";
   let runs = [], listings = [], block = "?", snap = false;
   try {
-    const [r, l] = await Promise.all([query(Q.q4(book, CHECKER), [...RUN_ATTRS, "season"]), query(Q.q5(book, CHECKER), LISTING_ATTRS), timing ? null : loadTiming()]);
-    runs = decodeAll(r.data, RUN_TYPES, RUN_REQUIRED, "anypercent.run", CHECKER).rows;
-    listings = decodeAll(l.data, LISTING_TYPES, LISTING_REQUIRED, "anypercent.listing", CHECKER).rows;
-    block = Number(BigInt(r.blockNumber));
+    const [st] = await Promise.all([query(Q.bookStamps(book, CHECKER), STAMP_ATTRS), timing ? null : loadTiming()]);
+    const pages = await Promise.all(walletsOf(st.data).map((w) => Promise.all([query(Q.q4(book, eip55(w)), RUN_ATTRS), query(Q.q5(book, eip55(w)), LISTING_ATTRS)])));
+    const b = boardFrom(st.data, pages.flatMap((p) => p[0].data || []), pages.flatMap((p) => p[1].data || []));
+    runs = b.runs; listings = b.listings;
+    block = Number(BigInt(st.blockNumber));
   } catch {
     const s = await loadSnapshot().catch(() => null);
     snap = true; block = s ? s.block : "?";
     for (const g of Object.values((s && s.games) || {})) {
-      runs.push(...decodeAll(g.runs, RUN_TYPES, RUN_REQUIRED, "anypercent.run", CHECKER).rows.filter((x) => x.book === book));
-      listings.push(...decodeAll(g.listings, LISTING_TYPES, LISTING_REQUIRED, "anypercent.listing", CHECKER).rows.filter((x) => x.book === book));
+      const b = boardFrom(g.stamps || [], g.runs || [], g.listings || []);
+      runs.push(...b.runs.filter((x) => x.book === book));
+      listings.push(...b.listings.filter((x) => x.book === book));
     }
-    runs.sort((a, b) => a.frames - b.frames);
-    listings.sort((a, b) => (a.expiresAt || 0) - (b.expiresAt || 0));
   }
+  runs.sort((a, b) => a.frames - b.frames);
+  listings.sort((a, b) => (a.expiresAt || 0) - (b.expiresAt || 0));
   setSource(block, snap, "");
   const badge = $("profileBadge");
   badge.textContent = "";
@@ -526,7 +669,9 @@ async function showProfile(book) {
   const title = (id) => (GAMES.find((g) => g[0] === id) || [id, id])[1];
   for (const r of runs) {
     const tr = el("tr");
-    tr.append(el("td", "", title(r.game)), timeCell(r), el("td", "until", untilDate(r.expiresAt)));
+    const game = el("td", "", title(r.game));
+    arkivLinks(game, r);
+    tr.append(game, timeCell(r), el("td", "until", untilDate(r.expiresAt)));
     runsBody.append(tr);
   }
   if (!runs.length) runsBody.append(rowMsg("No runs on the board yet.", 3));

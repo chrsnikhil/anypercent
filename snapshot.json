@@ -1,32 +1,613 @@
 {
  "chain_id": 7794095,
  "rpc": "https://rpc.rabdi.db-chain.testnet.arkiv.network",
- "block": "283161",
- "block_time_s": 1793952086,
+ "block": "309171",
+ "block_time_s": 1794004112,
  "block_duration_s": 2,
  "checker": "0x3d3260425Cb52F0c6716212274a883337aFa3f63",
  "season": 1,
  "schemas": {
   "run": "anypercent.run",
-  "listing": "anypercent.listing"
+  "listing": "anypercent.listing",
+  "stamp": "anypercent.stamp"
+ },
+ "queries": {
+  "stamps": "arkiv.schema = str('anypercent.stamp') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${checker}) ORDER BY frames:u64 ASC",
+  "runs": "arkiv.schema = str('anypercent.run') AND game = str('${game}') AND season = i32(${season}) AND $creator = addr(${creator}) ORDER BY frames:u64 ASC"
  },
  "games": {
   "SHIP": {
-   "block": "283162",
-   "q1": "arkiv.schema = str('anypercent.run') AND game = str('SHIP') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
-   "q2": "arkiv.schema = str('anypercent.listing') AND game = str('SHIP') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "block": "309171",
+   "q_stamps": "arkiv.schema = str('anypercent.stamp') AND game = str('SHIP') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "stamps": [],
    "runs": [],
    "listings": []
   },
   "MDGP": {
-   "block": "283162",
-   "q1": "arkiv.schema = str('anypercent.run') AND game = str('MDGP') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
-   "q2": "arkiv.schema = str('anypercent.listing') AND game = str('MDGP') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "block": "309171",
+   "q_stamps": "arkiv.schema = str('anypercent.stamp') AND game = str('MDGP') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "stamps": [
+    {
+     "key": "0xfaec9539dc6b9612ff3a7f0490f96179fc729c646a5dfd1dd5cf34ad25b33a36",
+     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
+     "expiresAt": "0x3cca2b",
+     "attributes": [
+      {
+       "name": "arkiv.schema",
+       "type": "str",
+       "value": "anypercent.stamp"
+      },
+      {
+       "name": "console",
+       "type": "str",
+       "value": "0xb65bf2156c09883c06e24f08d969d890bc5ea484"
+      },
+      {
+       "name": "final_hash",
+       "type": "u64",
+       "value": "0xf9d7f8ac"
+      },
+      {
+       "name": "frames",
+       "type": "u64",
+       "value": "0x1819"
+      },
+      {
+       "name": "game",
+       "type": "str",
+       "value": "MDGP"
+      },
+      {
+       "name": "human",
+       "type": "bool",
+       "value": false
+      },
+      {
+       "name": "label",
+       "type": "str",
+       "value": "BOT-A3"
+      },
+      {
+       "name": "log_h",
+       "type": "str",
+       "value": "fbebd946839873bbbb35cfa26ba25cb056c9b355557f1d98c70968152c93e18e"
+      },
+      {
+       "name": "run",
+       "type": "bytes32",
+       "value": "0x1081feea9e7ec7a0ac82d398744ecce57d6cd6f33b32fa628a0ba38f3be2bb9f"
+      },
+      {
+       "name": "s1",
+       "type": "u64",
+       "value": "0x827"
+      },
+      {
+       "name": "s2",
+       "type": "u64",
+       "value": "0x828"
+      },
+      {
+       "name": "s3",
+       "type": "u64",
+       "value": "0x7ca"
+      },
+      {
+       "name": "season",
+       "type": "i32",
+       "value": 1
+      },
+      {
+       "name": "split_kind",
+       "type": "str",
+       "value": "lap"
+      },
+      {
+       "name": "tool",
+       "type": "str",
+       "value": "arcade_replay sha256:a992006e6280"
+      }
+     ]
+    },
+    {
+     "key": "0x6e202243974c2bbed34c310873fb3e95d4c240ff56e0bc229898032487a879a6",
+     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
+     "expiresAt": "0x3cca2b",
+     "attributes": [
+      {
+       "name": "arkiv.schema",
+       "type": "str",
+       "value": "anypercent.stamp"
+      },
+      {
+       "name": "console",
+       "type": "str",
+       "value": "0xb65bf2156c09883c06e24f08d969d890bc5ea484"
+      },
+      {
+       "name": "final_hash",
+       "type": "u64",
+       "value": "0x3790ba99"
+      },
+      {
+       "name": "frames",
+       "type": "u64",
+       "value": "0x181a"
+      },
+      {
+       "name": "game",
+       "type": "str",
+       "value": "MDGP"
+      },
+      {
+       "name": "human",
+       "type": "bool",
+       "value": false
+      },
+      {
+       "name": "label",
+       "type": "str",
+       "value": "BOT-A1"
+      },
+      {
+       "name": "log_h",
+       "type": "str",
+       "value": "25b2c5bff90a03a2eab845a77506cb0eba2a8b8e13fb1bbcad043d9d382f35d4"
+      },
+      {
+       "name": "run",
+       "type": "bytes32",
+       "value": "0x6b4a3a283cd6dcdf9f5d08c2366d69ef6702bba654881210729949d92825a9e8"
+      },
+      {
+       "name": "s1",
+       "type": "u64",
+       "value": "0x827"
+      },
+      {
+       "name": "s2",
+       "type": "u64",
+       "value": "0x7cb"
+      },
+      {
+       "name": "s3",
+       "type": "u64",
+       "value": "0x828"
+      },
+      {
+       "name": "season",
+       "type": "i32",
+       "value": 1
+      },
+      {
+       "name": "split_kind",
+       "type": "str",
+       "value": "lap"
+      },
+      {
+       "name": "tool",
+       "type": "str",
+       "value": "arcade_replay sha256:a992006e6280"
+      }
+     ]
+    },
+    {
+     "key": "0xe1891b91f30f7ff91865178dda74190bb8522b3e3ceef3eda77b4db386b36fa5",
+     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
+     "expiresAt": "0x3cca2b",
+     "attributes": [
+      {
+       "name": "arkiv.schema",
+       "type": "str",
+       "value": "anypercent.stamp"
+      },
+      {
+       "name": "book",
+       "type": "str",
+       "value": "ANY-6PS"
+      },
+      {
+       "name": "console",
+       "type": "str",
+       "value": "0xda2855662f95b4a02232e3eee445270ec6902f89"
+      },
+      {
+       "name": "final_hash",
+       "type": "u64",
+       "value": "0x2951ac55"
+      },
+      {
+       "name": "frames",
+       "type": "u64",
+       "value": "0x1851"
+      },
+      {
+       "name": "game",
+       "type": "str",
+       "value": "MDGP"
+      },
+      {
+       "name": "human",
+       "type": "bool",
+       "value": true
+      },
+      {
+       "name": "log_h",
+       "type": "str",
+       "value": "ab60ff5bd9ead4fbaead4a7224d88101fc506949ac27207c51f2bca661aa9bd8"
+      },
+      {
+       "name": "run",
+       "type": "bytes32",
+       "value": "0x226e4415fad3cc052574ed63cce379bed1468112d5b3f79d967aa21914d9ede4"
+      },
+      {
+       "name": "s1",
+       "type": "u64",
+       "value": "0x874"
+      },
+      {
+       "name": "s2",
+       "type": "u64",
+       "value": "0x7c8"
+      },
+      {
+       "name": "s3",
+       "type": "u64",
+       "value": "0x815"
+      },
+      {
+       "name": "season",
+       "type": "i32",
+       "value": 1
+      },
+      {
+       "name": "split_kind",
+       "type": "str",
+       "value": "lap"
+      },
+      {
+       "name": "tool",
+       "type": "str",
+       "value": "arcade_replay sha256:a992006e6280"
+      }
+     ]
+    },
+    {
+     "key": "0x66563b881c4d8df3311a422985f5ff9a80340308a9412927989e80effc19a8ae",
+     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
+     "expiresAt": "0x3cca2b",
+     "attributes": [
+      {
+       "name": "arkiv.schema",
+       "type": "str",
+       "value": "anypercent.stamp"
+      },
+      {
+       "name": "console",
+       "type": "str",
+       "value": "0xb65bf2156c09883c06e24f08d969d890bc5ea484"
+      },
+      {
+       "name": "final_hash",
+       "type": "u64",
+       "value": "0xab444ee5"
+      },
+      {
+       "name": "frames",
+       "type": "u64",
+       "value": "0x185c"
+      },
+      {
+       "name": "game",
+       "type": "str",
+       "value": "MDGP"
+      },
+      {
+       "name": "human",
+       "type": "bool",
+       "value": false
+      },
+      {
+       "name": "label",
+       "type": "str",
+       "value": "BOT-A2"
+      },
+      {
+       "name": "log_h",
+       "type": "str",
+       "value": "ea41e473ae1561917660fca36635bdd473cf325a570fadce0f89db1fe282f020"
+      },
+      {
+       "name": "run",
+       "type": "bytes32",
+       "value": "0x28744dbb69afe5c333df900789a079135ac32e0643e4b76043aee0c828957aba"
+      },
+      {
+       "name": "s1",
+       "type": "u64",
+       "value": "0x8c8"
+      },
+      {
+       "name": "s2",
+       "type": "u64",
+       "value": "0x7ca"
+      },
+      {
+       "name": "s3",
+       "type": "u64",
+       "value": "0x7ca"
+      },
+      {
+       "name": "season",
+       "type": "i32",
+       "value": 1
+      },
+      {
+       "name": "split_kind",
+       "type": "str",
+       "value": "lap"
+      },
+      {
+       "name": "tool",
+       "type": "str",
+       "value": "arcade_replay sha256:a992006e6280"
+      }
+     ]
+    },
+    {
+     "key": "0x875ac841f0792107d26a32cb93fc297efbe8d4bd7ad376d83a884817666ffdd8",
+     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
+     "expiresAt": "0x3cca2b",
+     "attributes": [
+      {
+       "name": "arkiv.schema",
+       "type": "str",
+       "value": "anypercent.stamp"
+      },
+      {
+       "name": "console",
+       "type": "str",
+       "value": "0xb65bf2156c09883c06e24f08d969d890bc5ea484"
+      },
+      {
+       "name": "final_hash",
+       "type": "u64",
+       "value": "0x5988c8ae"
+      },
+      {
+       "name": "frames",
+       "type": "u64",
+       "value": "0x1860"
+      },
+      {
+       "name": "game",
+       "type": "str",
+       "value": "MDGP"
+      },
+      {
+       "name": "human",
+       "type": "bool",
+       "value": false
+      },
+      {
+       "name": "label",
+       "type": "str",
+       "value": "BOT-A4"
+      },
+      {
+       "name": "log_h",
+       "type": "str",
+       "value": "c0f0b3ce7e36532a52881de4efe9e71c2ebce527f38aef2f5f0aebb8e9e1ae16"
+      },
+      {
+       "name": "run",
+       "type": "bytes32",
+       "value": "0x08ba1a371755b8e460a046f734c13dded986db26319fb07d9462e6a5ec4cb98c"
+      },
+      {
+       "name": "s1",
+       "type": "u64",
+       "value": "0x878"
+      },
+      {
+       "name": "s2",
+       "type": "u64",
+       "value": "0x81e"
+      },
+      {
+       "name": "s3",
+       "type": "u64",
+       "value": "0x7ca"
+      },
+      {
+       "name": "season",
+       "type": "i32",
+       "value": 1
+      },
+      {
+       "name": "split_kind",
+       "type": "str",
+       "value": "lap"
+      },
+      {
+       "name": "tool",
+       "type": "str",
+       "value": "arcade_replay sha256:a992006e6280"
+      }
+     ]
+    },
+    {
+     "key": "0x05fbd9f5d5deb39dacc8fe9891f5f76329ec98b605d61cf0128253ef3cd61484",
+     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
+     "expiresAt": "0x3cca2b",
+     "attributes": [
+      {
+       "name": "arkiv.schema",
+       "type": "str",
+       "value": "anypercent.stamp"
+      },
+      {
+       "name": "console",
+       "type": "str",
+       "value": "0xb65bf2156c09883c06e24f08d969d890bc5ea484"
+      },
+      {
+       "name": "final_hash",
+       "type": "u64",
+       "value": "0xd43dd925"
+      },
+      {
+       "name": "frames",
+       "type": "u64",
+       "value": "0x1864"
+      },
+      {
+       "name": "game",
+       "type": "str",
+       "value": "MDGP"
+      },
+      {
+       "name": "human",
+       "type": "bool",
+       "value": false
+      },
+      {
+       "name": "label",
+       "type": "str",
+       "value": "BOT-A5"
+      },
+      {
+       "name": "log_h",
+       "type": "str",
+       "value": "c8716c06cd8b02bd8702d13603ca0a16afe147e18da54a3112f1bd7d33f674e9"
+      },
+      {
+       "name": "run",
+       "type": "bytes32",
+       "value": "0x37d19fc8f435aacda76bc183be3d7e111ae7eb2bef7c9a242fb120b2cc1d3f2c"
+      },
+      {
+       "name": "s1",
+       "type": "u64",
+       "value": "0x827"
+      },
+      {
+       "name": "s2",
+       "type": "u64",
+       "value": "0x820"
+      },
+      {
+       "name": "s3",
+       "type": "u64",
+       "value": "0x81d"
+      },
+      {
+       "name": "season",
+       "type": "i32",
+       "value": 1
+      },
+      {
+       "name": "split_kind",
+       "type": "str",
+       "value": "lap"
+      },
+      {
+       "name": "tool",
+       "type": "str",
+       "value": "arcade_replay sha256:a992006e6280"
+      }
+     ]
+    },
+    {
+     "key": "0xc2457a7985e7c84127991a78eed6ad22a4559ef8d0de7a48cfe3a90731ecebab",
+     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
+     "expiresAt": "0x3cca2b",
+     "attributes": [
+      {
+       "name": "arkiv.schema",
+       "type": "str",
+       "value": "anypercent.stamp"
+      },
+      {
+       "name": "console",
+       "type": "str",
+       "value": "0xb65bf2156c09883c06e24f08d969d890bc5ea484"
+      },
+      {
+       "name": "final_hash",
+       "type": "u64",
+       "value": "0x7d78468e"
+      },
+      {
+       "name": "frames",
+       "type": "u64",
+       "value": "0x18b5"
+      },
+      {
+       "name": "game",
+       "type": "str",
+       "value": "MDGP"
+      },
+      {
+       "name": "human",
+       "type": "bool",
+       "value": false
+      },
+      {
+       "name": "label",
+       "type": "str",
+       "value": "BOT-A6"
+      },
+      {
+       "name": "log_h",
+       "type": "str",
+       "value": "613840946091d9c940aec54f3c68fe3e6525e46036be304b9c976c47517724d9"
+      },
+      {
+       "name": "run",
+       "type": "bytes32",
+       "value": "0xc9cfbd2b50213f382efed1aa736d59151c6a83dfd33bbd4fa1afa199f4a5269f"
+      },
+      {
+       "name": "s1",
+       "type": "u64",
+       "value": "0x878"
+      },
+      {
+       "name": "s2",
+       "type": "u64",
+       "value": "0x81e"
+      },
+      {
+       "name": "s3",
+       "type": "u64",
+       "value": "0x81f"
+      },
+      {
+       "name": "season",
+       "type": "i32",
+       "value": 1
+      },
+      {
+       "name": "split_kind",
+       "type": "str",
+       "value": "lap"
+      },
+      {
+       "name": "tool",
+       "type": "str",
+       "value": "arcade_replay sha256:a992006e6280"
+      }
+     ]
+    }
+   ],
    "runs": [
     {
-     "key": "0xb49a56af450d500a98e5a333cfe3d011e33ea0e2cfeda85be05df180af09a330",
-     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
-     "expiresAt": "0x3cca2f",
+     "key": "0x1081feea9e7ec7a0ac82d398744ecce57d6cd6f33b32fa628a0ba38f3be2bb9f",
+     "owner": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "creator": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "expiresAt": "0x3cca2b",
      "attributes": [
       {
        "name": "arkiv.schema",
@@ -66,7 +647,7 @@
       {
        "name": "runner",
        "type": "str",
-       "value": "22d8c244130cd5a3"
+       "value": "143adefea36f2610"
       },
       {
        "name": "s1",
@@ -84,6 +665,11 @@
        "value": "0x7ca"
       },
       {
+       "name": "season",
+       "type": "i32",
+       "value": 1
+      },
+      {
        "name": "split_kind",
        "type": "str",
        "value": "lap"
@@ -96,9 +682,10 @@
      ]
     },
     {
-     "key": "0xf6805663c96d7f45ffb6e95dd20d2c30306f6c2c1af400814df7da3032022d7e",
-     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
-     "expiresAt": "0x3cca2f",
+     "key": "0x6b4a3a283cd6dcdf9f5d08c2366d69ef6702bba654881210729949d92825a9e8",
+     "owner": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "creator": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "expiresAt": "0x3cca2b",
      "attributes": [
       {
        "name": "arkiv.schema",
@@ -138,7 +725,7 @@
       {
        "name": "runner",
        "type": "str",
-       "value": "eaa6a4d383d3a606"
+       "value": "b15c04d9503f8002"
       },
       {
        "name": "s1",
@@ -156,6 +743,11 @@
        "value": "0x828"
       },
       {
+       "name": "season",
+       "type": "i32",
+       "value": 1
+      },
+      {
        "name": "split_kind",
        "type": "str",
        "value": "lap"
@@ -168,9 +760,322 @@
      ]
     },
     {
-     "key": "0x9e64de0b61604e325a044b90596fb93fa5091a192fff1bf71ed2a376611863b4",
-     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
-     "expiresAt": "0x3cca2e",
+     "key": "0x28744dbb69afe5c333df900789a079135ac32e0643e4b76043aee0c828957aba",
+     "owner": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "creator": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "expiresAt": "0x3cca2b",
+     "attributes": [
+      {
+       "name": "arkiv.schema",
+       "type": "str",
+       "value": "anypercent.run"
+      },
+      {
+       "name": "frames",
+       "type": "u64",
+       "value": "0x185c"
+      },
+      {
+       "name": "game",
+       "type": "str",
+       "value": "MDGP"
+      },
+      {
+       "name": "human",
+       "type": "bool",
+       "value": false
+      },
+      {
+       "name": "label",
+       "type": "str",
+       "value": "BOT-A2"
+      },
+      {
+       "name": "log_h",
+       "type": "str",
+       "value": "ea41e473ae1561917660fca36635bdd473cf325a570fadce0f89db1fe282f020"
+      },
+      {
+       "name": "rules",
+       "type": "u64",
+       "value": "0x4"
+      },
+      {
+       "name": "runner",
+       "type": "str",
+       "value": "033f6388cd48f97d"
+      },
+      {
+       "name": "s1",
+       "type": "u64",
+       "value": "0x8c8"
+      },
+      {
+       "name": "s2",
+       "type": "u64",
+       "value": "0x7ca"
+      },
+      {
+       "name": "s3",
+       "type": "u64",
+       "value": "0x7ca"
+      },
+      {
+       "name": "season",
+       "type": "i32",
+       "value": 1
+      },
+      {
+       "name": "split_kind",
+       "type": "str",
+       "value": "lap"
+      },
+      {
+       "name": "title",
+       "type": "str",
+       "value": "MARINE DRIVE GP"
+      }
+     ]
+    },
+    {
+     "key": "0x08ba1a371755b8e460a046f734c13dded986db26319fb07d9462e6a5ec4cb98c",
+     "owner": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "creator": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "expiresAt": "0x3cca2b",
+     "attributes": [
+      {
+       "name": "arkiv.schema",
+       "type": "str",
+       "value": "anypercent.run"
+      },
+      {
+       "name": "frames",
+       "type": "u64",
+       "value": "0x1860"
+      },
+      {
+       "name": "game",
+       "type": "str",
+       "value": "MDGP"
+      },
+      {
+       "name": "human",
+       "type": "bool",
+       "value": false
+      },
+      {
+       "name": "label",
+       "type": "str",
+       "value": "BOT-A4"
+      },
+      {
+       "name": "log_h",
+       "type": "str",
+       "value": "c0f0b3ce7e36532a52881de4efe9e71c2ebce527f38aef2f5f0aebb8e9e1ae16"
+      },
+      {
+       "name": "rules",
+       "type": "u64",
+       "value": "0x4"
+      },
+      {
+       "name": "runner",
+       "type": "str",
+       "value": "9211423d1ceee796"
+      },
+      {
+       "name": "s1",
+       "type": "u64",
+       "value": "0x878"
+      },
+      {
+       "name": "s2",
+       "type": "u64",
+       "value": "0x81e"
+      },
+      {
+       "name": "s3",
+       "type": "u64",
+       "value": "0x7ca"
+      },
+      {
+       "name": "season",
+       "type": "i32",
+       "value": 1
+      },
+      {
+       "name": "split_kind",
+       "type": "str",
+       "value": "lap"
+      },
+      {
+       "name": "title",
+       "type": "str",
+       "value": "MARINE DRIVE GP"
+      }
+     ]
+    },
+    {
+     "key": "0x37d19fc8f435aacda76bc183be3d7e111ae7eb2bef7c9a242fb120b2cc1d3f2c",
+     "owner": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "creator": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "expiresAt": "0x3cca2b",
+     "attributes": [
+      {
+       "name": "arkiv.schema",
+       "type": "str",
+       "value": "anypercent.run"
+      },
+      {
+       "name": "frames",
+       "type": "u64",
+       "value": "0x1864"
+      },
+      {
+       "name": "game",
+       "type": "str",
+       "value": "MDGP"
+      },
+      {
+       "name": "human",
+       "type": "bool",
+       "value": false
+      },
+      {
+       "name": "label",
+       "type": "str",
+       "value": "BOT-A5"
+      },
+      {
+       "name": "log_h",
+       "type": "str",
+       "value": "c8716c06cd8b02bd8702d13603ca0a16afe147e18da54a3112f1bd7d33f674e9"
+      },
+      {
+       "name": "rules",
+       "type": "u64",
+       "value": "0x4"
+      },
+      {
+       "name": "runner",
+       "type": "str",
+       "value": "4851880bf53b6885"
+      },
+      {
+       "name": "s1",
+       "type": "u64",
+       "value": "0x827"
+      },
+      {
+       "name": "s2",
+       "type": "u64",
+       "value": "0x820"
+      },
+      {
+       "name": "s3",
+       "type": "u64",
+       "value": "0x81d"
+      },
+      {
+       "name": "season",
+       "type": "i32",
+       "value": 1
+      },
+      {
+       "name": "split_kind",
+       "type": "str",
+       "value": "lap"
+      },
+      {
+       "name": "title",
+       "type": "str",
+       "value": "MARINE DRIVE GP"
+      }
+     ]
+    },
+    {
+     "key": "0xc9cfbd2b50213f382efed1aa736d59151c6a83dfd33bbd4fa1afa199f4a5269f",
+     "owner": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "creator": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "expiresAt": "0x3cca2b",
+     "attributes": [
+      {
+       "name": "arkiv.schema",
+       "type": "str",
+       "value": "anypercent.run"
+      },
+      {
+       "name": "frames",
+       "type": "u64",
+       "value": "0x18b5"
+      },
+      {
+       "name": "game",
+       "type": "str",
+       "value": "MDGP"
+      },
+      {
+       "name": "human",
+       "type": "bool",
+       "value": false
+      },
+      {
+       "name": "label",
+       "type": "str",
+       "value": "BOT-A6"
+      },
+      {
+       "name": "log_h",
+       "type": "str",
+       "value": "613840946091d9c940aec54f3c68fe3e6525e46036be304b9c976c47517724d9"
+      },
+      {
+       "name": "rules",
+       "type": "u64",
+       "value": "0x4"
+      },
+      {
+       "name": "runner",
+       "type": "str",
+       "value": "0386a32d09b31aba"
+      },
+      {
+       "name": "s1",
+       "type": "u64",
+       "value": "0x878"
+      },
+      {
+       "name": "s2",
+       "type": "u64",
+       "value": "0x81e"
+      },
+      {
+       "name": "s3",
+       "type": "u64",
+       "value": "0x81f"
+      },
+      {
+       "name": "season",
+       "type": "i32",
+       "value": 1
+      },
+      {
+       "name": "split_kind",
+       "type": "str",
+       "value": "lap"
+      },
+      {
+       "name": "title",
+       "type": "str",
+       "value": "MARINE DRIVE GP"
+      }
+     ]
+    },
+    {
+     "key": "0x226e4415fad3cc052574ed63cce379bed1468112d5b3f79d967aa21914d9ede4",
+     "owner": "0xda2855662f95b4a02232e3eee445270ec6902f89",
+     "creator": "0xda2855662f95b4a02232e3eee445270ec6902f89",
+     "expiresAt": "0x3cca2b",
      "attributes": [
       {
        "name": "arkiv.schema",
@@ -233,354 +1138,14 @@
        "value": "0x815"
       },
       {
-       "name": "split_kind",
-       "type": "str",
-       "value": "lap"
-      },
-      {
-       "name": "title",
-       "type": "str",
-       "value": "MARINE DRIVE GP"
-      }
-     ]
-    },
-    {
-     "key": "0xf3b09047da909137d731aee09a633e2278ba0c64b39dc68a1165b4ab7ce50428",
-     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
-     "expiresAt": "0x3cca2f",
-     "attributes": [
-      {
-       "name": "arkiv.schema",
-       "type": "str",
-       "value": "anypercent.run"
-      },
-      {
-       "name": "frames",
-       "type": "u64",
-       "value": "0x185c"
-      },
-      {
-       "name": "game",
-       "type": "str",
-       "value": "MDGP"
-      },
-      {
-       "name": "human",
-       "type": "bool",
-       "value": false
-      },
-      {
-       "name": "label",
-       "type": "str",
-       "value": "BOT-A2"
-      },
-      {
-       "name": "log_h",
-       "type": "str",
-       "value": "ea41e473ae1561917660fca36635bdd473cf325a570fadce0f89db1fe282f020"
-      },
-      {
-       "name": "rules",
-       "type": "u64",
-       "value": "0x4"
-      },
-      {
-       "name": "runner",
-       "type": "str",
-       "value": "64e300f8a63e840f"
-      },
-      {
-       "name": "s1",
-       "type": "u64",
-       "value": "0x8c8"
-      },
-      {
-       "name": "s2",
-       "type": "u64",
-       "value": "0x7ca"
-      },
-      {
-       "name": "s3",
-       "type": "u64",
-       "value": "0x7ca"
+       "name": "season",
+       "type": "i32",
+       "value": 1
       },
       {
        "name": "split_kind",
        "type": "str",
        "value": "lap"
-      },
-      {
-       "name": "title",
-       "type": "str",
-       "value": "MARINE DRIVE GP"
-      }
-     ]
-    },
-    {
-     "key": "0x87e5d78514824a4afdf3262aa0b469a56a3b6213ebec5ca4f9b4b3868c1b9622",
-     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
-     "expiresAt": "0x3cca2f",
-     "attributes": [
-      {
-       "name": "arkiv.schema",
-       "type": "str",
-       "value": "anypercent.run"
-      },
-      {
-       "name": "frames",
-       "type": "u64",
-       "value": "0x1860"
-      },
-      {
-       "name": "game",
-       "type": "str",
-       "value": "MDGP"
-      },
-      {
-       "name": "human",
-       "type": "bool",
-       "value": false
-      },
-      {
-       "name": "label",
-       "type": "str",
-       "value": "BOT-A4"
-      },
-      {
-       "name": "log_h",
-       "type": "str",
-       "value": "c0f0b3ce7e36532a52881de4efe9e71c2ebce527f38aef2f5f0aebb8e9e1ae16"
-      },
-      {
-       "name": "rules",
-       "type": "u64",
-       "value": "0x4"
-      },
-      {
-       "name": "runner",
-       "type": "str",
-       "value": "2a63f14f927d3867"
-      },
-      {
-       "name": "s1",
-       "type": "u64",
-       "value": "0x878"
-      },
-      {
-       "name": "s2",
-       "type": "u64",
-       "value": "0x81e"
-      },
-      {
-       "name": "s3",
-       "type": "u64",
-       "value": "0x7ca"
-      },
-      {
-       "name": "split_kind",
-       "type": "str",
-       "value": "lap"
-      },
-      {
-       "name": "title",
-       "type": "str",
-       "value": "MARINE DRIVE GP"
-      }
-     ]
-    },
-    {
-     "key": "0xa047ee754b17de510c539483fa12dd7089cc983ab86275f162f7d6159c9d0e02",
-     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
-     "expiresAt": "0x3cca2f",
-     "attributes": [
-      {
-       "name": "arkiv.schema",
-       "type": "str",
-       "value": "anypercent.run"
-      },
-      {
-       "name": "frames",
-       "type": "u64",
-       "value": "0x1864"
-      },
-      {
-       "name": "game",
-       "type": "str",
-       "value": "MDGP"
-      },
-      {
-       "name": "human",
-       "type": "bool",
-       "value": false
-      },
-      {
-       "name": "label",
-       "type": "str",
-       "value": "BOT-A5"
-      },
-      {
-       "name": "log_h",
-       "type": "str",
-       "value": "c8716c06cd8b02bd8702d13603ca0a16afe147e18da54a3112f1bd7d33f674e9"
-      },
-      {
-       "name": "rules",
-       "type": "u64",
-       "value": "0x4"
-      },
-      {
-       "name": "runner",
-       "type": "str",
-       "value": "30da8d7f33819650"
-      },
-      {
-       "name": "s1",
-       "type": "u64",
-       "value": "0x827"
-      },
-      {
-       "name": "s2",
-       "type": "u64",
-       "value": "0x820"
-      },
-      {
-       "name": "s3",
-       "type": "u64",
-       "value": "0x81d"
-      },
-      {
-       "name": "split_kind",
-       "type": "str",
-       "value": "lap"
-      },
-      {
-       "name": "title",
-       "type": "str",
-       "value": "MARINE DRIVE GP"
-      }
-     ]
-    },
-    {
-     "key": "0xcce2eabf33840b8ba2544f995b90264916b584cef766e9e67098efd462a5ba99",
-     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
-     "expiresAt": "0x3cca2f",
-     "attributes": [
-      {
-       "name": "arkiv.schema",
-       "type": "str",
-       "value": "anypercent.run"
-      },
-      {
-       "name": "frames",
-       "type": "u64",
-       "value": "0x18b5"
-      },
-      {
-       "name": "game",
-       "type": "str",
-       "value": "MDGP"
-      },
-      {
-       "name": "human",
-       "type": "bool",
-       "value": false
-      },
-      {
-       "name": "label",
-       "type": "str",
-       "value": "BOT-A6"
-      },
-      {
-       "name": "log_h",
-       "type": "str",
-       "value": "613840946091d9c940aec54f3c68fe3e6525e46036be304b9c976c47517724d9"
-      },
-      {
-       "name": "rules",
-       "type": "u64",
-       "value": "0x4"
-      },
-      {
-       "name": "runner",
-       "type": "str",
-       "value": "89d73a03289a5eb3"
-      },
-      {
-       "name": "s1",
-       "type": "u64",
-       "value": "0x878"
-      },
-      {
-       "name": "s2",
-       "type": "u64",
-       "value": "0x81e"
-      },
-      {
-       "name": "s3",
-       "type": "u64",
-       "value": "0x81f"
-      },
-      {
-       "name": "split_kind",
-       "type": "str",
-       "value": "lap"
-      },
-      {
-       "name": "title",
-       "type": "str",
-       "value": "MARINE DRIVE GP"
-      }
-     ]
-    },
-    {
-     "key": "0x08e77782105438c8ee8c9403475bd0a1715ab75f2856b341636d6e08e84b32a0",
-     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
-     "expiresAt": "0x3cca2f",
-     "attributes": [
-      {
-       "name": "arkiv.schema",
-       "type": "str",
-       "value": "anypercent.run"
-      },
-      {
-       "name": "book",
-       "type": "str",
-       "value": "ANY-6PS"
-      },
-      {
-       "name": "credential",
-       "type": "str",
-       "value": "Orb"
-      },
-      {
-       "name": "frames",
-       "type": "u64",
-       "value": "0x190e"
-      },
-      {
-       "name": "game",
-       "type": "str",
-       "value": "MDGP"
-      },
-      {
-       "name": "human",
-       "type": "bool",
-       "value": true
-      },
-      {
-       "name": "log_h",
-       "type": "str",
-       "value": "10ace1f19f052ed68e0819b893964f513973a6088cd947288a0b7a60e7ee4355"
-      },
-      {
-       "name": "rules",
-       "type": "u64",
-       "value": "0x4"
-      },
-      {
-       "name": "runner",
-       "type": "str",
-       "value": "43b5cdf9a019cf1a"
       },
       {
        "name": "title",
@@ -592,9 +1157,10 @@
    ],
    "listings": [
     {
-     "key": "0x69a3f8e146faade663e626c6b9872672f9ccdea1fbf75fca139f238c6cef8b32",
-     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
-     "expiresAt": "0x8d39e",
+     "key": "0xa14bdd1fb70b9753d784aaba39d61f7a4b5e9cfd1d8f08712fa13b9db8edab3d",
+     "owner": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "creator": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "expiresAt": "0x94fb0",
      "attributes": [
       {
        "name": "arkiv.schema",
@@ -644,7 +1210,7 @@
       {
        "name": "run",
        "type": "bytes32",
-       "value": "0xb49a56af450d500a98e5a333cfe3d011e33ea0e2cfeda85be05df180af09a330"
+       "value": "0x1081feea9e7ec7a0ac82d398744ecce57d6cd6f33b32fa628a0ba38f3be2bb9f"
       },
       {
        "name": "season",
@@ -654,14 +1220,15 @@
       {
        "name": "seller",
        "type": "str",
-       "value": "22d8c244130cd5a3"
+       "value": "143adefea36f2610"
       }
      ]
     },
     {
-     "key": "0x4eb50484659c5b3b940242efbadd4b49381e3ced092c31130d34b2b40b99a58a",
-     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
-     "expiresAt": "0x8d39e",
+     "key": "0x11ceb881dfa86a493a2753347fb11ab3cb8c04574a58ba1b54c6b0a5f29b0c65",
+     "owner": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "creator": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "expiresAt": "0x94fb0",
      "attributes": [
       {
        "name": "arkiv.schema",
@@ -711,7 +1278,7 @@
       {
        "name": "run",
        "type": "bytes32",
-       "value": "0xf6805663c96d7f45ffb6e95dd20d2c30306f6c2c1af400814df7da3032022d7e"
+       "value": "0x6b4a3a283cd6dcdf9f5d08c2366d69ef6702bba654881210729949d92825a9e8"
       },
       {
        "name": "season",
@@ -721,81 +1288,15 @@
       {
        "name": "seller",
        "type": "str",
-       "value": "eaa6a4d383d3a606"
+       "value": "b15c04d9503f8002"
       }
      ]
     },
     {
-     "key": "0x092965ad29fee6161672f1dfad88b45771bdc5d6327b568620a57f43e9e6d0fb",
-     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
-     "expiresAt": "0x8eef5",
-     "attributes": [
-      {
-       "name": "arkiv.schema",
-       "type": "str",
-       "value": "anypercent.listing"
-      },
-      {
-       "name": "book",
-       "type": "str",
-       "value": "ANY-6PS"
-      },
-      {
-       "name": "frames",
-       "type": "u64",
-       "value": "0x1851"
-      },
-      {
-       "name": "game",
-       "type": "str",
-       "value": "MDGP"
-      },
-      {
-       "name": "hcs",
-       "type": "str",
-       "value": "0.0.11332437/14"
-      },
-      {
-       "name": "human",
-       "type": "bool",
-       "value": true
-      },
-      {
-       "name": "log_h",
-       "type": "str",
-       "value": "ab60ff5bd9ead4fbaead4a7224d88101fc506949ac27207c51f2bca661aa9bd8"
-      },
-      {
-       "name": "pay_to",
-       "type": "str",
-       "value": "0.0.9473064"
-      },
-      {
-       "name": "price",
-       "type": "dec",
-       "value": "0.1"
-      },
-      {
-       "name": "run",
-       "type": "bytes32",
-       "value": "0x9e64de0b61604e325a044b90596fb93fa5091a192fff1bf71ed2a376611863b4"
-      },
-      {
-       "name": "season",
-       "type": "i32",
-       "value": 1
-      },
-      {
-       "name": "seller",
-       "type": "str",
-       "value": "43b5cdf9a019cf1a"
-      }
-     ]
-    },
-    {
-     "key": "0x9216be8b849f9714b933fd3e0f9975d97c5ec0704d56e1d6aa2f5edbdf8d0122",
-     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
-     "expiresAt": "0x8d39e",
+     "key": "0x1e22b52bc250799dc009d18da8ef37d102da64d113e55ebf53ca1f7e899c5f86",
+     "owner": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "creator": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "expiresAt": "0x94fb0",
      "attributes": [
       {
        "name": "arkiv.schema",
@@ -845,7 +1346,7 @@
       {
        "name": "run",
        "type": "bytes32",
-       "value": "0xf3b09047da909137d731aee09a633e2278ba0c64b39dc68a1165b4ab7ce50428"
+       "value": "0x28744dbb69afe5c333df900789a079135ac32e0643e4b76043aee0c828957aba"
       },
       {
        "name": "season",
@@ -855,14 +1356,15 @@
       {
        "name": "seller",
        "type": "str",
-       "value": "64e300f8a63e840f"
+       "value": "033f6388cd48f97d"
       }
      ]
     },
     {
-     "key": "0xe4a548fe3be3540a3a5e49c1ec0b67e8726aaa25e38a9ac2ff3acd309dcc4698",
-     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
-     "expiresAt": "0x8d39e",
+     "key": "0x7304c23bdc7448d4acffbbaea8bd4d14ef3d70c437d7cbcecef9e3e2559bd786",
+     "owner": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "creator": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "expiresAt": "0x94fb0",
      "attributes": [
       {
        "name": "arkiv.schema",
@@ -912,7 +1414,7 @@
       {
        "name": "run",
        "type": "bytes32",
-       "value": "0x87e5d78514824a4afdf3262aa0b469a56a3b6213ebec5ca4f9b4b3868c1b9622"
+       "value": "0x08ba1a371755b8e460a046f734c13dded986db26319fb07d9462e6a5ec4cb98c"
       },
       {
        "name": "season",
@@ -922,14 +1424,15 @@
       {
        "name": "seller",
        "type": "str",
-       "value": "2a63f14f927d3867"
+       "value": "9211423d1ceee796"
       }
      ]
     },
     {
-     "key": "0xfb6deea942baba4a5de60d8da94860a2443e384ae6432b3a290c4994e235654e",
-     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
-     "expiresAt": "0x8d39e",
+     "key": "0x92ef88abcaa4134fb4e5a91489aa30d47b8d4af281cf9b77c80b798b3f2923fa",
+     "owner": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "creator": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "expiresAt": "0x94fb0",
      "attributes": [
       {
        "name": "arkiv.schema",
@@ -979,7 +1482,7 @@
       {
        "name": "run",
        "type": "bytes32",
-       "value": "0xa047ee754b17de510c539483fa12dd7089cc983ab86275f162f7d6159c9d0e02"
+       "value": "0x37d19fc8f435aacda76bc183be3d7e111ae7eb2bef7c9a242fb120b2cc1d3f2c"
       },
       {
        "name": "season",
@@ -989,14 +1492,15 @@
       {
        "name": "seller",
        "type": "str",
-       "value": "30da8d7f33819650"
+       "value": "4851880bf53b6885"
       }
      ]
     },
     {
-     "key": "0xf83a4a6b19f6da0a7a9befb9d1d3e43fa39a82fda7df5c3c1f883062cff2dfa4",
-     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
-     "expiresAt": "0x8d39e",
+     "key": "0x00d02e9ed42e2f67411dad574999545824a083ee84721ba53eff9855bc9d6fed",
+     "owner": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "creator": "0xb65bf2156c09883c06e24f08d969d890bc5ea484",
+     "expiresAt": "0x94fb0",
      "attributes": [
       {
        "name": "arkiv.schema",
@@ -1046,7 +1550,7 @@
       {
        "name": "run",
        "type": "bytes32",
-       "value": "0xcce2eabf33840b8ba2544f995b90264916b584cef766e9e67098efd462a5ba99"
+       "value": "0xc9cfbd2b50213f382efed1aa736d59151c6a83dfd33bbd4fa1afa199f4a5269f"
       },
       {
        "name": "season",
@@ -1056,14 +1560,15 @@
       {
        "name": "seller",
        "type": "str",
-       "value": "89d73a03289a5eb3"
+       "value": "0386a32d09b31aba"
       }
      ]
     },
     {
-     "key": "0x23bf791d2b779ec2f157abda8a5d18bd069c44503b8425093b0ab94c7301af44",
-     "creator": "0x3d3260425cb52f0c6716212274a883337afa3f63",
-     "expiresAt": "0x8c43a",
+     "key": "0xcd3bbc796feaa153e87d8b64673b781c4350add1c2946949a3e450d320a55077",
+     "owner": "0xda2855662f95b4a02232e3eee445270ec6902f89",
+     "creator": "0xda2855662f95b4a02232e3eee445270ec6902f89",
+     "expiresAt": "0x95418",
      "attributes": [
       {
        "name": "arkiv.schema",
@@ -1078,7 +1583,7 @@
       {
        "name": "frames",
        "type": "u64",
-       "value": "0x190e"
+       "value": "0x1851"
       },
       {
        "name": "game",
@@ -1088,7 +1593,7 @@
       {
        "name": "hcs",
        "type": "str",
-       "value": "0.0.11332437/5"
+       "value": "0.0.11332437/17"
       },
       {
        "name": "human",
@@ -1098,7 +1603,7 @@
       {
        "name": "log_h",
        "type": "str",
-       "value": "10ace1f19f052ed68e0819b893964f513973a6088cd947288a0b7a60e7ee4355"
+       "value": "ab60ff5bd9ead4fbaead4a7224d88101fc506949ac27207c51f2bca661aa9bd8"
       },
       {
        "name": "pay_to",
@@ -1113,7 +1618,7 @@
       {
        "name": "run",
        "type": "bytes32",
-       "value": "0x08e77782105438c8ee8c9403475bd0a1715ab75f2856b341636d6e08e84b32a0"
+       "value": "0x226e4415fad3cc052574ed63cce379bed1468112d5b3f79d967aa21914d9ede4"
       },
       {
        "name": "season",
@@ -1130,23 +1635,23 @@
    ]
   },
   "RUSH": {
-   "block": "283162",
-   "q1": "arkiv.schema = str('anypercent.run') AND game = str('RUSH') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
-   "q2": "arkiv.schema = str('anypercent.listing') AND game = str('RUSH') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "block": "309172",
+   "q_stamps": "arkiv.schema = str('anypercent.stamp') AND game = str('RUSH') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "stamps": [],
    "runs": [],
    "listings": []
   },
   "SEGF": {
-   "block": "283163",
-   "q1": "arkiv.schema = str('anypercent.run') AND game = str('SEGF') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
-   "q2": "arkiv.schema = str('anypercent.listing') AND game = str('SEGF') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "block": "309172",
+   "q_stamps": "arkiv.schema = str('anypercent.stamp') AND game = str('SEGF') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "stamps": [],
    "runs": [],
    "listings": []
   },
   "ZIPG": {
-   "block": "283163",
-   "q1": "arkiv.schema = str('anypercent.run') AND game = str('ZIPG') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
-   "q2": "arkiv.schema = str('anypercent.listing') AND game = str('ZIPG') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "block": "309172",
+   "q_stamps": "arkiv.schema = str('anypercent.stamp') AND game = str('ZIPG') AND season = i32(1) AND $creator = addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC",
+   "stamps": [],
    "runs": [],
    "listings": []
   }
