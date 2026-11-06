@@ -1180,6 +1180,17 @@ def test_the_ledger_follows_the_consoles_binding(tmp_path):
     assert L.load(str(tmp_path / "handler.json")).book == "ANY-6PS"   # linked again
 
 
+def test_a_console_bound_to_the_book_it_already_has_becomes_world_verified(tmp_path):
+    """A ledger that already named the book (made before World verified it, or never told) turns HUMAN as soon as
+    the bridge says this console is bound to that book: the board's YOU row then carries the badge."""
+    app = bound_app(tmp_path, book="ANY-6PS")
+    assert app.handler.ledger.world_verified is False
+    app.sponsors.binding = {"tag": "C-QP6P", "book": "ANY-6PS", "state": "bound", "credential": "Orb"}
+    app.frame(16)
+    led = L.load(str(tmp_path / "handler.json"))
+    assert (led.book, led.world_verified, led.credential) == ("ANY-6PS", True, "Orb")
+
+
 def test_an_unlinked_console_keeps_a_book_from_before(tmp_path):
     app = bound_app(tmp_path, book="ANY-6PS")
     app.sponsors.binding = {"tag": "C-7QZP", "book": None, "state": "unbound", "credential": None}

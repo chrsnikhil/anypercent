@@ -227,7 +227,9 @@ class HandlerGlue:
             return
         self._binding = binding
         led, state, book = self.ledger, binding.get("state"), binding.get("book")
-        if state == "bound" and book and led.book != book:
+        if state == "bound" and book and (led.book != book or not led.world_verified):
+            # bound to this book (a World App approval, a book World issued): HUMAN, even if the ledger named the
+            # book already but never heard it was World-verified
             led.book, led.world_verified = book, True
             led.credential = binding.get("credential") or led.credential
             log.info("this console is linked to %s: its record book now", book)
