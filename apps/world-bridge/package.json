@@ -27,7 +27,8 @@
     "console:link": "tsx scripts/console-op.ts link",
     "console:release": "tsx scripts/console-op.ts release",
     "house:publish": "tsx scripts/house-publish.ts",
-    "scout:smoke": "tsx scripts/scout-smoke.ts"
+    "scout:smoke": "tsx scripts/scout-smoke.ts",
+    "arkiv:tamper": "tsx scripts/arkiv-tamper.ts"
   },
   "dependencies": {
     "@arkiv-network/sdk": "1.0.1",
