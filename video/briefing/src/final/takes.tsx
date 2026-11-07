@@ -14,6 +14,13 @@ export const SAFE: boolean = (() => {
   try { return Boolean((getInputProps() as { safe?: boolean }).safe); } catch { return false; }
 })();
 export const pick = <V,>(normal: V, safe: V): V => (SAFE ? safe : normal);
+/** LIVE (props {"safe": true, "live": true}): the owner's real recordings of 7 Nov sit beside the film's version of each
+    sponsor beat (src/final/live.ts). They back the switch-era claims, so captions use the normal wording (cap), while
+    the left side keeps SAFE's real stand-ins (no placeholders). */
+export const LIVE: boolean = (() => {
+  try { return Boolean((getInputProps() as { live?: boolean }).live); } catch { return false; }
+})();
+export const cap = <V,>(normal: V, safe: V): V => (LIVE ? normal : SAFE ? safe : normal);
 
 export type Take = { id: string; file: string; from: number; fit?: "contain" | "cover"; what: string };
 const T = (id: string, file: string, what: string, from = 0, fit: "contain" | "cover" = "contain"): Take => ({ id, file, from, fit, what });

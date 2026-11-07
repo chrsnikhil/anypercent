@@ -4,7 +4,9 @@ import { BAR, Bars, H, Line, Mono, MW, Stamp, W } from "../acts/common";
 import { FONT } from "../theme";
 import { easeOutExpo, prog } from "../util";
 import { Console3D, shot3D } from "./console3d";
-import { isLive, pick, SAFE, Slot, Take, TakeOr, TAKES } from "./takes";
+import { cap, isLive, LIVE, pick, SAFE, Slot, Take, TakeOr, TAKES } from "./takes";
+import { LIVE_WINS } from "./live";
+import { LeftPanel, LivePanel, LiveWin } from "./split";
 import { Board, ConsolePH, CutFlash, Flip, lines, PhonePH, Screen, sec, Slate2, Tag, TermPH, Todo, TOP, Url, Vignette, Web, WebPH } from "./kit";
 import { ArkivFlow, Card2, HcsPanel, ModelCode, PayFlow, Pointer, Quote, RecCrop, Row2, Subs2 } from "./kit2";
 import HCS from "./hcs_messages.json";
@@ -27,12 +29,19 @@ const INTENT = msg(12), RECEIPT = msg(13), LISTING = msg(14);
 type Meta = { from: number; tag: string; todo?: string; take?: Take | Take[]; liveTag?: string; safeTag?: string }[];
 const allLive = (t?: Take | Take[]) => !!t && (Array.isArray(t) ? t.every((k) => isLive(k)) : isLive(t));
 /** One scene's chrome: picture, then subtitles, bars, and the source tag / TODO for the sub-shot on screen. */
-const Shell: React.FC<{ f: number; meta: Meta; ls?: Line[]; cuts?: number[]; children: React.ReactNode }> = ({ f, meta, ls = [], cuts = [], children }) => {
+const Shell: React.FC<{ f: number; meta: Meta; ls?: Line[]; cuts?: number[]; children: React.ReactNode; live?: LiveWin[] }> = ({ f, meta, ls = [], cuts = [], children, live }) => {
+  const lw = LIVE ? live?.find((w) => f >= w.a && f < w.b) : undefined;
   const m = [...meta].reverse().find((q) => f >= q.from) ?? meta[0];
   const c = [0, ...cuts].find((k) => f >= k && f < k + 3);
   return (
     <AbsoluteFill style={{ background: "#000", overflow: "hidden" }}>
-      {children}
+      {lw ? (
+        <>
+          <Board f={f} />
+          <LeftPanel>{children}</LeftPanel>
+          <LivePanel w={lw} f={f} />
+        </>
+      ) : children}
       <Subs2 f={f} lines={ls} />
       {c !== undefined ? <CutFlash f={f - c} /> : null}
       <Bars />
@@ -94,7 +103,7 @@ const L1 = lines(8, [[0.5, "MARINE DRIVE GP. Three laps against the clock."], [4
 const S1: React.FC<{ f: number }> = ({ f }) => {
   const [gx, gy] = ghostAt(f / 60);
   return (
-    <Shell f={f} meta={[{ from: 0, tag: "REPLAY OF A REAL RUN: ANY-6PS 1:46.90, BOT-A2'S GHOST ALONGSIDE" }]} ls={L1}>
+    <Shell f={f} live={LIVE_WINS[1]} meta={[{ from: 0, tag: "REPLAY OF A REAL RUN: ANY-6PS 1:46.90, BOT-A2'S GHOST ALONGSIDE" }]} ls={L1}>
       <Board f={f} />
       <Race from={64.0} f={f} duck={(vf) => L1.some((l) => vf >= l.at && vf < l.at + l.len)}>
         <Pointer f={f} at={sec(3.7)} x={gx * RS} y={gy * RS} label="GHOST" dx={120} dy={-120} />
@@ -119,7 +128,7 @@ const Act: React.FC<{ file: string; from: number }> = ({ file, from }) => (
   <OffthreadVideo src={staticFile(`final/acts/${file}`)} trimBefore={from} muted style={{ width: "100%", height: "100%" }} />
 );
 const S2: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} meta={[{ from: 0, tag: "EARLIER FILM (EXAMPLE LEADERBOARD)" }]}>
+  <Shell f={f} live={LIVE_WINS[2]} meta={[{ from: 0, tag: "EARLIER FILM (EXAMPLE LEADERBOARD)" }]}>
     <Act file="primer.mp4" from={0} />
   </Shell>
 );
@@ -127,7 +136,7 @@ const S2: React.FC<{ f: number }> = ({ f }) => (
 /* ---------------- 3. Why a video is not proof (BreaksSub) ---------------- */
 const BREAKS = [[50, 400], [430, 780], [810, 1160], [1190, 1340]] as const;
 const S3: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} meta={[{ from: 0, tag: "EARLIER FILM" }]}>
+  <Shell f={f} live={LIVE_WINS[3]} meta={[{ from: 0, tag: "EARLIER FILM" }]}>
     <Series>
       {BREAKS.map(([a, b]) => (
         <Series.Sequence key={a} durationInFrames={b - a}><Act file="breaks_sub.mp4" from={a} /></Series.Sequence>
@@ -144,7 +153,7 @@ const S3: React.FC<{ f: number }> = ({ f }) => (
 
 /* ---------------- 4. Any%: check the run, not the video ---------------- */
 const S4: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} cuts={[240]}
+  <Shell f={f} live={LIVE_WINS[4]} cuts={[240]}
     meta={[{ from: 0, tag: "CAD RENDER + CONSOLE SCREEN (UI): HOME", todo: "HAND-1", take: TAKES.HAND1, liveTag: "THE HANDHELD (HAND)" }, { from: 240, tag: "TERMINAL", todo: "TERM-1 REPLAY + ONE BYTE", take: TAKES.TERM1, safeTag: "REPLAY OF A REAL RUN, FROM ITS INPUT LOG" }]}
     ls={lines(13, [[0.4, "Any%: a handheld that checks the run, not a video."], [4.4, "Every run is its input log. Our checker replays it."], [8.8, "One byte changed: the replay disagrees. It doesn't count."]])}>
     <Win f={f} a={0} b={240}>{(t) => (
@@ -190,7 +199,7 @@ const PostCard: React.FC<{ t: number; at: number }> = ({ t, at }) => (
   </Card2>
 );
 const S5: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} cuts={[60, 210, 420]}
+  <Shell f={f} live={LIVE_WINS[5]} cuts={[60, 210, 420]}
     meta={[{ from: 0, tag: "" }, { from: 60, tag: "CAD RENDER + CONSOLE SCREEN (UI): MY RECORD BOOK" }, { from: 210, tag: "CONSOLE SCREEN (UI): MY RECORD BOOK" },
       { from: 420, tag: "CONSOLE SCREEN (UI)", todo: "UI-4a FRESH CONSOLE", take: TAKES.UI4A, safeTag: "CONSOLE SCREEN (UI): MY RECORD BOOK" }]}
     ls={lines(10, [[1.1, "Any% consoles are exclusive to humans."], [3.4, "Only a World ID-linked console can post a run."], [6.8, "World doesn't show who held the controller."]])}>
@@ -222,7 +231,7 @@ const S5: React.FC<{ f: number }> = ({ f }) => (
 /* ---------------- 6. World: one human, one book ---------------- */
 const SPW = 1100, SPY = TOP + 20;
 const S6: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} cuts={[480]}
+  <Shell f={f} live={LIVE_WINS[6]} cuts={[480]}
     meta={[{ from: 0, tag: "CONSOLE SCREEN (UI): EARLIER MOCK FRAMES", todo: "UI-4b + PHONE-1", take: [TAKES.UI4B, TAKES.PHONE1], liveTag: "CONSOLE SCREEN (UI) + WORLD APP (PHONE)", safeTag: "CONSOLE SCREEN (UI): MY RECORD BOOK" }, { from: 480, tag: "CONSOLE SCREEN (UI): THE BOARD, HUMANS ONLY" }]}
     ls={lines(11, [[0.4, "One human, one record book (Orb credential)."], [4.8, "Same person, second sign-up: Already registered."], [8.2, "No second book, on any console."]])}>
     <Board f={f} />
@@ -259,7 +268,7 @@ const S6: React.FC<{ f: number }> = ({ f }) => (
 
 /* ---------------- 7. World: every listing, approved ---------------- */
 const S7: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} cuts={[480]}
+  <Shell f={f} live={LIVE_WINS[7]} cuts={[480]}
     meta={[{ from: 0, tag: "WORLD APP (PHONE) + HEDERA HCS #14 (REAL TEXT)", todo: "PHONE-2", take: TAKES.PHONE2, safeTag: "HEDERA HCS #14: THE APPROVED TEXT (REAL)" }, { from: 480, tag: "CONSOLE SCREEN (UI)", todo: "UI-6 RECORDING, LISTING", take: TAKES.UI6B, safeTag: "HEDERA MIRROR NODE, DECODED (WEB): LISTING #14" }]}
     ls={lines(14, [[0.4, "Every listing is approved in World App."], [4.8, "It shows the exact text: game, time, price, payee."], [9.5, "One approval, one listing."]])}>
     <Board f={f} />
@@ -300,9 +309,9 @@ const S7: React.FC<{ f: number }> = ({ f }) => (
 
 /* ---------------- 8. World: the link names the console's wallet ---------------- */
 const S8: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} cuts={[300]}
+  <Shell f={f} live={LIVE_WINS[8]} cuts={[300]}
     meta={[{ from: 0, tag: "TERMINAL + WORLD APP (PHONE)", todo: "TERM-6 + PHONE-3", take: [TAKES.TERM6, TAKES.PHONE3], safeTag: "CONSOLE SCREEN (UI): MY RECORD BOOK" }, { from: 300, tag: "CONSOLE SCREEN (UI): MY RECORD BOOK", todo: "UI-3b THE WALLET LINE", take: TAKES.UI3B }]}
-    ls={lines(8, [[0.4, "Each console is linked to one book."], [3.6, pick("The approval names the console's own Arkiv wallet.", "Linking a console takes the owner's approval.")]])}>
+    ls={lines(8, [[0.4, "Each console is linked to one book."], [3.6, cap("The approval names the console's own Arkiv wallet.", "Linking a console takes the owner's approval.")]])}>
     <Board f={f} />
     <Win f={f} a={0} b={300}>{(t) => (
       <>
@@ -323,7 +332,7 @@ const S8: React.FC<{ f: number }> = ({ f }) => (
         <Card2 f={t} at={10} x={CX} y={PY} w={CW} h={226} head="ONE CONSOLE, ONE BOOK">
           <Row2 k="CONSOLE" v="C-QP6P" />
           <Row2 k="BOOK" v="ANY-6PS" />
-          {SAFE ? <Row2 k="LINK" v="OWNER APPROVES" /> : <Row2 k="ITS WALLET" v="<take>" c={MW.amber} />}
+          {LIVE ? <Row2 k="ITS WALLET" v="0xda28...2f89" c={MW.amber} /> : SAFE ? <Row2 k="LINK" v="OWNER APPROVES" /> : <Row2 k="ITS WALLET" v="<take>" c={MW.amber} />}
         </Card2>
       </>
     )}</Win>
@@ -333,9 +342,9 @@ const S8: React.FC<{ f: number }> = ({ f }) => (
 /* ---------------- 9-13. Arkiv ---------------- */
 const SMALL = { x: PX, y: PY + 10, w: 520, h: 520 };
 const S9: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} cuts={[60, 230]}
+  <Shell f={f} live={LIVE_WINS[9]} cuts={[60, 230]}
     meta={[{ from: 0, tag: "" }, { from: 60, tag: "CAD RENDER + CONSOLE SCREEN (UI): PRE-SWITCH CARD", safeTag: "CAD RENDER + CONSOLE SCREEN (UI): THE BOARD" }, { from: 230, tag: "DIAGRAM + ARKIV EXPLORER (WEB)", todo: "WEB-6 THE CONSOLE'S TX", take: TAKES.WEB6, safeTag: "DIAGRAM: HOW A RUN REACHES THE BOARD" }]}
-    ls={lines(11, pick<[number, string][]>([[1.3, "The console's own Arkiv wallet signs its run."], [5.5, "The record lives under that wallet, read-only."], [8.5, "Arkiv Rabdi testnet."]],
+    ls={lines(11, cap<[number, string][]>([[1.3, "The console's own Arkiv wallet signs its run."], [5.5, "The record lives under that wallet, read-only."], [8.5, "Arkiv Rabdi testnet."]],
       [[1.3, "On Arkiv, every run is a public record."], [5.5, "Rows are read-only once written."], [8.5, "Arkiv Rabdi testnet."]]))}>
     <Win f={f} a={0} b={60}>{(t) => <Slate2 f={t} part="ARKIV" title="THE CONSOLE OWNS THE RECORD" num="02" />}</Win>
     <Win f={f} a={60} b={230}>{(t) => <C3D id={pick("s9", "s9b")} t={t} />}</Win>
@@ -351,9 +360,9 @@ const S9: React.FC<{ f: number }> = ({ f }) => (
 );
 
 const S10: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} cuts={[360]}
+  <Shell f={f} live={LIVE_WINS[10]} cuts={[360]}
     meta={[{ from: 0, tag: "DIAGRAM + ARKIV EXPLORER (WEB)", todo: "WEB-7 THE STAMP ENTITY", take: TAKES.WEB7, safeTag: "DIAGRAM: HOW A RUN REACHES THE BOARD" }, { from: 360, tag: "CONSOLE SCREEN (UI): THE BOARD", todo: "UI-2 AFTER THE SWITCH", take: TAKES.UI2A }]}
-    ls={lines(11, [[0.4, "Our server checks it: the checker replays the log."], [4.3, pick("Then it writes a separate stamp.", "Only runs that replay reach the board.")], [7.6, pick("The board ranks stamped runs only.", "The board, read straight from Arkiv.")]])}>
+    ls={lines(11, [[0.4, "Our server checks it: the checker replays the log."], [4.3, cap("Then it writes a separate stamp.", "Only runs that replay reach the board.")], [7.6, cap("The board ranks stamped runs only.", "The board, read straight from Arkiv.")]])}>
     <Board f={f} />
     <Win f={f} a={0} b={360}>{(t) => (
       <>
@@ -367,7 +376,7 @@ const S10: React.FC<{ f: number }> = ({ f }) => (
         <Board f={t} />
         {isLive(TAKES.UI2A) ? <LiveScreen take={TAKES.UI2A} /> : <RecCrop file={REC.humans} from={3.6} crop={CROP.board} x={PX} y={PY + 30} w={1180} f={t} />}
         <Card2 f={t} at={14} x={CX} y={PY} w={CW} h={180} head="THE BOARD">
-          <Row2 k="RANKS" v={pick("STAMPED RUNS", "REPLAYED RUNS")} c={MW.amber} />
+          <Row2 k="RANKS" v={cap("STAMPED RUNS", "REPLAYED RUNS")} c={MW.amber} />
           <Row2 k="TIERS" v="HUMAN // BOT" />
         </Card2>
       </>
@@ -376,25 +385,25 @@ const S10: React.FC<{ f: number }> = ({ f }) => (
 );
 
 const S11: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} meta={[{ from: 0, tag: "DIAGRAM + ARKIV EXPLORER (WEB)", todo: "WEB-8 RUN + STAMP", take: TAKES.WEB8, safeTag: "ARKIV EXPLORER (WEB): A REAL TX, READ-ONLY ROWS" }]}
-    ls={lines(9, [[0.4, pick("Our server decides what counts.", "Each row records the wallet that wrote it.")], [3.6, pick("It can't change, delete or own your record.", "Rows are read-only: no edits in place.")]])}>
+  <Shell f={f} live={LIVE_WINS[11]} meta={[{ from: 0, tag: "DIAGRAM + ARKIV EXPLORER (WEB)", todo: "WEB-8 RUN + STAMP", take: TAKES.WEB8, safeTag: "ARKIV EXPLORER (WEB): A REAL TX, READ-ONLY ROWS" }]}
+    ls={lines(9, [[0.4, cap("Our server decides what counts.", "Each row records the wallet that wrote it.")], [3.6, cap("It can't change, delete or own your record.", "Rows are read-only: no edits in place.")]])}>
     <Board f={f} />
     <Slot take={TAKES.WEB8} {...SMALL}><WebPH f={f} id="WEB-8" url="rabdi.explorer.arkiv.network/entity/<take>" head="Run vs stamp" x={0} y={0} w={SMALL.w} h={SMALL.h}
       rows={[["Run owner", "<take: console>"], ["Stamp by", "0x3d32...3f63"], ["Flags", "readonly"]]} /></Slot>
-    {SAFE && !isLive(TAKES.WEB8) ? (
+    {SAFE && !LIVE && !isLive(TAKES.WEB8) ? (
       <>
         <Web f={f} src="final/web/arkiv_bot_batch_tx.png" focus={[40, 180, 1520, 520]} to={[0, TOP + 54, W, 620]} />
         <Url f={f} at={4} text="rabdi.explorer.arkiv.network/tx/0x0afdc18b...1981b31b2" x={60} y={TOP + 2} s={22} />
       </>
     ) : <ArkivFlow f={f} x={610} y={PY + 10} beat="own" />}
-    <Card2 f={f} at={sec(3.6)} x={610} y={PY + 540} w={1240} h={110} head="WHY IT CAN'T" accent={MW.amber} headCol={MW.amber} out={SAFE && !isLive(TAKES.WEB8) ? -1 : 1e9}>
+    <Card2 f={f} at={sec(3.6)} x={610} y={PY + 540} w={1240} h={110} head="WHY IT CAN'T" accent={MW.amber} headCol={MW.amber} out={SAFE && !LIVE && !isLive(TAKES.WEB8) ? -1 : 1e9}>
       <Mono s={26} c={MW.text} w={700}>ARKIV'S RULES: ROWS READ-ONLY; ONLY THE OWNER DELETES</Mono>
     </Card2>
   </Shell>
 );
 
 const S12: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} cuts={[240, 450]}
+  <Shell f={f} live={LIVE_WINS[12]} cuts={[240, 450]}
     meta={[{ from: 0, tag: "PUBLIC WEB BOARD (WEB): PRE-SWITCH STILL", todo: "WEB-9 STAMP-READING BOARD", take: TAKES.WEB9A, liveTag: "PUBLIC WEB BOARD (WEB)", safeTag: "PUBLIC WEB BOARD (WEB)" }, { from: 240, tag: "DIAGRAM + TERMINAL", todo: "TERM-2 README QUERY", take: TAKES.TERM2, safeTag: "DIAGRAM: WHO READS THE BOARD" },
       { from: 450, tag: "TERMINAL: THE REPO'S arkiv/ (REAL LISTING, TYPESET)", todo: "WEB-10a FILES NEED THE STAMP UPDATE", take: TAKES.WEB10A, liveTag: "GITHUB (WEB)" }]}
     ls={lines(9, [[0.4, "Anyone can query the records. No key."], [4.6, "And replay any log they hold."]])}>
@@ -424,9 +433,9 @@ const S12: React.FC<{ f: number }> = ({ f }) => (
 );
 
 const S13: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} cuts={[230]}
+  <Shell f={f} live={LIVE_WINS[13]} cuts={[230]}
     meta={[{ from: 0, tag: "DIAGRAM + TERMINAL", todo: "TERM-3 ARKIV:LOOKALIKE", take: TAKES.TERM3, safeTag: "DIAGRAM: WHAT THE BOARD IGNORES" }, { from: 230, tag: "CONSOLE SCREEN (UI): THE BOARD'S BOT ROWS", todo: "UI-2 AFTER THE SWITCH", take: TAKES.UI2B }]}
-    ls={lines(8, [[0.3, pick("A stranger's look-alike row: no stamp, ignored.", "A stranger's look-alike row is ignored.")], [4.2, pick("BOT ghosts: a separate house wallet, labelled BOT.", "BOT ghosts are labelled BOT: made by a program.")]])}>
+    ls={lines(8, [[0.3, cap("A stranger's look-alike row: no stamp, ignored.", "A stranger's look-alike row is ignored.")], [4.2, cap("BOT ghosts: a separate house wallet, labelled BOT.", "BOT ghosts are labelled BOT: made by a program.")]])}>
     <Board f={f} />
     <Win f={f} a={0} b={230}>{(t) => (
       <>
@@ -439,7 +448,7 @@ const S13: React.FC<{ f: number }> = ({ f }) => (
         {isLive(TAKES.UI2B) ? <LiveScreen take={TAKES.UI2B} /> : <RecCrop file={REC.humans} from={11.0} crop={[186, 100, 612, 208]} x={PX} y={PY + 30} w={1180} f={t} />}
         <Card2 f={t} at={12} x={CX} y={PY} w={CW} h={226} head="BOT" accent={MW.amber} headCol={MW.amber}>
           <Row2 k="MADE BY" v="A PROGRAM" />
-          {SAFE ? null : <Row2 k="WRITTEN BY" v="HOUSE WALLET" />}
+          {SAFE && !LIVE ? null : <Row2 k="WRITTEN BY" v="HOUSE WALLET" />}
           <Row2 k="NEVER" v="HUMAN" c={MW.amber} />
         </Card2>
       </>
@@ -449,7 +458,7 @@ const S13: React.FC<{ f: number }> = ({ f }) => (
 
 /* ---------------- 14-17. Hedera ---------------- */
 const S14: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} cuts={[60, 210, 366, 492]}
+  <Shell f={f} live={LIVE_WINS[14]} cuts={[60, 210, 366, 492]}
     meta={[{ from: 0, tag: "" }, { from: 60, tag: "CAD RENDER + CONSOLE SCREEN (UI): THE BOARD, CROSS, SCOUTING" }, { from: 210, tag: "CONSOLE SCREEN (UI): SCOUTING" },
       { from: 366, tag: "CONSOLE SCREEN (UI): THE PICK SCREEN (STOPPED BEFORE BUYING)" }, { from: 492, tag: "DIAGRAM: THE PICK ABOVE, THEN PB'S GUARDS" }]}
     ls={lines(12, [[1.3, "PB's scout: a language model on Groq."], [4.8, "It finds the ghost that beats you where you're slowest."], [8.6, "It picks which ghost. Code decides the rest."]])}>
@@ -491,7 +500,7 @@ const S14: React.FC<{ f: number }> = ({ f }) => (
 );
 
 const S15: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} meta={[{ from: 0, tag: "DIAGRAM: AN EARLIER REAL PURCHASE (HCS #12, #13)", todo: "UI-7 PAYING, GHOST LOADED", take: TAKES.UI7A, liveTag: "CONSOLE SCREEN (UI)" }]}
+  <Shell f={f} live={LIVE_WINS[15]} meta={[{ from: 0, tag: "DIAGRAM: AN EARLIER REAL PURCHASE (HCS #12, #13)", todo: "UI-7 PAYING, GHOST LOADED", take: TAKES.UI7A, liveTag: "CONSOLE SCREEN (UI)" }]}
     ls={lines(11, [[0.4, "No human approves the payment."], [3.4, "Code limits: 0.10 USDC a ghost, 1.00 a book daily."], [7.4, "It pays only the account on the listing."]])}>
     <Board f={f} />
     {isLive(TAKES.UI7A) ? (
@@ -517,7 +526,7 @@ const S15: React.FC<{ f: number }> = ({ f }) => (
 );
 
 const S16: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} cuts={[240, 390]}
+  <Shell f={f} live={LIVE_WINS[16]} cuts={[240, 390]}
     meta={[{ from: 0, tag: "HEDERA MIRROR NODE, DECODED (WEB): AN EARLIER REAL PURCHASE" }, { from: 240, tag: "HEDERA MIRROR NODE, DECODED (WEB): ITS RECEIPT" },
       { from: 390, tag: "HASHSCAN TESTNET (WEB): THE SAME PAYMENT" }]}
     ls={lines(10, [[0.3, "INTENT, with the model's reason, goes to HCS before signing."], [4.1, "RECEIPT after it settles."], [6.6, "Settled on Hedera testnet, in USDC, via x402.org."]])}>
@@ -543,7 +552,7 @@ const S16: React.FC<{ f: number }> = ({ f }) => (
 );
 
 const S17: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} cuts={pick([180, 300, 390], [])}
+  <Shell f={f} live={LIVE_WINS[17]} cuts={pick([180, 300, 390], [])}
     meta={pick([{ from: 0, tag: "TERMINAL", todo: "TERM-7 EVIL402", take: TAKES.TERM7, safeTag: "HASHSCAN TESTNET (WEB): THE TOPIC PB WRITES TO" }, { from: 180, tag: "TERMINAL", todo: "TERM-8 VERIFY", take: TAKES.TERM8 }, { from: 300, tag: "TERMINAL", todo: "TERM-9 NO SOLIDITY", take: TAKES.TERM9 },
       { from: 390, tag: "GITHUB (WEB)", todo: "WEB-10b README IDS", take: TAKES.WEB10B }], [{ from: 0, tag: "HASHSCAN TESTNET (WEB): THE TOPIC PB WRITES TO" }])}
     ls={lines(8, [[0.3, "A paywall naming another account: refused. Nothing signed."], [3.3, "Anyone can check the records agree."], [5.6, "Hedera SDK only. No Solidity."]])}>
@@ -590,7 +599,7 @@ const S17: React.FC<{ f: number }> = ({ f }) => (
 
 /* ---------------- 18-20. What you get ---------------- */
 const S18: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} cuts={[60]}
+  <Shell f={f} live={LIVE_WINS[18]} cuts={[60]}
     meta={[{ from: 0, tag: "" }, { from: 60, tag: "PUBLIC WEB BOARD (WEB): PRE-SWITCH STILL", todo: "WEB-9b (PHONE-6)", take: TAKES.WEB9B, liveTag: "PUBLIC WEB BOARD (WEB)", safeTag: "PUBLIC WEB BOARD (WEB)" }]}
     ls={lines(8, [[1.2, "A public board anyone can open."], [4.2, "Read straight from Arkiv: no account, no key."]])}>
     <Win f={f} a={0} b={60}>{(t) => <Slate2 f={t} part="ANY%" title="WHAT YOU GET" num="04" />}</Win>
@@ -613,7 +622,7 @@ const S18: React.FC<{ f: number }> = ({ f }) => (
 );
 
 const S19: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} meta={[{ from: 0, tag: "CONSOLE SCREEN (UI): BOT-A2'S RECORDS", todo: "HAND-3 + UI-8", take: TAKES.HAND3, liveTag: "THE HANDHELD (HAND)" }]}
+  <Shell f={f} live={LIVE_WINS[19]} meta={[{ from: 0, tag: "CONSOLE SCREEN (UI): BOT-A2'S RECORDS", todo: "HAND-3 + UI-8", take: TAKES.HAND3, liveTag: "THE HANDHELD (HAND)" }]}
     ls={lines(8, [[0.4, "Any run's records, one press away on the handheld."]])}>
     <Board f={f} />
     <AbsoluteFill><TakeOr take={TAKES.HAND3} safe={
@@ -631,10 +640,10 @@ const S19: React.FC<{ f: number }> = ({ f }) => (
 );
 
 const S20: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} cuts={SAFE && !isLive(TAKES.UI7B) ? [270] : [90, 270]}
+  <Shell f={f} live={LIVE_WINS[20]} cuts={SAFE && !isLive(TAKES.UI7B) ? [270] : [90, 270]}
     meta={[{ from: 0, tag: "CONSOLE SCREEN (UI)", todo: "UI-7 REPLAYED HERE", take: TAKES.UI7B, safeTag: "REPLAY OF A REAL RUN: BOT-A2'S GHOST FINISHES AHEAD" }, { from: 90, tag: "REPLAY OF A REAL RUN: BOT-A2'S GHOST FINISHES AHEAD" },
       { from: 270, tag: "HASHSCAN TESTNET (WEB): A REAL EARLIER SALE" }]}
-    ls={lines(8, [[0.3, pick("Race a bought ghost, checked on the console first.", "Race a bought ghost, its run replayed first.")], [4.6, "A sale pays the runner's own Hedera account."]])}>
+    ls={lines(8, [[0.3, cap("Race a bought ghost, checked on the console first.", "Race a bought ghost, its run replayed first.")], [4.6, "A sale pays the runner's own Hedera account."]])}>
     <Board f={f} />
     <Win f={f} a={0} b={SAFE && !isLive(TAKES.UI7B) ? 0 : 90}>{(t) => (
       <>{SAFE && !isLive(TAKES.UI7B) ? <RecCrop file={REC.sample} from={13.4} crop={[180, 30, 620, 260]} x={PX} y={PY + 20} w={1180} f={t} /> : null}
@@ -680,7 +689,7 @@ const S21: React.FC<{ f: number }> = ({ f }) => {
   let g = 0, acc = 0, subTo = 0;
   for (const s of ASM) { if (f < acc + (s.b - s.a)) { g = s.a + (f - acc); subTo = s.subTo; break; } acc += s.b - s.a; }
   return (
-    <Shell f={f} meta={[{ from: 0, tag: "CAD RENDER (EARLIER FILM)" }]}>
+    <Shell f={f} live={LIVE_WINS[21]} meta={[{ from: 0, tag: "CAD RENDER (EARLIER FILM)" }]}>
       <Series>
         {ASM.map(({ a, b }) => (
           <Series.Sequence key={a} durationInFrames={b - a}>
@@ -700,7 +709,7 @@ const CLOSE = [
   { at: 222, k: "HEDERA", v: "An agent that pays, within code limits." },
 ];
 const S22: React.FC<{ f: number }> = ({ f }) => (
-  <Shell f={f} cuts={[540]} meta={[{ from: 0, tag: "CAD RENDER + CONSOLE SCREEN (UI): THE BOARD", todo: "HAND-5", take: TAKES.HAND5, liveTag: "THE HANDHELD (HAND)" }, { from: 540, tag: "" }]}>
+  <Shell f={f} live={LIVE_WINS[22]} cuts={[540]} meta={[{ from: 0, tag: "CAD RENDER + CONSOLE SCREEN (UI): THE BOARD", todo: "HAND-5", take: TAKES.HAND5, liveTag: "THE HANDHELD (HAND)" }, { from: 540, tag: "" }]}>
     <Win f={f} a={0} b={540}>{(t) => (
       <>
         <AbsoluteFill><TakeOr take={TAKES.HAND5} keep><C3D id="s22" t={t} /></TakeOr></AbsoluteFill>

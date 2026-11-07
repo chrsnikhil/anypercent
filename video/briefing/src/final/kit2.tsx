@@ -4,7 +4,7 @@ import { BAR, Line, Mono, MW } from "../acts/common";
 import { FONT } from "../theme";
 import { easeOutExpo, lerp, prog } from "../util";
 import { FPS, sec } from "./kit";
-import { SAFE } from "./takes";
+import { LIVE, SAFE } from "./takes";
 
 /* Round 2: phone-legible type, punch-ins on console recordings, the Arkiv and x402 diagrams, real HCS panels. */
 
@@ -104,12 +104,12 @@ const Arrow: React.FC<{ f: number; at: number; a: [number, number]; b: [number, 
     `beat` lights the part the scene is about. Laid out in a 1240 x 520 box at (x, y). */
 export type ArkivBeat = "sign" | "stamp" | "own" | "query" | "lookalike";
 export const ArkivFlow: React.FC<{ f: number; x: number; y: number; beat: ArkivBeat }> = ({ f, x, y, beat }) => {
-  if (SAFE) return <SafeFlow f={f} x={340} y={y} beat={beat} />;
+  if (SAFE && !LIVE) return <SafeFlow f={f} x={340} y={y} beat={beat} />;
   const lit = (...b: ArkivBeat[]) => b.includes(beat);
   const BL = MW.blue, OR = MW.orange, GR = MW.green;
   return (
     <div style={{ position: "absolute", left: x, top: y, width: 1240, height: 520 }}>
-      <Node f={f} at={4} x={0} y={0} w={350} h={150} head="THE CONSOLE" lines={["its own wallet", "<take: 0x...>"]} col={OR} lit={lit("sign", "own")} />
+      <Node f={f} at={4} x={0} y={0} w={350} h={150} head="THE CONSOLE" lines={["its own wallet", LIVE ? "0xda28...2f89" : "<take: 0x...>"]} col={OR} lit={lit("sign", "own")} />
       <Node f={f} at={12} x={450} y={0} w={440} h={150} head="ARKIV // RUN + LISTING" lines={["owner: the console", "read-only rows"]} col={BL} lit={lit("sign", "own", "query")} />
       <Node f={f} at={20} x={0} y={320} w={350} h={150} head="OUR CHECKER" lines={["replays the log", "0x3d32...3f63"]} col={GR} lit={lit("stamp", "own")} />
       <Node f={f} at={28} x={450} y={320} w={440} h={150} head="ARKIV // STAMP" lines={["creator: the checker", "run, console, frames"]} col={BL} lit={lit("stamp", "query")} />

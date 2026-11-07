@@ -3,7 +3,7 @@ heavy job at a time (it blue-screens otherwise). Several agents can call this at
 
   python scripts/heavy.py <command ...>        e.g.  python scripts/heavy.py npx remotion still src/index.ts SponsorArkiv out/x.png --frame=300
 
-The lock is out/.heavy.lock (a directory: making one is atomic). A lock older than 45 min is taken as stale (a crashed
+The lock is out/.heavy.lock (a directory: making one is atomic). A lock older than 4 h is taken as stale (a crashed
 job) and broken. The command's exit code is passed through."""
 import os
 import subprocess
@@ -12,7 +12,7 @@ import time
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCK = os.path.join(HERE, "out", ".heavy.lock")
-STALE = 45 * 60
+STALE = 4 * 60 * 60
 
 
 def release():
