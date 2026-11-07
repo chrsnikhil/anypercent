@@ -1,5 +1,5 @@
 """The sponsor interface: the shapes every mocked step and outcome travels through. The real
-World, Arkiv and Hedera adapters built at the hackathon implement this same protocol so the
+World, Arkiv and Hedera adapters (world.py, arkiv.py, hedera.py) implement this same protocol so the
 flow engine and views never change; this module holds no behaviour, only the types.
 """
 import re

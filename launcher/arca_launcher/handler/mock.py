@@ -1,5 +1,5 @@
-"""The mock Sponsors adapter: stands in for World, Arkiv and Hedera until the event's real
-code lands behind the same interface (sponsors.py). No network, no threads: every call is a
+"""The mock Sponsors adapter: stands in for World, Arkiv and Hedera when the real adapters are
+off (no --world-bridge), behind the same interface (sponsors.py). No network, no threads: every call is a
 pure function of a clock the caller drives, so the flow engine can poll it every frame."""
 import random
 

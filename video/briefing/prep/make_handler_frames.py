@@ -1,8 +1,7 @@
 """The console's screens in THE HANDLER (src/acts/Handler.tsx): PB walking the sponsor steps, drawn by the real launcher
 (launcher/arca_launcher: its handler flow, mock sponsors, views; headless SDL), one sequence per step from the moment
 the step opens. The numbers are real: RIA is the shipped test log, "you" the slower run make_handler_run.py played and
-replayed (public/handler/run.json). The sponsor calls are the launcher's mocks (its MOCK pill is on screen), as they
-are until the event.
+replayed (public/handler/run.json). The sponsor calls are the launcher's mocks (its MOCK pill is on screen).
 
   (WSL) /opt/arca-sandbox/venv/bin/python video/briefing/prep/make_handler_frames.py
         -> video/briefing/public/handler/<step>/NN.jpg + screens.json"""
