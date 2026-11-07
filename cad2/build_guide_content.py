@@ -217,7 +217,6 @@ STEPS = [
             ["In a game: L, R, START and SELECT respond. X opens the RetroArch menu, Y returns to the launcher."],
             ["Game sound comes from both drivers. Set the volume in Settings."],
             ["Snap a different panel on and off."],
-            ["Before Mumbai: the SSH lockdown checklist in docs/TODO-before-hackathon.md is still open.", "warn"],
         ],
         "checks": ["Boots from the bank", "All 12 buttons work", "Stereo sound", "Touch works", "Panels swap"],
     },

@@ -1,6 +1,6 @@
 # Any%
 
-![The Any% handheld (rev 3 CAD, shell shown clear): the Pi, the button boards and the heat-set inserts inside, the real console board on its screen](docs/readme/hero_rev3.jpg)
+![The Any% handheld (rev 3 CAD, shell shown clear): the Pi, the button boards and the heat-set inserts inside, the real console board on its screen](assets/readme/hero_rev3.jpg)
 
 **A handheld speedrun console where every run is provable.** The games record their inputs, and anyone can replay a
 run's log to re-derive its time: the log either replays to the claimed time (VERIFIED) or it doesn't (REJECTED).
@@ -12,7 +12,7 @@ run's log to re-derive its time: the log either replays to the claimed time (VER
 
 | The console's home | The board, read from Arkiv | PB's scout picks a ghost |
 |---|---|---|
-| ![The launcher's home screen](docs/readme/ui_home.png) | ![MARINE DRIVE GP's board on the console: HUMAN 1, BOT 6](docs/readme/ui_board.png) | ![The scout's pick: BOT-A2, lap by lap](docs/readme/ui_scout.png) |
+| ![The launcher's home screen](assets/readme/ui_home.png) | ![MARINE DRIVE GP's board on the console: HUMAN 1, BOT 6](assets/readme/ui_board.png) | ![The scout's pick: BOT-A2, lap by lap](assets/readme/ui_scout.png) |
 
 ## What Any% is
 
@@ -60,7 +60,7 @@ The other games replay the same way: SHIP IT! is `game/`, RUSH HOUR `games/rushh
 
 ## The hardware
 
-![Assembly, step 9 of 12: the printed bay tray goes in over the Raspberry Pi 3B+; the bill of materials lists all 59 parts](docs/readme/assembly.jpg)
+![Assembly, step 9 of 12: the printed bay tray goes in over the Raspberry Pi 3B+; the bill of materials lists all 59 parts](assets/readme/assembly.jpg)
 
 | Part | What |
 |---|---|
@@ -72,7 +72,7 @@ The other games replay the same way: SHIP IT! is `game/`, RUSH HOUR `games/rushh
 | Shell | printed: front shell, rear frame, bay tray, SD hatch, switch plates, buttons, display bezel, and swappable sponsor panels held on magnets |
 
 - **CAD:** [`cad2/`](cad2/) is the shell in OpenSCAD (every dimension a named parameter), with its STLs, the assembled
-  model, the fit checks and previews ([`cad2/README.md`](cad2/README.md)). [`cad/`](cad/) is an earlier design for a
+  model, the fit checks and previews. [`cad/`](cad/) is an earlier design for a
   different kit (GamePi43), kept for its history.
 - **Print files:** [`prints/`](prints/): the print-ready STLs, the printing guide (PDF) and Bambu P2S multi-colour
   projects for every part, panel and reprint.
@@ -80,9 +80,9 @@ The other games replay the same way: SHIP IT! is `game/`, RUSH HOUR `games/rushh
   (`Any% Product Viewer.html`, `Any% Build Guide.html`, `stl_viewer.html` and others; open one in a browser).
 - **Device:** [`device/`](device/) is everything the Pi runs besides the launcher: systemd units, udev rules, the
   firewall (inbound SSH only from the owner's hotspot and, over Tailscale, the owner's laptop), the touch overlay and
-  the browser kiosk; [`docs/device-setup.md`](docs/device-setup.md) is the full runbook.
+  the browser kiosk.
 
-![MARINE DRIVE GP on the console, lap 2](docs/readme/race_mdgp.png)
+![MARINE DRIVE GP on the console, lap 2](assets/readme/race_mdgp.png)
 
 ## The games
 
@@ -210,8 +210,7 @@ addr(0x3d3260425Cb52F0c6716212274a883337aFa3f63) ORDER BY frames:u64 ASC` with `
 **The track's notes:** [schema](arkiv/schema.md), [how we use Arkiv](arkiv/how-you-use-arkiv.md),
 [why Arkiv](arkiv/why-arkiv.md), [reach](arkiv/reach.md), [friction](arkiv/friction.md), and the board's snapshot
 (`arkiv/snapshot.json`). Parts of these notes describe the board before the switch to console-owned records, when the
-checker wrote every row; this README and
-[the console-owned design](docs/superpowers/specs/2026-11-06-arkiv-console-owned-design.md) describe it as it is.
+checker wrote every row; this README describes it as it is.
 
 **Limits.** The server still decides what counts: one checker stamps, and it can withhold a stamp. It cannot change,
 delete or own a console's record. A console's wallet is a key file on the console, and a console needs tGLM to write
@@ -266,10 +265,10 @@ Testnet only.
 | Its INTENT and RECEIPT | #7 and #8 on `0.0.11332437` | https://hashscan.io/testnet/transaction/1793930450.748974293/message, https://hashscan.io/testnet/transaction/1793930457.098249017/message |
 | The handheld's listing, approved in World App, word for word | LISTING #17, `0.0.6421420@1794003650.055631848` | https://hashscan.io/testnet/transaction/0.0.6421420-1794003650-055631848 |
 
-Every transaction id shown in the video is in [hedera/transactions.md](hedera/transactions.md), with
+Every transaction id shown in the video is in the on-chain ids above. Run
 `npm run hedera:verify -- <purchase or payment id>` to check that a purchase's INTENT, payment and RECEIPT agree.
 
-![HashScan: a settled x402 payment, 0.10 USDC from PB's agent to the house account](docs/readme/hashscan_payment.png)
+![HashScan: a settled x402 payment, 0.10 USDC from PB's agent to the house account](assets/readme/hashscan_payment.png)
 
 ### Setup
 
@@ -388,11 +387,11 @@ to its run, stamp, listing and owner on the explorer. It works on a phone and ne
 answer it shows the last snapshot and says so. The page is `apps/world-bridge/public/board.html` (one file, no build);
 the bridge also serves it at `/board`, and the console's browser opens it.
 
-![The public board: MARINE DRIVE GP, HUMAN 1, BOT 6, each run stamped](docs/readme/web_board.png)
+![The public board: MARINE DRIVE GP, HUMAN 1, BOT 6, each run stamped](assets/readme/web_board.png)
 
 ## Run it
 
-**The service** (`apps/world-bridge`, Node 22; everything about it is in [its README](apps/world-bridge/README.md)):
+**The service** (`apps/world-bridge`, Node 22):
 
 ```bash
 cd apps/world-bridge
@@ -419,12 +418,11 @@ wsl -d Ubuntu-24.04 -u root -- env ARCA_WORLD_BRIDGE=http://127.0.0.1:8787 \
 Without those variables every sponsor stays mocked, and the console says MOCK on screen. `bash launcher/dev/pytest.sh`
 runs the launcher's tests.
 
-**The handheld:** set up the Pi once with [`docs/device-setup.md`](docs/device-setup.md), then
+**The handheld:** set up the Pi once with `device/apply.sh`, then
 `python device/deploy.py` (tests, sync, apply, restart, check; `--dry-run`, `--rollback`). The real sponsors are on when
 `/etc/anypercent/launcher.env` sets the same `ARCA_*` variables; the Pi reaches the laptop's service over Tailscale.
 
-**The games:** each builds in the WSL sandbox (`cd games/rushhour && bash dev/build.sh && make -f tools.mk replay`);
-[`games/README.md`](games/README.md) covers a new game from the template to the launcher.
+**The games:** each builds in the WSL sandbox (`cd games/rushhour && bash dev/build.sh && make -f tools.mk replay`).
 
 ## Repo map
 
@@ -434,17 +432,16 @@ runs the launcher's tests.
 | `arcade/` | The arcade kit: the deterministic rules contract, the recorder, the replay and splits tools, shared by the console games and the checker. |
 | `games/`, `game/` | The five games (art, sprites, music, levels, tests), the shared code, the template, the theme songs and the Kenney packs (CC0). |
 | `apps/world-bridge/` | The laptop service: World (record books, approvals, console links), the Arkiv module (the checker, stamps, the house, the web board), the Hedera module (the x402 paywall, PB's agent, the HCS topic) and PB's scout on Groq. |
-| `arkiv/`, `hedera/` | The Arkiv track's notes and board snapshot; the Hedera transaction list. |
+| `arkiv/` | The Arkiv track's five files and the board snapshot. |
 | `cad/`, `cad2/`, `prints/` | The shell: OpenSCAD sources, STLs and previews; the print files. |
 | `render/`, `assets/`, `*.html` | The product render and the HTML viewers. |
 | `device/` | The Pi: services, udev, firewall, touch, deploy and checks. |
 | `sandbox/` | The scripts that build the laptop's WSL workspace and toolchains. |
-| `docs/` | The PRD, the device runbook, the design specs and plans (`docs/superpowers/`), the game list. |
-| `video/` | The films' sources: the briefing film and sponsor demos (Remotion, `video/briefing/`) and the final film's script, recordings and takes (`video/final/`). |
+| `video/` | The films' sources: the briefing film and sponsor demos (Remotion, `video/briefing/`) and the final film's recordings and takes (`video/final/`). |
 
 **Not in the repo:** keys and `.env` files, the console's state, built ROMs and the films (they are in the
 [release](https://github.com/chrsnikhil/anypercent/releases/tag/mumbai-demo)), the vendors' own 3D models, sponsors'
-brand files and other people's games. Commits marked "(starting code)" were made before the event.
+brand files and other people's games. Commits marked "(boilerplate)" are the console's declared boilerplate.
 
 ## License and AI use
 

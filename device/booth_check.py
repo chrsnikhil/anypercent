@@ -3,7 +3,7 @@
   python device/booth_check.py          (ANYPERCENT_HOST picks the address, as for deploy.py)
 
 One SSH session runs a read-only script on the Pi (it changes nothing); the laptop compares what comes back with the
-repo and the WSL sandbox, then prints PASS, WARN, FAIL or INFO for each item of docs/TODO-before-hackathon.md and
+repo and the WSL sandbox, then prints PASS, WARN, FAIL or INFO for each item of the device to-do list and
 docs/demo-run-sheet.md that a machine can check. Exits 1 when anything FAILs.
 
   launcher running, home key, launcher flags (no --no-handler, no leftover --fps), launcher code (the same files

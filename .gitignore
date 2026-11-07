@@ -21,9 +21,6 @@
 /arkiv/*
 !/arkiv/*.md
 !/arkiv/snapshot.json
-!/hedera/
-/hedera/*
-!/hedera/*.md
 
 # The hardware: CAD, print files, renders, the HTML viewers and their build scripts.
 !/cad/
@@ -55,11 +52,6 @@
 !/sandbox/
 /sandbox/patches/
 
-# The docs (not the cloned third-party repos or the sponsors' brand kits and saved pages).
-!/docs/
-/docs/vendor/
-/docs/sponsors/
-
 # The films' sources: no renders, review rounds, film copies or third-party fonts (the films are release assets).
 !/video/
 /video/final/*.mp4
@@ -70,8 +62,9 @@
 /video/briefing/public/final/race/
 /video/briefing/public/fonts/
 /video/briefing/prep/make_mw3_audio.py
+/video/briefing/public/final/live_clips/
 
-# 2. Games: ETHGlobal's own logo file stays out (SHIP IT!'s pixel version of it is in its graphics, see CREDITS.md);
+# 2. Games: ETHGlobal's own logo file stays out (SHIP IT!'s pixel version of it is in its graphics);
 # the clip renderer and the reskins of other people's games keep their scripts only.
 /games/clips/**
 !/games/clips/**/
@@ -108,3 +101,8 @@
 /apps/world-bridge/data/
 # A recorder log that names the Arkiv RPC with its access key in the URL.
 /video/final/rec/live_wallet_book.json
+
+# 4. Notes stay local: the only markdown here is the README and the Arkiv track's five files.
+*.md
+!/README.md
+!/arkiv/*.md
