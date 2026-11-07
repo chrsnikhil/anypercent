@@ -439,9 +439,6 @@ runs the launcher's tests.
 | `sandbox/` | The scripts that build the laptop's WSL workspace and toolchains. |
 | `video/` | The films' sources: the briefing film and sponsor demos (Remotion, `video/briefing/`) and the final film's recordings and takes (`video/final/`). |
 
-**Not in the repo:** keys and `.env` files, the console's state, built ROMs and the films (they are in the
-[release](https://github.com/chrsnikhil/anypercent/releases/tag/mumbai-demo)), the vendors' own 3D models, sponsors'
-brand files and other people's games. Commits marked "(boilerplate)" are the console's declared boilerplate.
 
 ## License and AI use
 
