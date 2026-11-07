@@ -1,8 +1,7 @@
 # Friction: our feedback to Arkiv
 
-What we ran into building Any%'s board on Arkiv, each with a way to reproduce it. Items found while researching are
-labelled **(research)**; everything else was found or re-checked at the event, on Rabdi with
-`@arkiv-network/sdk` 1.0.1. The `npm run ...` commands run in `apps/world-bridge`.
+What we ran into building Any%'s board on Arkiv, each with a way to reproduce it, on Rabdi with `@arkiv-network/sdk`
+1.0.1. The `npm run ...` commands run in `apps/world-bridge`.
 
 Shell setup for the `curl` lines:
 
@@ -11,10 +10,10 @@ RPC=https://rpc.rabdi.db-chain.testnet.arkiv.network
 q() { curl -s $RPC -H 'content-type: application/json' --data @-; }
 ```
 
-## 1. The SDK and the network changed under 0.8 users in the event week, and the old network still answers
+## 1. The SDK and the network changed under 0.8 users, and the old network still answers
 
-Our first design was on SDK 0.8.1 and the Tiramisu testnet **(research)**. At the event, `latest` was 1.0.1 and the
-current testnet Rabdi. Everything we had moved:
+`latest` is 1.0.1 and the current testnet is Rabdi. Anything written for SDK 0.8.1 and the Tiramisu testnet has to
+move:
 
 | | 0.8.1 | 1.0.1 |
 |---|---|---|
@@ -70,8 +69,8 @@ EOF
 
 ## 5. No sponsored transactions: whoever signs pays
 
-Every write is paid by its signer, and the signer becomes the owner **(research: no paymaster or sponsored path in the
-docs; still none in SDK 1.0.1)**. So our checker pays for every row, a fan who wants to keep a run alive
+Every write is paid by its signer, and the signer becomes the owner (no paymaster or sponsored path in the docs or in
+SDK 1.0.1). So our checker pays for every row, a fan who wants to keep a run alive
 (`permissionlessExtension`) needs tGLM of their own, and runner-owned rows would need every runner's wallet funded.
 
 Reproduce: `npm run arkiv:extend -- <run key>` with an unfunded `ARKIV_STRANGER_KEY` fails at gas.
@@ -84,7 +83,7 @@ checker could delete one". A flag that blocks delete (with expiry still allowed)
 
 Reproduce: `npm run arkiv:smoke` (step 4 refuses the patches, step 7 deletes the same read-only rows).
 
-## 7. No expiry event **(research, still true in 1.0.1)**
+## 7. No expiry event
 
 `watchEntityEvents` knows `EntityCreated`, `EntityPatched`, `ExpiryExtended`, `OwnershipTransferred` and
 `EntityDeleted`, but nothing fires when a row expires. To learn that a listing ended we query again.
