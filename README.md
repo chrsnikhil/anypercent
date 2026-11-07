@@ -72,8 +72,8 @@ The other games replay the same way: SHIP IT! is `game/`, RUSH HOUR `games/rushh
 | Shell | printed: front shell, rear frame, bay tray, SD hatch, switch plates, buttons, display bezel, and swappable sponsor panels held on magnets |
 
 - **CAD:** [`cad2/`](cad2/) is the shell in OpenSCAD (every dimension a named parameter), with its STLs, the assembled
-  model, the fit checks and previews. [`cad/`](cad/) is an earlier design for a
-  different kit (GamePi43), kept for its history.
+  model, the fit checks and previews. [`cad/`](cad/) is a design for a different kit (GamePi43) that the console
+  does not use.
 - **Print files:** [`prints/`](prints/): the print-ready STLs, the printing guide (PDF) and Bambu P2S multi-colour
   projects for every part, panel and reprint.
 - **Renders and viewers:** [`render/`](render/) (the Blender product render) and the HTML viewers at the root
@@ -440,8 +440,11 @@ runs the launcher's tests.
 | `video/` | The films' sources: the briefing film and sponsor demos (Remotion, `video/briefing/`) and the final film's recordings and takes (`video/final/`). |
 
 
-## License and AI use
+## License, AI use and timeline
 
 License: TODO(owner).
 
 AI use: disclosed on the ETHGlobal submission.
+
+Timeline: we started building at the venue at 3pm, before the 9pm kickoff; the organizers confirmed that counts as hack
+time. Our sponsor research and the 3D-printed enclosure were prepared ahead of the event, also with their OK.
