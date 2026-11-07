@@ -1,5 +1,0 @@
-{
- "_doc": "What was BUILT AT ETHGLOBAL MUMBAI, for Part V / IV (Objectives.tsx). By default: all false, no clips, and the film says TO BUILD. Set a sponsor true only when it works end to end on camera, and add one clip per proof (a screen recording in public/built/, 1920x1080 or 16:9). Each clip: file (under public/built/), sponsor (WORLD ID | HEDERA | ARKIV | CHAINLINK), title (what it shows, caps), rows (evidence key/value pairs, real values copied from the screen: jti, tx id, topic id, entity key), line (the narration, <= 2.8 words a second of the clip), seconds (how long it shows, 4 to 8), from (seconds into the recording to start). Then: python prep/make_mw3_audio.py out/mw3ref acts && ... acts-original, bash render_acts.sh Objectives ObjSub Handler, python post_film.py, CUT=sub python post_film.py, python prep/vo.py script. The sponsor demos (SPONSOR_DEMOS.md) read the same flags and clips: re-render a demo's act and re-run post_sponsor.py after a change.",
- "built": { "world": false, "hedera": false, "arkiv": false, "chainlink": false },
- "clips": []
-}

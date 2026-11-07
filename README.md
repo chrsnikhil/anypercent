@@ -437,7 +437,7 @@ runs the launcher's tests.
 | `render/`, `assets/`, `*.html` | The product render and the HTML viewers. |
 | `device/` | The Pi: services, udev, firewall, touch, deploy and checks. |
 | `sandbox/` | The scripts that build the laptop's WSL workspace and toolchains. |
-| `video/` | The films' sources: the briefing film and sponsor demos (Remotion, `video/briefing/`) and the final film's recordings and takes (`video/final/`). |
+| `video/` | The final film's script, recording plan, shot scripts and takes (`video/final/`); the films themselves are release assets. |
 
 
 ## License, AI use and timeline

@@ -56,13 +56,6 @@
 !/video/
 /video/final/*.mp4
 /video/final/rounds/
-/video/briefing/public/final/acts/
-/video/briefing/public/final/audio/
-/video/briefing/public/final/c3d/
-/video/briefing/public/final/race/
-/video/briefing/public/fonts/
-/video/briefing/prep/make_mw3_audio.py
-/video/briefing/public/final/live_clips/
 
 # 2. Games: ETHGlobal's own logo file stays out (SHIP IT!'s pixel version of it is in its graphics);
 # the clip renderer and the reskins of other people's games keep their scripts only.
