@@ -442,7 +442,7 @@ runs the launcher's tests.
 
 ## License, AI use and timeline
 
-License: TODO(owner).
+License: MIT, see [LICENSE](LICENSE).
 
 AI use: disclosed on the ETHGlobal submission.
 

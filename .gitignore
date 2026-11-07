@@ -6,6 +6,7 @@
 !/.gitignore
 !/.gitattributes
 !/README.md
+!/LICENSE
 
 # The software: the launcher, the arcade kit, the games, the laptop service.
 !/launcher/
@@ -98,4 +99,5 @@
 # 4. Notes stay local: the only markdown here is the README and the Arkiv track's five files.
 *.md
 !/README.md
+!/LICENSE
 !/arkiv/*.md
