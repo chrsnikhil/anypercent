@@ -444,7 +444,4 @@ runs the launcher's tests.
 
 License: MIT, see [LICENSE](LICENSE).
 
-AI use: disclosed on the ETHGlobal submission.
 
-Timeline: we started building at the venue at 3pm, before the 9pm kickoff; the organizers confirmed that counts as hack
-time. Our sponsor research and the 3D-printed enclosure were prepared ahead of the event, also with their OK.
